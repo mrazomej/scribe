@@ -934,3 +934,206 @@ twostate_ln_rate_grad_x_only_offset_norm_batch = jax.vmap(
     _twostate_ln_rate_grad_x_only_offset_norm,
     in_axes=(0, 0, None, None, None, None, None, 0, None),
 )
+
+
+# =====================================================================
+# Closed-form global-curvature factors (compute_global_uncertainty)
+# =====================================================================
+#
+# These helpers compute per-cell-per-gene contributions to the
+# negative-log-posterior gradient and Hessian-diagonal in the
+# "natural" basis (α, β, log_rate_g), then the caller chain-rules
+# through ``_twostate_reparam`` to the unconstrained ``*_loc`` space.
+#
+# Sign convention: ``g_*`` and ``H_*`` are gradients / curvatures of
+# the *negative* log posterior, so the diagonal posterior precision
+# at convergence is ``H_natural + prior_precision`` (positive).
+#
+# Why hand-derive: ``jnp.diag(jax.hessian(neg_log_post))`` materialises
+# transient ``(C, G, G)`` autodiff tensors that OOM at production
+# scale (G ~ 10K, C ~ several thousand → hundreds of GB).  The
+# chunked-autodiff fallback bounds memory but is ``O(G)`` forward-
+# over-reverse passes.  The hand-derived path piggybacks on the
+# existing Newton kernel's softmax + adds a handful of K-axis
+# moment reductions; same memory footprint as one Newton iterate.
+
+
+def _global_curvature_factors_rate(
+    x: jnp.ndarray,
+    u: jnp.ndarray,
+    eta_cap: jnp.ndarray,
+    alpha: jnp.ndarray,
+    beta: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> dict:
+    """Per-cell per-gene closed-form NLP gradient + Hessian-diagonal in
+    the *(α, β)* data-side basis.
+
+    The TSLN-Rate data log-likelihood depends on the gene globals
+    only through ``(α_g, β_g)`` — ``log_rate_cg = x_cg − η_cap_c`` is
+    ``stop_gradient``'d at the per-cell MAP.  Per the log-marginal
+    identity (Louis 1982 / log-deriv lemma), the per-cell-per-gene
+    derivatives of ``log L_PB(u | α, β, λ)`` w.r.t. ``α, β`` are:
+
+    .. math::
+        \\frac{\\partial \\log L_{PB}}{\\partial \\alpha}
+            = E_q[\\log p] - \\psi(\\alpha) + \\psi(\\alpha+\\beta) \\\\
+        \\frac{\\partial \\log L_{PB}}{\\partial \\beta}
+            = E_q[\\log(1-p)] - \\psi(\\beta) + \\psi(\\alpha+\\beta)
+
+    where ``q(p) ∝ Beta(α, β) · Po(u | λ p)`` is the posterior over
+    ``p`` for this cell-gene.  The Hessian elements follow:
+
+    .. math::
+        \\partial^2_\\alpha
+            = -\\psi'(\\alpha) + \\psi'(\\alpha+\\beta)
+              + \\mathrm{Var}_q[\\log p] \\\\
+        \\partial^2_\\beta
+            = -\\psi'(\\beta) + \\psi'(\\alpha+\\beta)
+              + \\mathrm{Var}_q[\\log(1-p)] \\\\
+        \\partial_\\alpha \\partial_\\beta
+            = \\psi'(\\alpha+\\beta) + \\mathrm{Cov}_q[\\log p, \\log(1-p)]
+
+    Sign-flipped to get NLP curvatures; the caller sums across cells
+    before adding the MVN prior contribution to the ``log_rate_g``
+    diagonal entry.
+
+    Parameters
+    ----------
+    x : jnp.ndarray, shape ``(G,)``
+        Per-cell latent at the MAP (the latent-side coordinate;
+        ``log_rate_cg = x − η_cap_c``).
+    u : jnp.ndarray, shape ``(G,)``
+        Per-cell observed counts.
+    eta_cap : jnp.ndarray, scalar
+        Per-cell capture offset (use ``0.0`` for the no-capture path).
+    alpha, beta : jnp.ndarray, shape ``(G,)``
+        Gene-level Beta shape parameters after ``_twostate_reparam``
+        floors.
+    n_quad_nodes : int, default 60
+
+    Returns
+    -------
+    dict with per-gene ``(G,)`` arrays (all NLP sign convention):
+        ``g_alpha``  : ``ψ(α) − ψ(α+β) − E_q[log p]``
+        ``g_beta``   : ``ψ(β) − ψ(α+β) − E_q[log(1-p)]``
+        ``H_aa``     : ``ψ'(α) − ψ'(α+β) − Var_q[log p]``
+        ``H_bb``     : ``ψ'(β) − ψ'(α+β) − Var_q[log(1-p)]``
+        ``H_ab``     : ``−ψ'(α+β) − Cov_q[log p, log(1-p)]``
+    """
+    # Reuse the kernel factor function for the softmax_node and the
+    # Beta/Poisson posterior weights — bit-identical to the Newton
+    # kernel's evaluation at the MAP.
+    log_rate_at_cell = x - eta_cap
+    fac = _twostate_ln_rate_factors(
+        log_rate_at_cell, u, alpha, beta, n_quad_nodes,
+    )
+    softmax_node = fac["softmax_node"]              # (G, K)
+
+    # Reconstruct the K-axis log-coordinate arrays.
+    p_node, _ = gauss_legendre_01(n_quad_nodes)
+    log_p = jnp.log(p_node)                         # (K,)
+    log_1mp = jnp.log1p(-p_node)                    # (K,)
+
+    # Posterior moments under q.
+    E_logp = (softmax_node * log_p[None, :]).sum(axis=-1)       # (G,)
+    E_log1mp = (softmax_node * log_1mp[None, :]).sum(axis=-1)
+    E_logp_sq = (softmax_node * (log_p[None, :] ** 2)).sum(axis=-1)
+    E_log1mp_sq = (softmax_node * (log_1mp[None, :] ** 2)).sum(axis=-1)
+    E_logp_log1mp = (
+        softmax_node * (log_p * log_1mp)[None, :]
+    ).sum(axis=-1)
+    Var_logp = jnp.maximum(E_logp_sq - E_logp * E_logp, 0.0)
+    Var_log1mp = jnp.maximum(E_log1mp_sq - E_log1mp * E_log1mp, 0.0)
+    Cov_logp_log1mp = E_logp_log1mp - E_logp * E_log1mp
+
+    # Digamma / trigamma at (α, β, α+β).
+    psi_alpha = jsp_special.digamma(alpha)
+    psi_beta = jsp_special.digamma(beta)
+    psi_alpha_beta = jsp_special.digamma(alpha + beta)
+    pp_alpha = jsp_special.polygamma(1, alpha)
+    pp_beta = jsp_special.polygamma(1, beta)
+    pp_alpha_beta = jsp_special.polygamma(1, alpha + beta)
+
+    # NLP gradient (per cell, per gene) — sign flip applied.
+    g_alpha = psi_alpha - psi_alpha_beta - E_logp
+    g_beta = psi_beta - psi_alpha_beta - E_log1mp
+
+    # NLP Hessian (per cell, per gene) — sign flip applied.
+    H_aa = pp_alpha - pp_alpha_beta - Var_logp
+    H_bb = pp_beta - pp_alpha_beta - Var_log1mp
+    H_ab = -pp_alpha_beta - Cov_logp_log1mp
+
+    return {
+        "g_alpha": g_alpha,
+        "g_beta": g_beta,
+        "H_aa": H_aa,
+        "H_bb": H_bb,
+        "H_ab": H_ab,
+    }
+
+
+# Vmapped over cells.  Per-cell arg shapes:
+#   x       : (G,)
+#   u       : (G,)
+#   eta_cap : ()       — scalar offset per cell
+# Gene-level (α, β) are broadcast.
+_global_curvature_factors_rate_batch = jax.vmap(
+    _global_curvature_factors_rate,
+    in_axes=(0, 0, 0, None, None, None),
+)
+
+
+def global_curvature_rate_summed(
+    x_map: jnp.ndarray,
+    counts: jnp.ndarray,
+    alpha: jnp.ndarray,
+    beta: jnp.ndarray,
+    eta_cap: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> dict:
+    """Population-summed data-side NLP gradient + Hessian in the
+    ``(α, β)`` basis for the TSLN-Rate global-curvature path.
+
+    Drop-in alternative to ``jnp.diag(jax.hessian(neg_log_post))``
+    *for the data-side block* — the MVN prior block (which acts only
+    on ``log r_g``) is added separately by the caller.  Closed-form,
+    no autodiff, memory bounded by the Newton-kernel softmax.
+
+    Parameters
+    ----------
+    x_map : jnp.ndarray, shape ``(C, G)``
+        Per-cell-per-gene latent at the MAP.
+    counts : jnp.ndarray, shape ``(C, G)``
+        Observed counts.
+    alpha, beta : jnp.ndarray, shape ``(G,)``
+        Gene-level Beta shape parameters.
+    eta_cap : jnp.ndarray, shape ``(C,)``
+        Per-cell capture offset (zeros under no-capture).
+    n_quad_nodes : int, default 60
+
+    Returns
+    -------
+    dict with per-gene ``(G,)`` arrays (NLP sign):
+        ``g_alpha, g_beta``     : data-side gradient.
+        ``H_aa, H_bb, H_ab``    : data-side Hessian 2×2 block.
+
+    Notes
+    -----
+    The third row/column of the natural-basis 3×3 Hessian (the
+    ``log_rate_g`` axis) is *not* populated here — the data does not
+    depend on ``rate_g``, so the (α, log r) and (β, log r) cross
+    entries are identically zero, and the (log r, log r) diagonal
+    entry comes entirely from the MVN prior centered at ``log r_g``.
+    The caller stitches these together before Faà di Bruno chain.
+    """
+    per_cell = _global_curvature_factors_rate_batch(
+        x_map, counts, eta_cap, alpha, beta, n_quad_nodes,
+    )
+    return {
+        "g_alpha":  per_cell["g_alpha"].sum(axis=0),
+        "g_beta":   per_cell["g_beta"].sum(axis=0),
+        "H_aa":     per_cell["H_aa"].sum(axis=0),
+        "H_bb":     per_cell["H_bb"].sum(axis=0),
+        "H_ab":     per_cell["H_ab"].sum(axis=0),
+    }

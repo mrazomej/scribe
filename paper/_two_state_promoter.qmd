@@ -1532,6 +1532,211 @@ NBLN can be the better-default fit; for datasets with a meaningful bursty
 population (TF-target modules in many primary tissues), TSLN-Rate's full
 Poisson-Beta shape model preserves the bursty signature that NBLN collapses.
 
+## Global-parameter posterior uncertainty {#sec-twostate-tsln-rate-global-uncertainty}
+
+After the outer EM loop converges, we approximate the posterior on each
+gene-level global by a Normal centered at its MAP, with standard deviation
+derived from the inverse Hessian-diagonal of the negative log-posterior at the
+MAP.  Unlike TSLN-Logit, the natural sampled coordinates are
+$(\mu_g, b_g, k^-_g)$, and these flow through the
+$\bigl(\mu, b, k^-\bigr) \to (\alpha, \beta, r)$ reparameterization in
+@sec-twostate-reparam before reaching the likelihood.  We therefore work in
+two stages:
+
+1. Derive the closed-form per-gene gradient and Hessian in the *natural*
+   $(\alpha, \beta, \log r)$ basis (analogous to TSLN-Logit's
+   $(\log r, \kappa, \theta)$ basis).
+2. Faà-di-Bruno chain-rule through ``_twostate_reparam`` and the configured
+   ``pos_forward`` transforms to the unconstrained
+   $(\mu_{\text{loc}}, b_{\text{loc}}, k^-_{\text{loc}})$ coordinates.
+
+The implementation lives in
+``scribe/laplace/_newton_twostate_ln_rate.py::global_curvature_rate_summed``
+(stage 1) and in
+``scribe/laplace/_obs_twostate_ln_rate.py::compute_global_uncertainty``
+(stage 2, via the quadratic-substitution trick described below).
+
+### Decomposition: data is $(\alpha, \beta)$-only, MVN is $\log r$-only
+
+In TSLN-Rate, the gene-globals' influence on the marginal log-posterior
+splits cleanly:
+
+- **Data** depends on $(\alpha_g, \beta_g)$ only.  The per-(cell, gene) Poisson
+  log-rate $\log \lambda_{c,g} = x_{c,g} - \eta_{\mathrm{cap}, c}$ is
+  ``stop_gradient``-wrapped at the cell MAP, so $r_g$ does **not** enter the
+  data likelihood at the stage where we differentiate the gene-globals.
+- **MVN prior on $\underline{x}_c$** depends on $\log r_g$ only via the prior
+  center: $\underline{x}_c \sim \mathcal{N}(\log \underline{r},
+  \underline{\underline{\Sigma}})$ with
+  $\underline{\underline{\Sigma}} = \underline{\underline{W}}\underline{\underline{W}}^\top
+  + \text{diag}(\underline{d})$.
+
+Consequently the $3\times3$ Hessian in the natural basis is block-diagonal:
+$$
+\underline{\underline{H}}_{\varphi} \;=\;
+\begin{pmatrix}
+H_{\alpha\alpha} & H_{\alpha\beta} & 0 \\
+H_{\alpha\beta} & H_{\beta\beta} & 0 \\
+0 & 0 & H_{\log r,\log r}
+\end{pmatrix},
+\qquad \varphi = (\alpha, \beta, \log r).
+$$ {#eq-tsln-rate-H-block-diagonal}
+The cross terms $(\alpha, \log r)$ and $(\beta, \log r)$ vanish identically
+because the data and the MVN prior have *disjoint* dependencies on the natural
+coordinates.
+
+### Data-side: $(\alpha, \beta)$ from the log-marginal identity
+
+The per-cell-per-gene log-likelihood is the Poisson-Beta marginal
+$$
+\log L_{PB}(u \mid \alpha, \beta, \lambda)
+\;=\; \log \int_0^1 \mathrm{Po}(u \mid \lambda p)\,\mathrm{Beta}(p \mid \alpha,\beta)\,dp.
+$$
+With $T_k = w_k\,\mathrm{Beta}(p_k|\alpha,\beta)\,\mathrm{Po}(u|\lambda p_k)$ and
+posterior weights
+$q_k = T_k / \sum_j T_j$, the log-marginal identity (Louis 1982) gives
+$$
+\frac{\partial^2}{\partial \theta_i \partial \theta_j}\log L_{PB}
+\;=\;
+\mathbb{E}_q\!\Big[\tfrac{\partial^2 \log T}{\partial \theta_i \partial \theta_j}\Big]
+\;+\;
+\mathrm{Cov}_q\!\Big(\tfrac{\partial \log T}{\partial \theta_i},
+                     \tfrac{\partial \log T}{\partial \theta_j}\Big).
+$$ {#eq-tsln-rate-log-marginal-identity}
+
+The first derivatives of $\log T$ are
+$$
+\frac{\partial \log T}{\partial \alpha} = \log p - \psi(\alpha) + \psi(\alpha+\beta),
+\qquad
+\frac{\partial \log T}{\partial \beta} = \log(1-p) - \psi(\beta) + \psi(\alpha+\beta),
+$$
+and the relevant second derivatives are
+$$
+\frac{\partial^2 \log T}{\partial \alpha^2} = -\psi'(\alpha) + \psi'(\alpha+\beta),
+\qquad
+\frac{\partial^2 \log T}{\partial \beta^2}  = -\psi'(\beta)  + \psi'(\alpha+\beta),
+\qquad
+\frac{\partial^2 \log T}{\partial \alpha \partial \beta} = \psi'(\alpha+\beta),
+$$
+all constant in $p$.  Applying @eq-tsln-rate-log-marginal-identity and
+flipping signs for the *negative* log-likelihood:
+$$
+\boxed{\;
+\begin{aligned}
+H_{\alpha\alpha}^{(c,g)} &= \psi'(\alpha) - \psi'(\alpha+\beta) - \mathrm{Var}_q[\log p], \\
+H_{\beta\beta}^{(c,g)}  &= \psi'(\beta)  - \psi'(\alpha+\beta) - \mathrm{Var}_q[\log(1-p)], \\
+H_{\alpha\beta}^{(c,g)} &= -\psi'(\alpha+\beta) - \mathrm{Cov}_q[\log p, \log(1-p)].
+\end{aligned}
+\;}
+$$ {#eq-tsln-rate-H-data}
+The companion gradients are
+$$
+g_\alpha^{(c,g)} = \psi(\alpha) - \psi(\alpha+\beta) - \mathbb{E}_q[\log p],
+\quad
+g_\beta^{(c,g)}  = \psi(\beta)  - \psi(\alpha+\beta) - \mathbb{E}_q[\log(1-p)].
+$$ {#eq-tsln-rate-g-data}
+
+### MVN-side: $\log r$ via Woodbury on $\underline{\underline{\Sigma}}^{-1}$
+
+The MVN contribution to the negative log-posterior is
+$$
+-\log p_{\mathrm{MVN}}
+\;=\; \tfrac{1}{2}\sum_c (\underline{x}_c - \log\underline{r})^\top
+\underline{\underline{\Sigma}}^{-1}(\underline{x}_c - \log\underline{r}) + \text{const},
+$$
+where $\log\underline{r}$ is the prior mean.  Differentiating elementwise gives
+$$
+\frac{\partial(-\log p_{\mathrm{MVN}})}{\partial \log r_g}
+\;=\; -\Big[\underline{\underline{\Sigma}}^{-1}
+\Big(\sum_c \underline{x}_c - C\log\underline{r}\Big)\Big]_g,
+$$
+$$
+\frac{\partial^2(-\log p_{\mathrm{MVN}})}{\partial \log r_g\,\partial \log r_h}
+\;=\; C\,\big(\underline{\underline{\Sigma}}^{-1}\big)_{g,h}.
+$$ {#eq-tsln-rate-mvn-derivs}
+For the diagonal we need only $(\underline{\underline{\Sigma}}^{-1})_{g,g}$ and
+the gene-vector $\underline{\underline{\Sigma}}^{-1} (\sum_c \underline{x}_c - C\log\underline{r})$;
+both are computed via the Woodbury identity at $\mathcal{O}(Gk^2 + Gk)$ cost,
+without ever forming $\underline{\underline{\Sigma}}^{-1}$ as a dense matrix
+(``woodbury_inv_diag`` and ``woodbury_apply_inv`` in
+``scribe/laplace/_global_uncertainty.py``).
+
+### Chain rule to ``loc`` space: Faà di Bruno with quadratic substitution
+
+The chain
+$$
+(\mu_{\text{loc}}, b_{\text{loc}}, k^-_{\text{loc}})
+\;\xrightarrow{\text{pos\_forward}}\;
+(\mu, b, k^-)
+\;\xrightarrow{\text{\_twostate\_reparam}}\;
+(\alpha, \beta, \log r)
+$$
+couples **all three** loc variables into **all three** natural coordinates:
+$\alpha$ depends on $\mu, b$; $\beta$ depends on $k^-$; and $\log r$ depends on
+all three.  This contrasts with TSLN-Logit, where every transform is per-element
+and the chain reduces to elementwise products.  Here we need the genuine
+Faà di Bruno formula
+$$
+\frac{\partial^2 f}{\partial \theta_i^2}
+\;=\; \sum_{j,k} \frac{\partial \varphi_j}{\partial \theta_i}
+                 \frac{\partial \varphi_k}{\partial \theta_i}
+                 \frac{\partial^2 f}{\partial \varphi_j \partial \varphi_k}
+\;+\; \sum_j \frac{\partial^2 \varphi_j}{\partial \theta_i^2}
+            \frac{\partial f}{\partial \varphi_j}.
+$$ {#eq-tsln-rate-faa-di-bruno}
+
+We compute this per gene via a clean **quadratic-substitution trick**.  Define
+the local quadratic in $\varphi$
+$$
+\tilde f_g(\underline{\theta}_{\text{loc}})
+\;:=\; \underline{g}_{\varphi,g}^\top \delta_g
+\;+\; \tfrac{1}{2}\,\delta_g^\top \underline{\underline{H}}_{\varphi,g}\,\delta_g,
+\qquad
+\delta_g \;=\; \underline{\varphi}\big(\underline{\theta}_{\text{loc}}\big)
+\;-\; \underline{\varphi}\big(\underline{\theta}_{\text{loc},\text{MAP}}\big),
+$$ {#eq-tsln-rate-quadratic-substitution}
+where the gradient $\underline{g}_{\varphi,g}$ is the population-summed
+@eq-tsln-rate-g-data padded with $g_{\log r,g}$ from
+@eq-tsln-rate-mvn-derivs, and $\underline{\underline{H}}_{\varphi,g}$ is the
+block-diagonal Hessian from @eq-tsln-rate-H-block-diagonal.  At
+$\underline{\theta}_{\text{loc}} = \underline{\theta}_{\text{loc},\text{MAP}}$,
+the Jacobian and Hessian of $\tilde f_g$ in $\underline{\theta}_{\text{loc}}$
+coordinates match @eq-tsln-rate-faa-di-bruno exactly.  Taking
+``jax.hessian(f_tilde_g)(loc_g_map)`` and extracting the diagonal gives the
+per-gene three-vector $(H_{\mu_{\text{loc}},g}, H_{b_{\text{loc}},g}, H_{k^-_{\text{loc}},g})$;
+``jax.vmap`` over genes produces the full population.  The clamp-aware
+subgradients of ``_twostate_reparam`` (the floors/caps on $\alpha, \beta$ and
+the mean-preserving $r$ rescaling) are handled automatically by JAX.
+
+### Required posterior moments
+
+Beyond the existing Newton-kernel ``softmax_node``, ``$E_q[p]$``, ``$\text{Var}_q[p]$``,
+the global-curvature pass needs:
+
+- $\mathbb{E}_q[\log p]$, $\mathbb{E}_q[\log(1-p)]$ --- for the $(\alpha, \beta)$
+  gradients.
+- $\mathrm{Var}_q[\log p]$, $\mathrm{Var}_q[\log(1-p)]$,
+  $\mathrm{Cov}_q[\log p, \log(1-p)]$ --- for the $(\alpha, \beta)$ Hessian.
+
+These are five additional $K$-axis dot-products with ``softmax_node`` per
+cell, all $\mathcal{O}(G K)$ flops.  Digamma/trigamma evaluations at
+$(\alpha_g, \beta_g, \alpha_g + \beta_g)$ are $\mathcal{O}(G)$ per cell.  Summing
+across cells gives the population-summed natural-basis curvature in
+$\mathcal{O}(C G K)$ flops --- the same order as one Newton iterate.  The
+Faà di Bruno chain is $\mathcal{O}(G)$ (a $3\times3$ Hessian per gene), an
+order of magnitude smaller.
+
+### Verification against autodiff
+
+The hand-derivation is cross-checked against ``hessian_diag_chunked`` in
+``tests/test_twostate_ln_rate_global_curvature.py``.  On a small synthetic fit
+(C=18, G=10, k=2) the closed-form path agrees with the autodiff diagonal
+extractor on all three gene-globals to float32 precision (relative tolerance
+5e-3, comfortably within autodiff's roundoff for forward-over-reverse Hessians
+through ``_twostate_reparam``).  If this test ever fails after a kernel
+change, the implementer should re-check the math in this section before
+debugging the code.
+
 ## Practical recommendations {#sec-twostate-tsln-rate-practical}
 
 ### Decision tree {#sec-twostate-tsln-rate-decision}

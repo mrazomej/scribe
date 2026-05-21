@@ -396,6 +396,45 @@ def woodbury_inv_diag_and_col(
     return inv_diag, L_S
 
 
+def woodbury_apply_inv(
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    v: jnp.ndarray,
+) -> jnp.ndarray:
+    r"""Apply ``(W W^T + diag(d))^{-1}`` to a vector via Woodbury.
+
+    .. math::
+        \Sigma^{-1} v
+        = D^{-1} v - D^{-1} W S^{-1} W^T D^{-1} v
+
+    where :math:`D = \mathrm{diag}(d)` and
+    :math:`S = I_k + W^T D^{-1} W`.  Used by callers that need the
+    full ``Σ^{-1} v`` action (e.g. the MVN gradient ``g_logr`` in
+    TSLN-Rate's hand-derived global curvature path); for the
+    diagonal-only path use :func:`woodbury_inv_diag`.
+
+    Parameters
+    ----------
+    W : jnp.ndarray, shape ``(G, k)``
+    d : jnp.ndarray, shape ``(G,)``
+        Positive diagonal of ``Σ``.
+    v : jnp.ndarray, shape ``(G,)``
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(G,)``
+        ``Σ^{-1} v``.
+    """
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    Dv = inv_d * v                                  # (G,)
+    WT_Dv = W.T @ Dv                                # (k,)
+    S = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_S = jnp.linalg.cholesky(S)
+    y = jax.scipy.linalg.cho_solve((L_S, True), WT_Dv)
+    return Dv - inv_d * (W @ y)
+
+
 # =====================================================================
 # Chunked Hessian-diagonal extraction
 # =====================================================================

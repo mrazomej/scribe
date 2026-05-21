@@ -1040,20 +1040,131 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             "k_off_loc": ko_loc,
         }
 
-        # For each (un)frozen parameter, compute per-gene curvature.
-        # ``jax.hessian + jnp.diag`` would materialize the (G, G)
-        # Hessian PLUS a transient (C, G, G) tensor in the forward-
-        # over-reverse autodiff trace (XLA can't fuse the per-cell
-        # contributions before summing), which at production scale
-        # (G ~ 10K, C ~ several thousand) overflows GPU memory.
-        # ``hessian_diag_chunked`` evaluates the diagonal directly
-        # via the index trick, processing one chunk of genes at a
-        # time so the transient is bounded by ``chunk_size``.
-        from ._global_uncertainty import hessian_diag_chunked
-        for name, argnum, loc_val, prior in (
-            ("mu", 0, mu_loc, self._prior_mu),
-            ("burst_size", 1, bs_loc, self._prior_burst_size),
-            ("k_off", 2, ko_loc, self._prior_k_off),
+        # ---- Hand-derived global curvature ------------------------------
+        # See paper/_two_state_promoter.qmd
+        #   §sec-twostate-tsln-rate-global-uncertainty
+        # for the full derivation.  Strategy:
+        #
+        #   (1) Compute the data-side NLP gradient + Hessian in the
+        #       (α, β) natural basis via the closed-form softmax-moment
+        #       reductions in ``global_curvature_rate_summed`` (no
+        #       autodiff, no transient (C, G, G) tensor).
+        #   (2) Add the MVN prior contribution to the (log r, log r)
+        #       diagonal entry (and the log-r gradient at the MAP).
+        #       The MVN block is independent of (α, β) so the 3×3
+        #       Hessian in (α, β, log r) is block-diagonal.
+        #   (3) Per-gene Faà di Bruno chain through ``_twostate_reparam``
+        #       and the configured ``pos_forward`` transforms to
+        #       extract the (mu_loc, burst_size_loc, k_off_loc) Hessian
+        #       diagonal.  Implemented via the quadratic-substitution
+        #       trick: build a per-gene scalar
+        #
+        #           f̃(loc) = g_φ^T δ + 0.5 δ^T H_φ δ,
+        #           δ = φ(loc) - φ(loc_MAP),
+        #
+        #       and call ``jax.hessian(f̃)(loc_MAP)`` — its diagonal
+        #       equals the Faà di Bruno expansion of ∂²f/∂loc² exactly.
+        #       ``jax`` handles the ``_twostate_reparam`` clamps via
+        #       their subgradients.
+        from ._newton_twostate_ln_rate import global_curvature_rate_summed
+        from ._global_uncertainty import (
+            woodbury_inv_diag, woodbury_apply_inv,
+        )
+
+        mu_at_map = self._mu_fwd(mu_loc)
+        bs_at_map = self._bs_fwd(bs_loc)
+        ko_at_map = self._ko_fwd(ko_loc)
+        alpha_at_map, beta_at_map, rate_at_map, _ = _twostate_reparam(
+            mu_at_map, bs_at_map, ko_at_map,
+        )
+        log_rate_at_map = jnp.log(jnp.maximum(rate_at_map, 1e-30))
+
+        # eta_cap for the data-side helper (zeros under no-capture).
+        if eta_map_sg is None:
+            eta_cap_for_curv = jnp.zeros(
+                (n_cells,), dtype=mu_at_map.dtype,
+            )
+        else:
+            eta_cap_for_curv = eta_map_sg
+
+        curv = global_curvature_rate_summed(
+            x_map=x_map_sg,
+            counts=counts,
+            alpha=alpha_at_map,
+            beta=beta_at_map,
+            eta_cap=eta_cap_for_curv,
+            n_quad_nodes=n_quad_nodes,
+        )
+
+        # MVN prior contribution in the (log r) axis:
+        #   mvn_lp = -1/2 Σ_c (x_c - mu_x)^T Σ^{-1} (x_c - mu_x), mu_x = log r
+        #   ∂(-mvn_lp)/∂log r_g  = -Σ_c [Σ^{-1}(x_c - log r)]_g
+        #                        = -[Σ^{-1} (Σ_c x_c - C·log r)]_g
+        #   ∂²(-mvn_lp)/∂log r_g²= +C (Σ^{-1})_{gg}
+        sigma_inv_diag = woodbury_inv_diag(W_sg, d_sg)            # (G,)
+        H_logr_logr_mvn = float(n_cells) * sigma_inv_diag         # (G,)
+        sum_diff = jnp.sum(x_map_sg, axis=0) - float(n_cells) * log_rate_at_map
+        g_logr_mvn = -woodbury_apply_inv(W_sg, d_sg, sum_diff)    # (G,)
+
+        # Stitch per-gene φ-basis gradient and 3×3 Hessian.
+        #   φ = (α, β, log r)
+        #   data fills (α, β) block; MVN fills (log r) entry only.
+        g_phi = jnp.stack(
+            [curv["g_alpha"], curv["g_beta"], g_logr_mvn], axis=-1,
+        )                                                          # (G, 3)
+        # H_phi shape (G, 3, 3) — symmetric.
+        zero_g = jnp.zeros_like(curv["g_alpha"])
+        H_phi = jnp.stack(
+            [
+                jnp.stack([curv["H_aa"], curv["H_ab"], zero_g], axis=-1),
+                jnp.stack([curv["H_ab"], curv["H_bb"], zero_g], axis=-1),
+                jnp.stack([zero_g,       zero_g,       H_logr_logr_mvn],
+                          axis=-1),
+            ],
+            axis=-2,
+        )                                                          # (G, 3, 3)
+        phi_at_map = jnp.stack(
+            [alpha_at_map, beta_at_map, log_rate_at_map], axis=-1,
+        )                                                          # (G, 3)
+
+        # Capture the configured pos_forward closures for the per-gene
+        # chain.  All three transforms are scalar→scalar; the chain
+        # function evaluates them on a single gene's loc triple.
+        mu_fwd, bs_fwd, ko_fwd = self._mu_fwd, self._bs_fwd, self._ko_fwd
+
+        def _per_gene_chain_diag(
+            loc_arr: jnp.ndarray,                # (3,) = (mu_loc, bs_loc, ko_loc)
+            phi_map_g: jnp.ndarray,              # (3,)
+            g_phi_g: jnp.ndarray,                # (3,)
+            H_phi_g: jnp.ndarray,                # (3, 3)
+        ) -> jnp.ndarray:
+            """Faà di Bruno via quadratic substitution; returns (3,) diag."""
+            def f_local(loc_v):
+                mu_v = mu_fwd(loc_v[0])
+                bs_v = bs_fwd(loc_v[1])
+                ko_v = ko_fwd(loc_v[2])
+                a_v, b_v, r_v, _ = _twostate_reparam(mu_v, bs_v, ko_v)
+                phi_v = jnp.stack(
+                    [a_v, b_v, jnp.log(jnp.maximum(r_v, 1e-30))]
+                )
+                delta = phi_v - phi_map_g
+                return jnp.dot(g_phi_g, delta) + 0.5 * jnp.dot(
+                    delta, jnp.dot(H_phi_g, delta),
+                )
+            return jnp.diag(jax.hessian(f_local)(loc_arr))
+
+        loc_at_map = jnp.stack([mu_loc, bs_loc, ko_loc], axis=-1)  # (G, 3)
+        H_loc_diag = jax.vmap(_per_gene_chain_diag)(
+            loc_at_map, phi_at_map, g_phi, H_phi,
+        )                                                           # (G, 3)
+        H_mu_loc = H_loc_diag[:, 0]
+        H_bs_loc = H_loc_diag[:, 1]
+        H_ko_loc = H_loc_diag[:, 2]
+
+        for name, hess_diag, loc_val, prior in (
+            ("mu",         H_mu_loc, mu_loc, self._prior_mu),
+            ("burst_size", H_bs_loc, bs_loc, self._prior_burst_size),
+            ("k_off",      H_ko_loc, ko_loc, self._prior_k_off),
         ):
             if name in self._frozen_params:
                 # Frozen: NaN sentinels (mirrors NBLN convention; the
@@ -1062,16 +1173,6 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 out[f"{name}_scale"] = jnp.full_like(loc_val, jnp.nan)
                 continue
 
-            hess_diag = hessian_diag_chunked(
-                neg_log_post,
-                (mu_loc, bs_loc, ko_loc),
-                argnum=argnum,
-                chunk_size=int(
-                    getattr(self, "_hess_diag_chunk_size", 128)
-                ),
-            )
-            # Add prior precision: ∂² (-log Normal(loc, scale)) / ∂loc²
-            # = 1 / scale² (constant in loc).
             prior_prec = _prior_precision(prior)
             curvature = hess_diag + prior_prec
             scale, diagnostics = curvature_to_scale(curvature)
