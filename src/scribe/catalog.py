@@ -681,7 +681,7 @@ class ExperimentCatalog:
             all_null = True
             for exp in experiments:
                 value = exp.metadata.get(param)
-                if value is not None and value != "null":
+                if value is not None and value not in ("null", "none"):
                     all_null = False
                     break
             if all_null:
@@ -810,6 +810,10 @@ class ExperimentCatalog:
             matches = True
 
             for key, value in filters.items():
+                # None filter values act as wildcards: skip this key entirely.
+                if value is None:
+                    continue
+
                 normalized_filter_value = self._normalize_comma_delimited_value(
                     value
                 )
