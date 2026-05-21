@@ -394,3 +394,97 @@ def woodbury_inv_diag_and_col(
     T = Z.T
     inv_diag = inv_d - jnp.sum(T * T, axis=-1)
     return inv_diag, L_S
+
+
+# =====================================================================
+# Chunked Hessian-diagonal extraction
+# =====================================================================
+#
+# ``jax.hessian(f, argnums=k)(x)`` followed by ``jnp.diag(...)`` is
+# the lazy way to get ``∂²f/∂x_i²`` for a vector parameter ``x``.  It
+# materialises the entire ``(G, G)`` Hessian, and in the process
+# JAX's forward-over-reverse traces through every cell-level
+# intermediate before summing — leading to a transient ``(C, G, G)``
+# tensor when ``f`` is a per-cell-sum-then-scalar closure.  At
+# production scale (G ~ 10K, C ~ several thousand) this is hundreds
+# of GB.
+#
+# ``hessian_diag_chunked`` evaluates the diagonal directly via the
+# index trick — for each gene ``i``, compute the second derivative
+# along the ``i``-th coordinate via ``jax.grad(jax.grad(f, by i), by
+# i)``.  Memory per chunk scales with ``chunk_size``, not ``G``;
+# total flops are the same as the full Hessian (one second-derivative
+# per gene), but the transient never exceeds the chunk size.
+
+
+def hessian_diag_chunked(
+    f: Callable,
+    args: Tuple[Any, ...],
+    argnum: int,
+    *,
+    chunk_size: int = 128,
+) -> jnp.ndarray:
+    """Diagonal of ``∇²f`` wrt ``args[argnum]``, computed in gene chunks.
+
+    Drop-in replacement for ``jnp.diag(jax.hessian(f, argnums=argnum)
+    (*args))`` that bounds peak memory by ``chunk_size``.
+
+    Parameters
+    ----------
+    f : Callable
+        Scalar function of ``args``.  Must be jit-compatible
+        elementwise on the chunked axis (the cost is dominated by
+        the inner ``f`` evaluation, not the chunking).
+    args : Tuple
+        Positional arguments forwarded to ``f``.  ``args[argnum]`` is
+        the array whose Hessian-diagonal is wanted; treated as 1-D in
+        this implementation.
+    argnum : int
+        Index of the argument to differentiate against.
+    chunk_size : int, default 128
+        Number of genes processed per inner ``vmap``.  Smaller values
+        use less peak memory but more sequential overhead.
+
+    Returns
+    -------
+    diag : jnp.ndarray, shape ``(G,)`` where ``G = args[argnum].shape[0]``
+        Diagonal entries ``∂²f/∂x_i²`` for each ``i``.
+
+    Notes
+    -----
+    The implementation uses the **index trick** rather than computing
+    the full ``(G, G)`` Hessian:
+
+    .. code-block:: python
+
+        ∂²f/∂x_i² = (∂/∂x_i)(∂f/∂x_i)
+                  = ∂/∂x_i [grad_f(x)[i]]
+                  = jax.grad(lambda y: grad_f(y)[i])(x)[i]
+
+    Wrapped in ``jax.vmap`` over a chunk of gene indices to amortise
+    the gradient-of-gradient setup cost; the outer Python loop walks
+    over chunks so the autodiff intermediate never spans all ``G``.
+    """
+    x = args[argnum]
+    G = int(x.shape[0])
+
+    def _f_indexed(x_local, i):
+        """Return ``∂f/∂x_i`` evaluated at the local argument."""
+        new_args = list(args)
+        new_args[argnum] = x_local
+        return jax.grad(f, argnums=argnum)(*new_args)[i]
+
+    def _diag_at(i):
+        """Return ``∂²f/∂x_i² = (∂/∂x_i)(∂f/∂x_i)``."""
+        return jax.grad(_f_indexed, argnums=0)(x, i)[i]
+
+    # JIT the inner vmap so XLA can specialise the chunked
+    # second-derivative graph once and reuse it.
+    _diag_chunk = jax.jit(jax.vmap(_diag_at))
+
+    pieces = []
+    for start in range(0, G, int(chunk_size)):
+        end = min(start + int(chunk_size), G)
+        idx = jnp.arange(start, end)
+        pieces.append(_diag_chunk(idx))
+    return jnp.concatenate(pieces)

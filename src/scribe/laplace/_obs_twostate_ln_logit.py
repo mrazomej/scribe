@@ -938,6 +938,12 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
             "eta_anchor_loc": eta_anchor_loc,
         }
 
+        # See ``_obs_twostate_ln_rate.compute_global_uncertainty`` for
+        # the rationale on swapping ``jax.hessian + jnp.diag`` for
+        # the chunked diagonal extractor.  Same memory issue applies
+        # here: the per-cell forward-over-reverse intermediate is
+        # ``(C, G, G)`` ≈ hundreds of GB at production scale.
+        from ._global_uncertainty import hessian_diag_chunked
         for name, argnum, loc_val, prior in (
             ("rate", 0, rate_loc, self._prior_rate),
             ("kappa", 1, kappa_loc, self._prior_kappa),
@@ -947,10 +953,14 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
                 out[f"{name}_scale"] = jnp.full_like(loc_val, jnp.nan)
                 continue
 
-            hess_full = jax.hessian(neg_log_post, argnums=argnum)(
-                rate_loc, kappa_loc, eta_anchor_loc,
+            hess_diag = hessian_diag_chunked(
+                neg_log_post,
+                (rate_loc, kappa_loc, eta_anchor_loc),
+                argnum=argnum,
+                chunk_size=int(
+                    getattr(self, "_hess_diag_chunk_size", 128)
+                ),
             )
-            hess_diag = jnp.diag(hess_full)
             prior_prec = _prior_precision(prior, n_g)
             curvature = hess_diag + prior_prec
             scale, diagnostics = curvature_to_scale(curvature)

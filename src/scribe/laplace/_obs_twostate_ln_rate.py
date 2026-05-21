@@ -1041,10 +1041,15 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         }
 
         # For each (un)frozen parameter, compute per-gene curvature.
-        # ``jnp.diag(jax.hessian(...))`` materializes the (G, G)
-        # Hessian; for G ≤ ~2000 this is acceptable as a one-shot
-        # post-fit calculation.  For larger gene panels, replace with
-        # an HVP-based diagonal extraction.
+        # ``jax.hessian + jnp.diag`` would materialize the (G, G)
+        # Hessian PLUS a transient (C, G, G) tensor in the forward-
+        # over-reverse autodiff trace (XLA can't fuse the per-cell
+        # contributions before summing), which at production scale
+        # (G ~ 10K, C ~ several thousand) overflows GPU memory.
+        # ``hessian_diag_chunked`` evaluates the diagonal directly
+        # via the index trick, processing one chunk of genes at a
+        # time so the transient is bounded by ``chunk_size``.
+        from ._global_uncertainty import hessian_diag_chunked
         for name, argnum, loc_val, prior in (
             ("mu", 0, mu_loc, self._prior_mu),
             ("burst_size", 1, bs_loc, self._prior_burst_size),
@@ -1057,10 +1062,14 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 out[f"{name}_scale"] = jnp.full_like(loc_val, jnp.nan)
                 continue
 
-            hess_full = jax.hessian(neg_log_post, argnums=argnum)(
-                mu_loc, bs_loc, ko_loc,
-            )  # shape (G, G)
-            hess_diag = jnp.diag(hess_full)
+            hess_diag = hessian_diag_chunked(
+                neg_log_post,
+                (mu_loc, bs_loc, ko_loc),
+                argnum=argnum,
+                chunk_size=int(
+                    getattr(self, "_hess_diag_chunk_size", 128)
+                ),
+            )
             # Add prior precision: ∂² (-log Normal(loc, scale)) / ∂loc²
             # = 1 / scale² (constant in loc).
             prior_prec = _prior_precision(prior)
