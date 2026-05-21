@@ -318,6 +318,34 @@ def test_capture_mode_p_capture_only_converts_to_eta():
     assert bundle["eta"]["loc"].shape == (N,)
 
 
+def test_capture_mode_phi_only_cell_mismatch_raises():
+    G, N_src, N_tgt = 5, 7, 4
+    var_names = np.array([f"g{i}" for i in range(G)])
+    results = _make_basic_results(
+        G=G, N=N_src, with_eta=False, with_phi=True, var_names=var_names
+    )
+    with pytest.raises(ValueError, match="target expects"):
+        priors_from_results(
+            results, target_positive_transform="exp",
+            target_n_genes=G, target_n_cells=N_tgt,
+            target_gene_names=var_names, n_samples=200,
+        )
+
+
+def test_capture_mode_eta_cell_mismatch_raises():
+    G, N_src, N_tgt = 5, 7, 4
+    var_names = np.array([f"g{i}" for i in range(G)])
+    results = _make_basic_results(
+        G=G, N=N_src, with_eta=True, with_phi=False, var_names=var_names
+    )
+    with pytest.raises(ValueError, match="target expects"):
+        priors_from_results(
+            results, target_positive_transform="exp",
+            target_n_genes=G, target_n_cells=N_tgt,
+            target_gene_names=var_names, n_samples=200,
+        )
+
+
 def test_capture_mode_none_warns_and_omits_eta(scribe_caplog):
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
@@ -648,6 +676,29 @@ def test_freeze_values_from_results_maps_phi_capture_to_eta():
     p_expected = phi_capture_map / (1.0 + phi_capture_map)
     expected = -jnp.log(jnp.clip(p_expected, 1e-8, 1.0 - 1e-8))
     np.testing.assert_allclose(fv["eta"]["loc"], expected, atol=1e-6)
+
+
+def test_freeze_values_from_results_eta_cell_mismatch_raises():
+    """When source/target cells mismatch, eta freeze should fail fast."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N_src, N_tgt = 4, 6, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N_src, var_names=var_names)._samples
+    eta_map = jnp.asarray(np.linspace(0.1, 0.9, N_src).astype(np.float32))
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N_src, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=eta_map,
+    )
+    with pytest.raises(ValueError, match="expected"):
+        freeze_values_from_results(
+            results,
+            target_positive_transform="exp",
+            target_n_genes=G, target_n_cells=N_tgt,
+            target_gene_names=var_names,
+            freeze_params=("r", "eta"),
+            verbose=False,
+        )
 
 
 def test_freeze_values_subset_only():
