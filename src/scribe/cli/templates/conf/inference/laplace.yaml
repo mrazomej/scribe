@@ -1,0 +1,69 @@
+# @package inference
+#
+# Laplace Inference Configuration
+# ==============================
+#
+# Laplace inference uses an outer optimization loop over global parameters and
+# an inner per-cell Newton solve for latent MAP estimates.
+
+method: laplace
+
+# -----------------------------------------------------------------------------
+# Precision and runtime
+# -----------------------------------------------------------------------------
+# enable_x64:
+# - null  : use method default
+# - true  : force float64 for difficult numerical regimes
+# - false : force float32
+enable_x64: null
+
+# Number of outer optimization iterations.
+n_steps: 50_000
+
+# Mini-batch size for the outer loop:
+# - null: full-batch updates
+# - int : stochastic mini-batching
+batch_size: null
+
+# Leave null for engine defaults.
+optimizer_config: null
+
+# Emit plain progress lines (useful in non-interactive logs).
+log_progress_lines: false
+
+# Track and restore best-loss parameters.
+restore_best: false
+
+# -----------------------------------------------------------------------------
+# Laplace-specific Newton controls
+# -----------------------------------------------------------------------------
+# Number of inner Newton updates per outer step.
+n_newton_steps: 5
+
+# Final per-cell Newton convergence threshold (diagnostic).
+newton_tolerance: 0.0001
+
+# Tikhonov damping added to Newton Hessian solves.
+damping: 0.01
+
+# Maximum absolute coordinate step in a Newton update.
+newton_max_step: 5.0
+
+# Action when Newton convergence diagnostic fails:
+# - "warn", "raise", "ignore"
+convergence_action: "warn"
+
+# -----------------------------------------------------------------------------
+# Early stopping
+# -----------------------------------------------------------------------------
+early_stopping:
+  enabled: false
+  patience: 500
+  min_delta: 1.0
+  min_delta_pct: null
+  check_every: 100
+  warmup: 5000
+  smoothing_window: 100
+  checkpoint_every: 500
+  restore_best: true
+  resume: true

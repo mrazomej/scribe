@@ -17,6 +17,7 @@ _TEMPLATE_REL_PATHS = [
     "conf/inference/svi.yaml",
     "conf/inference/mcmc.yaml",
     "conf/inference/vae.yaml",
+    "conf/inference/laplace.yaml",
     "conf/viz/default.yaml",
     "conf/amortization/capture.yaml",
     "conf/slurm/README.md",

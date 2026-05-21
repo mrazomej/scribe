@@ -16,6 +16,7 @@ for your own project.
 - `inference/svi.yaml`: stochastic variational inference defaults.
 - `inference/mcmc.yaml`: MCMC defaults.
 - `inference/vae.yaml`: VAE defaults (inherits SVI settings).
+- `inference/laplace.yaml`: Laplace defaults with Newton controls.
 - `viz/default.yaml`: visualization defaults for `scribe-visualize`.
 - `amortization/capture.yaml`: optional capture amortization preset.
 - `slurm/default.yaml`: reusable SLURM profile for CLI launchers.
@@ -34,6 +35,16 @@ for your own project.
    scribe-infer --config-path ./conf data=<your_dataset>
    ```
 5. Optionally customize priors, model flags, and inference settings.
+
+## Advanced Models and Laplace
+
+- Use `model=<name>` for non-DM families (`pln`, `nbln`, `lnm`, `lnmvcp`,
+  `twostate`, `twostatevcp`, `twostate_ln_rate`, `twostate_ln_logit`).
+- Use `inference=laplace` for Laplace-supported models.
+- `twostate_ln_rate` and `twostate_ln_logit` are Laplace-only models.
+- Cascade runs can be configured with `informative_priors_from`,
+  `informative_priors_tau`, `informative_priors_freeze`, and
+  `cascade_map_method`.
 
 ## Local Output Paths
 

@@ -23,6 +23,10 @@ dirname_aliases:
     guide_rank: rank
     model: model
     data: data
+    latent_dim: latdim
+    d_mode: dmode
+    alr_reference_idx: alrref
+    gene_coverage: genecov
 
     # -------------------------------------------------------------------------
     # Mixture and annotation controls
@@ -62,6 +66,8 @@ dirname_aliases:
     expression_anchor_sigma: meananchorsigma
     priors.capture_efficiency: captureprior
     priors.mixing: mixprior
+    informative_priors_tau: iptau
+    cascade_map_method: cascademap
 
     # -------------------------------------------------------------------------
     # Inference controls
@@ -71,4 +77,7 @@ dirname_aliases:
     inference.n_samples: nsamples
     inference.n_warmup: nwarmup
     inference.method: method
+    inference.n_newton_steps: nnewton
+    inference.damping: damping
+    kl_annealing_warmup: klwarmup
 

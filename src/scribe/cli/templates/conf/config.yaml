@@ -35,6 +35,16 @@ defaults:
 # - zero_inflation=true,  variable_capture=false -> zinb
 # - zero_inflation=false, variable_capture=true  -> nbvcp
 # - zero_inflation=true,  variable_capture=true  -> zinbvcp
+#
+# Advanced model families are selected with explicit overrides, for example:
+# - model=pln
+# - model=nbln
+# - model=lnm
+# - model=lnmvcp
+# - model=twostate parameterization=natural
+# - model=twostatevcp parameterization=natural
+# - model=twostate_ln_rate inference=laplace
+# - model=twostate_ln_logit inference=laplace
 zero_inflation: false
 variable_capture: false
 
@@ -114,6 +124,19 @@ neg_tau: 1.0
 # Transform for positive parameters in unconstrained space
 positive_transform: "softplus"
 
+# Latent factor rank used by PLN/NBLN/LNM-family models and VAE.
+latent_dim: null
+
+# Diagonal residual mode for PLN/LNM-family latent log-rate covariance.
+# Typical values: low_rank, learned
+d_mode: null
+
+# Optional ALR reference gene index for LNM-family models.
+alr_reference_idx: null
+
+# Optional pre-fit gene coverage threshold.
+gene_coverage: null
+
 # -----------------------------------------------------------------------------
 # Capture / mean anchoring priors
 # -----------------------------------------------------------------------------
@@ -190,6 +213,13 @@ priors:
   capture_efficiency: null
   capture_scaling: null
 
+  # Shrinkage strategy for loadings matrix W (PLN/NBLN Laplace workflows).
+  # Example:
+  # loadings:
+  #   type: horseshoe_columnwise
+  #   tau_scale: 1.0
+  loadings: null
+
 # -----------------------------------------------------------------------------
 # Optional amortization block (mostly used in VCP models)
 # -----------------------------------------------------------------------------
@@ -218,6 +248,16 @@ svi_init: null
 
 # resume_from: prior run dir/checkpoints/results path for continuation
 resume_from: null
+
+# SVI -> Laplace informative-prior cascade controls.
+# informative_priors_from accepts a path to a prior scribe_results.pkl.
+informative_priors_from: null
+informative_priors_tau: 1.0
+informative_priors_freeze: null
+cascade_map_method: null
+
+# VAE KL annealing warmup (steps). Null uses method defaults.
+kl_annealing_warmup: null
 
 # -----------------------------------------------------------------------------
 # General settings
