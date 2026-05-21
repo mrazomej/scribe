@@ -50,12 +50,14 @@ path: "data/my_experiment/counts.h5ad"
 # small for stable inference.
 # min_cells_per_dataset: 1000
 
-# ---- Optional: cascade dataset index ---------------------------------------
-# When cascading from a multi-dataset hierarchical fit (e.g. NBVCP) to a
-# single-dataset model (e.g. NBLN Laplace), set the 0-based index of the
-# dataset to extract via get_dataset() before the cascade.
-# This lets per-pair YAML generators burn in the correct index at creation
-# time, avoiding manual mismatches at inference time.
+# ---- Optional: cascade source ------------------------------------------------
+# For cascade workflows (e.g. NBVCP -> NBLN Laplace), burn the path to the
+# hierarchical scribe_results.pkl into the data YAML.  The runner loads it
+# automatically so you don't need informative_priors_from= on the CLI.
+# informative_priors_from: "/path/to/hierarchical/scribe_results.pkl"
+#
+# When the cascade source is a multi-dataset hierarchical fit, also set
+# prior_index to the 0-based dataset index to extract via get_dataset().
 # prior_index: 0
 
 # ---- Optional: split orchestration -----------------------------------------

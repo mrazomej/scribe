@@ -255,6 +255,7 @@ resume_from: null
 # data.prior_index in the data YAML to select the dataset slice.
 informative_priors_from: null
 informative_priors_tau: 1.0
+informative_priors_n_samples: 1000
 informative_priors_freeze: null
 cascade_map_method: null
 

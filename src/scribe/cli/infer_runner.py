@@ -28,6 +28,7 @@ import json
 import pickle
 import os
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from collections import Counter
@@ -1046,9 +1047,11 @@ def main(cfg: DictConfig) -> None:
 
     # Load SVI results for MCMC chain initialization (if path is provided)
     svi_init_results = _load_svi_init(cfg.get("svi_init"), console)
-    informative_priors_source = _load_svi_init(
-        cfg.get("informative_priors_from"), console
+    # Resolve cascade source: top-level override wins, data YAML is fallback.
+    _cascade_path = cfg.get("informative_priors_from") or cfg.data.get(
+        "informative_priors_from"
     )
+    informative_priors_source = _load_svi_init(_cascade_path, console)
     # Index into a single dataset when the cascade source is multi-dataset.
     # Lives under data.prior_index so it can be burned into per-pair YAMLs.
     informative_priors_dataset_index = cfg.data.get("prior_index")
@@ -1161,6 +1164,9 @@ def main(cfg: DictConfig) -> None:
         "svi_init": svi_init_results,
         "informative_priors_from": informative_priors_source,
         "informative_priors_tau": cfg.get("informative_priors_tau", 1.0),
+        "informative_priors_n_samples": cfg.get(
+            "informative_priors_n_samples", 1000
+        ),
         "informative_priors_freeze": informative_priors_freeze,
         "cascade_map_method": cfg.get("cascade_map_method"),
         # Data configuration
