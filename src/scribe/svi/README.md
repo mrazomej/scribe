@@ -784,6 +784,12 @@ the fit-time `_label_map` and `_component_mapping` metadata. This guarantees
 that per-dataset visualization and component lookups reuse the original
 label-to-component assignment rather than reconstructing a dataset-local order.
 
+`get_dataset(i)` also forwards gene-coverage metadata (`_gene_coverage_mask`,
+`_gene_coverage`, `_excluded_gene_names`, `_original_n_genes`,
+`_total_count_max`) so that per-dataset visualization routines (e.g. PPC) can
+align raw counts from the original gene space back to the model's filtered
+gene space.
+
 **Posterior sample subsetting:** `get_dataset()` uses `derive_axis_membership`
 to resolve which posterior keys carry a dataset axis, then slices them via
 layout-aware indexing.  This ensures that **derived** posterior keys (e.g. `mu`

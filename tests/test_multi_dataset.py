@@ -517,6 +517,33 @@ class TestSVIDatasetMixin:
         assert ds0._label_map == results._label_map
         assert ds0._component_mapping is results._component_mapping
 
+    def test_get_dataset_preserves_gene_coverage_metadata(
+        self, multi_dataset_svi_results
+    ):
+        """Dataset subsetting should keep gene-coverage mask and metadata.
+
+        Without this, per-dataset viz alignment (e.g. PPC) cannot map
+        raw counts back to the model's filtered gene space and raises a
+        ValueError.
+        """
+        results = multi_dataset_svi_results
+        n_original = 20
+        mask = np.zeros(n_original, dtype=bool)
+        mask[:results.n_genes] = True
+        results._gene_coverage_mask = mask
+        results._gene_coverage = 0.99
+        results._excluded_gene_names = ["geneA", "geneB"]
+        results._original_n_genes = n_original
+        results._total_count_max = 5000
+
+        ds0 = results.get_dataset(0)
+
+        np.testing.assert_array_equal(ds0._gene_coverage_mask, mask)
+        assert ds0._gene_coverage == 0.99
+        assert ds0._excluded_gene_names == ["geneA", "geneB"]
+        assert ds0._original_n_genes == n_original
+        assert ds0._total_count_max == 5000
+
 
 # ==============================================================================
 # _slice_param_for_dataset broadcasting
