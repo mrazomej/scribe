@@ -797,8 +797,14 @@ class ModelConfigBuilder:
             vae=vae_config,
             d_mode=self._d_mode,
             alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
+            # Fallback matches ``__init__``'s default (``True`` — the
+            # current runtime legacy default).  Using ``False`` here
+            # would silently flip semantics if the attribute is ever
+            # absent (e.g. a subclass that skips ``__init__``), routing
+            # PLN/NBLN/TSLN-Rate/TSLN-Logit through the not-yet-
+            # implemented decoupled-math path.
             correlate_other_column=getattr(
-                self, "_correlate_other_column", False
+                self, "_correlate_other_column", True
             ),
             positive_transform=self._positive_transform,
         )

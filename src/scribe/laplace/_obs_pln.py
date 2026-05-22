@@ -25,7 +25,7 @@ Result packaging: ``x_loc = latent_loc``; ``globals`` exposes
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp

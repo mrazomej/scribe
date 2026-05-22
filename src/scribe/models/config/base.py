@@ -461,27 +461,26 @@ class ModelConfig(BaseModel):
     # recovers the legacy behaviour where ``_other`` participates in Σ
     # as a regular gene.
     #
-    # **Current default: ``True`` (legacy)** for the harmonic-hare
-    # Commit 2 release.  This is a deliberate inversion: the scaffolding
-    # for the decoupled layout has landed (this commit), but the
-    # deviation-parameterised math (loss_fn, Newton, global_uncertainty)
-    # lands in Commit 2b.  Until 2b ships, ``False`` would route any
-    # ``gene_coverage < 1.0`` fit through ``NotImplementedError``.  When
-    # 2b lands the math, the default flips to ``False`` (the
-    # biologically cleaner setting) and ``True`` becomes the explicit
-    # legacy opt-in.
+    # **Current default: ``True`` (legacy).**  The scaffolding
+    # ladder (harmonic-hare Commits 2-6) has all landed: the axis
+    # abstraction (``scribe.laplace._axis_layout``), engine threading
+    # of ``gene_names`` + ``has_pooled_other``, per-model fail-fast
+    # guards on PLN/NBLN/TSLN-Rate/TSLN-Logit, and LNM real wiring
+    # through ALR-reference pinning.  But the deviation-parameterised
+    # math (loss_fn / Newton / global_uncertainty) for the four count
+    # likelihoods is NOT yet implemented — those obs models raise
+    # ``NotImplementedError`` under ``False``.  The default stays
+    # ``True`` until the per-model math commits (2b / 3b / 4b / 5b)
+    # land; at that point the default flips to ``False`` and ``True``
+    # becomes the explicit legacy opt-in.
     #
-    # **LNM / LNMVCP**: LNM excludes the ALR reference gene from Σ by
-    # construction.  When the reference is ``_other`` (which the
-    # gene-coverage stage's auto-selection MAY pick but is not
-    # guaranteed to — auto-selection uses minimum-variance criterion),
-    # LNM realises this decorrelation naturally.  When the reference
-    # is some other gene, ``_other`` remains in the ALR latent and
-    # therefore in Σ.  Commit 6 of the harmonic-hare plan adds real
-    # config wiring so the LNM ALR reference is forced to ``_other``
-    # when ``correlate_other_column=False`` and a pooled column exists,
-    # raising on inconsistent explicit overrides.  Until then, LNM
-    # behaviour under this flag is unchanged.
+    # **LNM / LNMVCP** is the exception: LNM realises the decoupling
+    # without the deviation reparameterisation because the ALR
+    # construction excludes the reference gene from Σ by definition.
+    # Under ``False``, the gene-coverage stage auto-pins
+    # ``alr_reference_idx`` to ``_other``'s position when a pooled
+    # column is present, and rejects explicit non-``_other``
+    # references.  The math commits do not affect LNM.
     #
     # Rationale: ``_other`` is a pooled-counts aggregate, not a real
     # gene, so its row in the regulatory covariance has no biophysical
@@ -491,16 +490,17 @@ class ModelConfig(BaseModel):
     correlate_other_column: bool = Field(
         True,
         description=(
-            "Whether the trailing '_other' pooled column participates in "
-            "the latent low-rank covariance Σ = W Wᵀ + diag(d). "
-            "Current default `True` is the LEGACY behaviour (the new "
-            "decoupled-math path lands in Commit 2b; until then the "
-            "default stays True so existing `gene_coverage < 1.0` fits "
-            "do not break).  When Commit 2b ships, the default flips to "
-            "`False` and `True` becomes the explicit legacy opt-in. "
-            "Applies to PLN/NBLN/TSLN-Rate/TSLN-Logit (raised as "
-            "NotImplementedError under `False` in Commit 2).  LNM "
-            "wiring is in Commit 6."
+            "Whether the trailing '_other' pooled column participates "
+            "in the latent low-rank covariance Σ = W Wᵀ + diag(d).  "
+            "Current default `True` is the LEGACY behaviour.  "
+            "Scaffolding for `False` has landed across "
+            "PLN/NBLN/TSLN-Rate/TSLN-Logit (axis split, engine "
+            "threading, fail-fast guards) and LNM has real wiring via "
+            "ALR-reference auto-pinning, but the deviation-parameterised "
+            "math for the four count likelihoods is not yet implemented "
+            "— they raise NotImplementedError under `False`.  The "
+            "default flips to `False` once the per-model math commits "
+            "(2b/3b/4b/5b) land."
         ),
     )
 

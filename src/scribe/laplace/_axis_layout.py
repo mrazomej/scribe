@@ -108,7 +108,11 @@ class AxisLayout:
 
     def __post_init__(self) -> None:
         # Defensive shape / consistency checks at construction time so
-        # downstream code can rely on the invariants.
+        # downstream code can rely on the invariants.  These guard the
+        # split of W / d / x across the obs and latent axes; a malformed
+        # ``kept_idx`` (wrong dtype, duplicates, out-of-range, or one
+        # that collides with ``other_idx``) would silently corrupt that
+        # split without these checks.
         if self.G_kept > self.G_obs:
             raise ValueError(
                 f"G_kept ({self.G_kept}) must be <= G_obs ({self.G_obs})."
@@ -127,6 +131,39 @@ class AxisLayout:
                 f"Only one trailing '_other' column is supported; got "
                 f"G_kept={self.G_kept}, G_obs={self.G_obs}."
             )
+        # Integer dtype: kept_idx is used for fancy-indexing into
+        # (G_obs,)-shaped arrays; a float dtype would silently fail or
+        # produce wrong slices.
+        if not np.issubdtype(self.kept_idx.dtype, np.integer):
+            raise ValueError(
+                f"kept_idx must have integer dtype; got "
+                f"{self.kept_idx.dtype}."
+            )
+        if self.G_kept > 0:
+            # Values in [0, G_obs).
+            if self.kept_idx.min() < 0 or self.kept_idx.max() >= self.G_obs:
+                raise ValueError(
+                    f"kept_idx values must be in [0, {self.G_obs}); "
+                    f"got min={int(self.kept_idx.min())}, "
+                    f"max={int(self.kept_idx.max())}."
+                )
+            # Strictly increasing implies unique + monotone.
+            if not np.all(np.diff(self.kept_idx) > 0):
+                raise ValueError(
+                    "kept_idx must be strictly increasing (unique and "
+                    "monotone) to preserve target-axis order."
+                )
+            # other_idx must not be present in kept_idx (the two axes
+            # are disjoint by construction).
+            if (
+                self.other_idx is not None
+                and int(self.other_idx) in self.kept_idx
+            ):
+                raise ValueError(
+                    f"other_idx ({self.other_idx}) must not appear in "
+                    "kept_idx; the observation and latent axes are "
+                    "disjoint by construction."
+                )
 
 
 def build_axis_layout(

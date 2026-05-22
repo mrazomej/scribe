@@ -203,6 +203,52 @@ class TestAxisLayoutInvariants:
                 other_idx=4,
             )
 
+    # rev-10 self-audit H2: dtype / range / monotonicity / disjoint
+    # invariants on ``kept_idx``.  These guard the fancy-indexing of
+    # W / d / x across the (G_obs, G_kept) split.
+
+    def test_kept_idx_must_be_integer_dtype(self):
+        with pytest.raises(ValueError, match=r"kept_idx must have integer"):
+            AxisLayout(
+                G_obs=5,
+                G_kept=4,
+                kept_idx=np.arange(4, dtype=np.float32),
+                other_idx=4,
+            )
+
+    def test_kept_idx_out_of_range_raises(self):
+        with pytest.raises(ValueError, match=r"kept_idx values must be in"):
+            AxisLayout(
+                G_obs=5,
+                G_kept=4,
+                kept_idx=np.array([0, 1, 2, 7], dtype=np.int64),
+                other_idx=4,
+            )
+
+    def test_kept_idx_not_monotone_raises(self):
+        with pytest.raises(
+            ValueError, match=r"kept_idx must be strictly increasing"
+        ):
+            AxisLayout(
+                G_obs=5,
+                G_kept=4,
+                kept_idx=np.array([0, 2, 1, 3], dtype=np.int64),
+                other_idx=4,
+            )
+
+    def test_kept_idx_collides_with_other_idx_raises(self):
+        with pytest.raises(
+            ValueError,
+            match=r"other_idx \(2\) must not appear in kept_idx",
+        ):
+            AxisLayout(
+                G_obs=5,
+                G_kept=4,
+                # kept_idx contains other_idx=2 — disallowed.
+                kept_idx=np.array([0, 1, 2, 3], dtype=np.int64),
+                other_idx=2,
+            )
+
 
 # =====================================================================
 # NBLN obs-model integration
@@ -475,6 +521,55 @@ class TestTslnLogitScaffolding:
     NotImplementedError.
     """
 
+    def test_legacy_no_coverage_works(self):
+        """Plain TSLN-Logit fit (no coverage, no _other) trivial layout.
+
+        Symmetric to ``TestPlnScaffolding`` / ``TestTslnRateScaffolding``.
+        Added in rev-10 to close a coverage gap surfaced by the
+        self-audit (TSLN-Logit was the only count model without a
+        direct legacy-path positive test).
+        """
+        import scribe
+
+        adata = _make_adata(20, 6, seed=0)
+        res = scribe.fit(
+            adata,
+            model="twostate_ln_logit",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == 6
+        assert res.G_kept == 6
+        if res.W is not None:
+            assert res.W.shape[0] == 6
+        if res.d is not None:
+            assert res.d.shape == (6,)
+
+    def test_legacy_default_with_gene_coverage(self):
+        """Default `correlate_other_column=True` keeps legacy behaviour
+        under `gene_coverage < 1.0`: `_other` participates in Σ as a
+        regular gene; layout is trivial.  Added in rev-10."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        res = scribe.fit(
+            adata,
+            model="twostate_ln_logit",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+            gene_coverage=0.85,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == res.G_kept
+        assert res.G_obs >= 2
+
     def test_decoupled_raises_from_obs_model(self):
         """Explicit `correlate_other_column=False` with a pooled
         `_other` column triggers the TSLN-Logit obs-model
@@ -502,6 +597,48 @@ class TestTslnLogitScaffolding:
     # detection in the obs model, so the engine-level early-fail
     # set is empty.  See ``TestPlnScaffolding`` for the
     # obs-model-driven test on PLN decoupled.
+
+
+# =====================================================================
+# Decoupled flag + no `_other` column: trivial-layout no-op
+# =====================================================================
+#
+# Symmetry coverage gap closed in rev-10 (self-audit M3): when the
+# user sets ``correlate_other_column=False`` on data that does NOT
+# have a pooled ``_other`` column, the AxisLayout factory should
+# return the trivial layout (decoupled=False) and the fit should run
+# normally without raising the scaffolding's NotImplementedError.
+# This was previously covered for LNM only; the four count models
+# are now exercised in parallel here.
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["nbln", "pln", "twostate_ln_rate", "twostate_ln_logit"],
+)
+def test_decoupled_flag_no_other_column_is_noop(model):
+    """``correlate_other_column=False`` is a no-op when the data has
+    no pooled ``_other`` column.  Under detection priority, the
+    factory falls through to the trivial layout (G_kept == G_obs),
+    and the obs-model's fail-fast guard is NOT triggered."""
+    import scribe
+
+    adata = _make_adata(20, 6, seed=0)
+    # No gene_coverage stage, no manually-named _other gene → the
+    # mask signal is None and the var_names fallback yields False.
+    # The factory returns a trivial layout regardless of the flag.
+    res = scribe.fit(
+        adata,
+        model=model,
+        inference_method="laplace",
+        latent_dim=2,
+        n_steps=5,
+        seed=0,
+        correlate_other_column=False,
+    )
+    assert res.axis_layout is not None
+    assert res.axis_layout.decoupled is False
+    assert res.G_obs == res.G_kept == 6
 
 
 # =====================================================================
