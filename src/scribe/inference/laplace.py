@@ -40,6 +40,8 @@ def _run_laplace_inference(
     cascade_source_counts: Optional[jnp.ndarray] = None,
     cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[Dict[str, Any]] = None,
+    filtered_gene_names: Optional[Any] = None,
+    has_pooled_other: Optional[bool] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -146,6 +148,11 @@ def _run_laplace_inference(
         freeze_values=freeze_values,
         freeze_params=freeze_params,
         w_prior=w_prior,
+        # Axis-layout signals for `correlate_other_column` decoupling
+        # (see `scribe.laplace._axis_layout`).  The engine forwards
+        # them to the per-model obs-model constructors.
+        filtered_gene_names=filtered_gene_names,
+        has_pooled_other=has_pooled_other,
     )
 
     g = run_result.globals
@@ -263,6 +270,10 @@ def _run_laplace_inference(
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
             _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model (``correlate_other_column``
+            # plumbing).  ``None`` when the obs model didn't construct one
+            # (legacy code paths predating the AxisLayout integration).
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     if base_model == "twostate_ln_logit":

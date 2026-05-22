@@ -118,6 +118,11 @@ class ModelConfigBuilder:
         self._vae_params: Dict[str, Any] = {}
         self._d_mode: str = "low_rank"
         self._alr_reference_idx: int = -1
+        # Whether `_other` participates in Σ (PLN/NBLN/TSLN-Rate/-Logit).
+        # See ``ModelConfig.correlate_other_column`` docstring.
+        # Default ``True`` (legacy) for the Commit 2 release; flips to
+        # ``False`` when Commit 2b lands the decoupled-math path.
+        self._correlate_other_column: bool = True
         # Positive-parameter transform: ``"softplus"``, ``"exp"``, or
         # a ``Dict[str, str]`` for per-parameter overrides (the dict
         # form is normalized to internal names by ``ModelConfig``'s
@@ -792,5 +797,8 @@ class ModelConfigBuilder:
             vae=vae_config,
             d_mode=self._d_mode,
             alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
+            correlate_other_column=getattr(
+                self, "_correlate_other_column", False
+            ),
             positive_transform=self._positive_transform,
         )

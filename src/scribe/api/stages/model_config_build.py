@@ -114,6 +114,7 @@ def _build_from_kwargs(ctx, kw, d_mode):
             if ctx.alr_reference_idx is not None
             else -1
         ),
+        correlate_other_column=kw.get("correlate_other_column", True),
         guide_rank=kw.get("guide_rank"),
         joint_params=kw.get("joint_params"),
         dense_params=kw.get("dense_params"),

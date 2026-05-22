@@ -116,6 +116,7 @@ def build_axis_layout(
     *,
     correlate_other_column: bool,
     gene_names: Optional[Sequence[str]] = None,
+    has_pooled_other: Optional[bool] = None,
 ) -> AxisLayout:
     """Construct an :class:`AxisLayout` from the data shape and config flag.
 
@@ -124,10 +125,25 @@ def build_axis_layout(
     layout where ``G_kept == G_obs`` and the latent covariance spans
     the full observation axis.
 
-    When ``correlate_other_column=False`` (the default) AND the
-    trailing column is named ``"_other"``, returns a decoupled layout
-    where ``G_kept == G_obs - 1`` and the ``"_other"`` row is split
-    out of the latent covariance.
+    When ``correlate_other_column=False`` (the default) AND a pooled
+    ``"_other"`` column is present, returns a decoupled layout where
+    ``G_kept == G_obs - 1`` and the ``"_other"`` row is split out of
+    the latent covariance.
+
+    Detection priority for the trailing ``"_other"`` column (auditor
+    finding rev-2):
+
+    1. If ``has_pooled_other`` is explicitly ``True``/``False``, use it.
+       This is the **primary** signal for array-input fits where
+       ``gene_names`` may be unavailable (no AnnData).
+    2. Else if ``gene_names[-1] == "_other"``, infer ``True``.
+    3. Else infer ``False``.
+
+    When BOTH ``has_pooled_other`` and ``gene_names`` are supplied,
+    they must agree (auditor finding rev-3, Medium).  Disagreement
+    indicates metadata drift in the pipeline and is raised loudly as
+    a ``ValueError`` — silent disagreement here can corrupt the axis
+    split downstream.
 
     Parameters
     ----------
@@ -138,18 +154,59 @@ def build_axis_layout(
         into legacy behaviour even when an ``"_other"`` column is
         present.
     gene_names : Sequence[str], optional
-        Gene names in observation-axis order.  Used to detect the
-        trailing ``"_other"`` sentinel.  When ``None``, the layout
-        falls back to assuming no trailing aggregate column.
+        Gene names in observation-axis order.  Used as a fallback
+        signal when ``has_pooled_other`` is ``None``.
+    has_pooled_other : bool, optional
+        Primary signal from the gene-coverage stage
+        (``ctx._has_pooled_other`` or equivalent).  When ``True``, the
+        trailing column is the pooled ``"_other"`` aggregate even if
+        ``gene_names`` is unavailable (array-input fits) or carries a
+        different label.  When ``False``, no decoupling regardless of
+        ``gene_names``.  Default ``None`` defers to the names check.
 
     Returns
     -------
     AxisLayout
+
+    Raises
+    ------
+    ValueError
+        When ``has_pooled_other`` and the ``gene_names[-1] == "_other"``
+        check disagree on whether the trailing column is pooled.
     """
     n_genes = int(n_genes)
-    has_other_column = False
+
+    # Names-derived detection: True iff the last gene literal label is
+    # the sentinel.  Only attempt when both names exist and the length
+    # matches the data axis.
+    names_say_other: Optional[bool] = None
     if gene_names is not None and len(gene_names) == n_genes and n_genes > 0:
-        has_other_column = str(gene_names[-1]) == _OTHER_NAME
+        names_say_other = (str(gene_names[-1]) == _OTHER_NAME)
+
+    # Contradictory-signal check: raise loudly when both signals are
+    # present and disagree (auditor finding rev-3 Medium).
+    if has_pooled_other is not None and names_say_other is not None:
+        if bool(has_pooled_other) != bool(names_say_other):
+            raise ValueError(
+                f"Contradictory '_other' signals: has_pooled_other="
+                f"{bool(has_pooled_other)} but gene_names[-1]="
+                f"{gene_names[-1]!r} "
+                f"({'matches' if names_say_other else 'does not match'} "
+                f"the _OTHER_NAME sentinel {_OTHER_NAME!r}). This "
+                "indicates metadata drift between the gene-coverage "
+                "stage and the gene-names array — silent disagreement "
+                "can corrupt the axis-decoupling. Fix the calling "
+                "pipeline to ensure both signals agree."
+            )
+
+    # Resolve the effective signal in priority order:
+    #   has_pooled_other (explicit primary) > names-derived > False.
+    if has_pooled_other is not None:
+        has_other_column = bool(has_pooled_other)
+    elif names_say_other is not None:
+        has_other_column = bool(names_say_other)
+    else:
+        has_other_column = False
 
     if correlate_other_column or not has_other_column:
         # Legacy / no-_other path: latent covariance spans the full

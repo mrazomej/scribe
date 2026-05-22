@@ -191,6 +191,8 @@ def _laplace_handler(
     cascade_source_counts: Optional[jnp.ndarray] = None,
     cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[dict] = None,
+    filtered_gene_names: Optional[Any] = None,
+    has_pooled_other: Optional[bool] = None,
 ) -> Any:
     """Handler for Laplace-mode inference.
 
@@ -229,6 +231,8 @@ def _laplace_handler(
         cascade_source_counts=cascade_source_counts,
         cascade_subset_info=cascade_subset_info,
         w_prior=w_prior,
+        filtered_gene_names=filtered_gene_names,
+        has_pooled_other=has_pooled_other,
     )
 
 
@@ -267,6 +271,8 @@ def _run_inference(
     cascade_source_counts: Optional[jnp.ndarray] = None,
     cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[dict] = None,
+    filtered_gene_names: Optional[Any] = None,
+    has_pooled_other: Optional[bool] = None,
 ) -> Any:
     """Route inference execution to the appropriate handler.
 
@@ -391,6 +397,10 @@ def _run_inference(
         handler_kwargs["cascade_source_counts"] = cascade_source_counts
         handler_kwargs["cascade_subset_info"] = cascade_subset_info
         handler_kwargs["w_prior"] = w_prior
+        # Axis-layout signals for `correlate_other_column` decoupling
+        # (see `scribe.laplace._axis_layout`).
+        handler_kwargs["filtered_gene_names"] = filtered_gene_names
+        handler_kwargs["has_pooled_other"] = has_pooled_other
 
     if enable_x64:
         import jax

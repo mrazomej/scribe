@@ -84,6 +84,13 @@ def build_config_from_preset(
     # LNM diagonal mode (``lnm`` / ``lnmvcp`` only; see ``ModelConfig.d_mode``)
     d_mode: str = "low_rank",
     alr_reference_idx: int = -1,
+    # Whether the trailing aggregated '_other' column participates in
+    # the latent low-rank covariance.  Current default ``True`` is
+    # legacy (held at True for the Commit 2 release; flips to ``False``
+    # when Commit 2b lands the decoupled-math path).  See
+    # ``scribe.models.config.base.ModelConfig.correlate_other_column``
+    # for the per-model wiring status and the default-flip schedule.
+    correlate_other_column: bool = True,
     guide_rank: Optional[int] = None,
     joint_params: Optional[Union[str, List[str]]] = None,
     dense_params: Optional[Union[str, List[str]]] = None,
@@ -683,6 +690,12 @@ def build_config_from_preset(
 
     if model_lower == "pln":
         builder._d_mode = d_mode
+
+    # `correlate_other_column` applies to PLN/NBLN/TSLN-Rate/TSLN-Logit
+    # (informational for LNM — see ModelConfig.correlate_other_column
+    # docstring).  Forward unconditionally; non-applicable model
+    # families simply ignore the flag.
+    builder._correlate_other_column = bool(correlate_other_column)
 
     # Forward positive_transform (string or per-parameter dict) to the
     # underlying ``ModelConfig``.  The dict form is normalized to

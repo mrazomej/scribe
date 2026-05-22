@@ -453,19 +453,35 @@ class ModelConfig(BaseModel):
     # gene-coverage stage when gene_coverage < 1.0) participates in the
     # latent low-rank gene-gene covariance ``Σ = W Wᵀ + diag(d)``.
     #
-    # Applies to PLN / NBLN / TSLN-Rate / TSLN-Logit.  ``False`` (the
-    # default) excludes ``_other`` from Σ: W has shape ``(G_kept, K)``
-    # and d has shape ``(G_kept,)`` where ``G_kept = G_obs − 1``; the
-    # ``_other`` column gets a plain observation likelihood with no
-    # latent z-modulation.  ``True`` recovers the legacy behaviour
-    # where ``_other`` participates in Σ as a regular gene.
+    # Applies to PLN / NBLN / TSLN-Rate / TSLN-Logit (LNM via the ALR
+    # reference, see §LNM below).  ``False`` excludes ``_other`` from Σ:
+    # ``W`` has shape ``(G_kept, K)`` and ``d`` has shape ``(G_kept,)``
+    # where ``G_kept = G_obs − 1``; the ``_other`` column gets a plain
+    # observation likelihood with no latent z-modulation.  ``True``
+    # recovers the legacy behaviour where ``_other`` participates in Σ
+    # as a regular gene.
     #
-    # For LNM / LNMVCP this flag is **informational only** — LNM
-    # already excludes the trailing column from Σ when the ALR
-    # reference is set to the last gene (the default convention with
-    # ``_other``).  When the user explicitly sets a non-default
-    # ``alr_reference_idx`` AND has an ``_other`` column, the cascade
-    # adapter will warn if the two are inconsistent.
+    # **Current default: ``True`` (legacy)** for the harmonic-hare
+    # Commit 2 release.  This is a deliberate inversion: the scaffolding
+    # for the decoupled layout has landed (this commit), but the
+    # deviation-parameterised math (loss_fn, Newton, global_uncertainty)
+    # lands in Commit 2b.  Until 2b ships, ``False`` would route any
+    # ``gene_coverage < 1.0`` fit through ``NotImplementedError``.  When
+    # 2b lands the math, the default flips to ``False`` (the
+    # biologically cleaner setting) and ``True`` becomes the explicit
+    # legacy opt-in.
+    #
+    # **LNM / LNMVCP**: LNM excludes the ALR reference gene from Σ by
+    # construction.  When the reference is ``_other`` (which the
+    # gene-coverage stage's auto-selection MAY pick but is not
+    # guaranteed to — auto-selection uses minimum-variance criterion),
+    # LNM realises this decorrelation naturally.  When the reference
+    # is some other gene, ``_other`` remains in the ALR latent and
+    # therefore in Σ.  Commit 6 of the harmonic-hare plan adds real
+    # config wiring so the LNM ALR reference is forced to ``_other``
+    # when ``correlate_other_column=False`` and a pooled column exists,
+    # raising on inconsistent explicit overrides.  Until then, LNM
+    # behaviour under this flag is unchanged.
     #
     # Rationale: ``_other`` is a pooled-counts aggregate, not a real
     # gene, so its row in the regulatory covariance has no biophysical
@@ -473,13 +489,18 @@ class ModelConfig(BaseModel):
     # off-diagonal entries and keeps the W loadings interpretable.
     # See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other.
     correlate_other_column: bool = Field(
-        False,
+        True,
         description=(
             "Whether the trailing '_other' pooled column participates in "
-            "the latent low-rank covariance Σ = W Wᵀ + diag(d).  False "
-            "(default) excludes it; True recovers legacy behaviour. "
-            "Applies to PLN/NBLN/TSLN-Rate/TSLN-Logit; informational "
-            "only for LNM (the ALR reference handles this implicitly)."
+            "the latent low-rank covariance Σ = W Wᵀ + diag(d). "
+            "Current default `True` is the LEGACY behaviour (the new "
+            "decoupled-math path lands in Commit 2b; until then the "
+            "default stays True so existing `gene_coverage < 1.0` fits "
+            "do not break).  When Commit 2b ships, the default flips to "
+            "`False` and `True` becomes the explicit legacy opt-in. "
+            "Applies to PLN/NBLN/TSLN-Rate/TSLN-Logit (raised as "
+            "NotImplementedError under `False` in Commit 2).  LNM "
+            "wiring is in Commit 6."
         ),
     )
 

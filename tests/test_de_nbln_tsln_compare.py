@@ -157,6 +157,12 @@ def test_compare_nbln_laplace_with_gene_coverage_drops_other_column():
     adata = _make_random_adata(40, 12, seed=2)
     # `gene_coverage < 1.0` triggers `_other` aggregation in the data
     # processing stage (see `core/gene_coverage.aggregate_counts_by_mask`).
+    # The current default `correlate_other_column=True` keeps `_other`
+    # in Σ (legacy path) — this matches today's NBLN behaviour and
+    # works end-to-end with DE.  When Commit 2b lands the decoupled
+    # math, the default flips to False and this test will need an
+    # explicit `correlate_other_column=True` to keep testing the
+    # legacy behaviour.
     res_A = scribe.fit(
         adata, model="nbln", inference_method="laplace", latent_dim=2,
         n_steps=15, seed=0, gene_coverage=0.85,
@@ -202,7 +208,11 @@ def test_compare_nbln_subset_cascade_de_end_to_end():
         adata, model="nbvcp", inference_method="svi", n_steps=20, seed=1,
         gene_coverage=1.0,
     )
-    # Stage 2: narrow NBLN-Laplace with cascade.
+    # Stage 2: narrow NBLN-Laplace with cascade.  Current default
+    # `correlate_other_column=True` keeps `_other` in Σ (legacy
+    # path).  When Commit 2b ships the math, this test will need an
+    # explicit `correlate_other_column=True` to keep testing the
+    # legacy cascade behaviour.
     nbln_A = scribe.fit(
         adata, model="nbln", inference_method="laplace", latent_dim=2,
         n_steps=15, seed=0, gene_coverage=0.9,

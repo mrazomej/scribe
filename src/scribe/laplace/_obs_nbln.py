@@ -162,8 +162,24 @@ class NBLNObservationModel(LaplaceObservationModel):
         freeze_params: Tuple[str, ...] = (),
         w_prior_strategy: Optional["WPriorStrategy"] = None,
         max_step: float = 5.0,
+        gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ):
         self._max_step = float(max_step)
+
+        # Stash gene_names / has_pooled_other for AxisLayout construction
+        # in `init_state` (where we also have `n_genes`).  The layout
+        # captures the G_obs vs G_kept split when `correlate_other_column=False`
+        # and the data has a trailing `_other` pooled column.  See
+        # ``scribe.laplace._axis_layout.build_axis_layout`` for the
+        # detection-priority contract and the contradictory-signal raise.
+        self._gene_names = gene_names
+        self._has_pooled_other = has_pooled_other
+        self._correlate_other_column = bool(
+            getattr(model_config, "correlate_other_column", True)
+        )
+        # Built lazily in init_state once `n_genes` is available.
+        self._axis_layout = None
 
         # Phase-3: pluggable shrinkage prior on W.  Default no-op so
         # existing callers are unaffected.
@@ -288,7 +304,27 @@ class NBLNObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
+        # Build the AxisLayout now that we know n_genes.  The layout
+        # is the single source of truth for whether `_other` is in the
+        # latent covariance (legacy: yes; decoupled: no).  All
+        # downstream code (loss_fn, Newton, compute_global_uncertainty,
+        # pack_result, compositional sampler) branches on
+        # `self._axis_layout.decoupled` — when False, every existing
+        # code path runs unchanged (bit-equal to legacy).
+        from ._axis_layout import build_axis_layout
+        self._axis_layout = build_axis_layout(
+            n_genes=int(n_genes),
+            correlate_other_column=self._correlate_other_column,
+            gene_names=self._gene_names,
+            has_pooled_other=self._has_pooled_other,
+        )
+        _layout = self._axis_layout
+
         # --- mu init: frozen overrides prior overrides data-driven ---
+        # `mu` lives in the OBSERVATION-layer axis (G_obs,) under BOTH
+        # layouts — it is the prior centre / baseline per-gene log-mean
+        # that the NB likelihood consumes for every gene including
+        # `_other`.  Shape is unchanged from today.
         if "mu" in self._frozen_params:
             mu_init = jnp.asarray(
                 self._freeze_values["mu"]["loc"], dtype=jnp.float32
@@ -300,15 +336,22 @@ class NBLNObservationModel(LaplaceObservationModel):
                 empirical_log_mean_from_counts(counts_np), dtype=jnp.float32
             )
 
+        # W and d live in the LATENT-COVARIANCE axis (G_kept,).  Under
+        # the decoupled layout we slice the count matrix to kept genes
+        # before PCA so the resulting loadings are (G_kept, K) directly
+        # — slicing post-PCA would let `_other` variance leak into
+        # kept-gene loadings via the SVD coupling.
+        if _layout.decoupled:
+            counts_for_pca = counts_np[:, _layout.kept_idx]
+        else:
+            counts_for_pca = counts_np
         W_init = jnp.asarray(
-            pca_loadings_init(counts_np, latent_dim=latent_dim),
+            pca_loadings_init(counts_for_pca, latent_dim=latent_dim),
             dtype=jnp.float32,
         )
-        # Initialise unconstrained d_loc so positive_transform(d_loc) ≈ 0.1.
-        # No informative-prior override: NBVCP has no `d` counterpart and
-        # the prior would be ill-posed.  Cannot freeze d either.
+        # d_loc shape matches the latent-covariance axis.
         d_loc_init = self._pos_inverse(
-            jnp.full((n_genes,), 0.1, dtype=jnp.float32)
+            jnp.full((int(_layout.G_kept),), 0.1, dtype=jnp.float32)
         )
 
         # --- r init: frozen overrides prior overrides data-driven ---
@@ -340,9 +383,12 @@ class NBLNObservationModel(LaplaceObservationModel):
         # strategies add per-factor scales (and a global scale) in
         # unconstrained (``raw``) space; they ride through optax's
         # M-step automatically since they're in the params dict.
+        # `G` here is the LATENT-COVARIANCE axis (G_kept) — the W prior
+        # shrinks `W` rows, and W has shape (G_kept, K).  Under the
+        # legacy layout G_kept == G_obs so this is unchanged from today.
         _w_aux_key = jax.random.fold_in(jax.random.PRNGKey(seed), 0)
         w_aux_init = self._w_prior.init_aux_params(
-            G=n_genes,
+            G=int(_layout.G_kept),
             k_latent=latent_dim,
             rng_key=_w_aux_key,
         )
@@ -368,6 +414,29 @@ class NBLNObservationModel(LaplaceObservationModel):
         # Frozen eta gets its own branch: x-only Newton with fixed
         # eta_offset.  No prior_eta or capture_anchor consulted in this
         # case — the freeze value comes from self._freeze_values["eta"].
+        #
+        # ``latent_loc`` initial shape (per cell) depends on the layout:
+        #   • Legacy (G_kept == G_obs): absolute log-rate ``x``, shape
+        #     ``(N, G_obs)`` — matches today's behaviour exactly.
+        #   • Decoupled (G_kept < G_obs): deviation ``x_dev``, shape
+        #     ``(N, G_kept)`` — initialised at log(u_kept + 1) − μ_kept
+        #     so the deviation starts near zero (matches the prior
+        #     N(0, Σ_kept) centre).
+        def _initial_latent(_with_eta_offset):
+            """Build per-cell initial latent in the correct axis."""
+            if _layout.decoupled:
+                kept_idx_jnp = jnp.asarray(_layout.kept_idx)
+                _log_u_kept = jnp.log(count_data[:, kept_idx_jnp] + 1.0)
+                _mu_kept = mu_init[kept_idx_jnp]
+                _base = _log_u_kept - _mu_kept[None, :]
+                if _with_eta_offset is not None:
+                    _base = _base + _with_eta_offset[:, None]
+                return _base
+            _base = jnp.log(count_data + 1.0)
+            if _with_eta_offset is not None:
+                _base = _base + _with_eta_offset[:, None]
+            return _base
+
         if "eta" in self._frozen_params:
             eta_offset = jnp.asarray(
                 self._freeze_values["eta"]["loc"], dtype=jnp.float32
@@ -377,7 +446,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             eta_anchor = eta_offset
             eta_scale_per_cell = None  # no scale — eta is a fixed point
             eta_loc = eta_offset  # carried on the result so PPC sees it
-            latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
+            latent_loc = _initial_latent(eta_loc)
         elif self._prior_eta is not None:
             # SVI-derived soft-cascade per-cell capture (mode "eta").
             eta_anchor = jnp.asarray(self._prior_eta["loc"], dtype=jnp.float32)
@@ -385,7 +454,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 self._prior_eta["scale"], dtype=jnp.float32
             )
             eta_loc = eta_anchor
-            latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
+            latent_loc = _initial_latent(eta_loc)
         elif self._capture_anchor is not None:
             # Scalar biology-informed capture anchor (legacy path).
             log_M0, _sigma_M = self._capture_anchor
@@ -395,13 +464,13 @@ class NBLNObservationModel(LaplaceObservationModel):
                 (n_cells,), self._sigma_M, dtype=jnp.float32
             )
             eta_loc = eta_anchor
-            latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
+            latent_loc = _initial_latent(eta_loc)
         else:
             # No capture at all (x-only Newton path).
             eta_anchor = None
             eta_scale_per_cell = None
             eta_loc = None
-            latent_loc = jnp.log(count_data + 1.0)
+            latent_loc = _initial_latent(None)
 
         # aux_data: per-cell scale for soft-cascade eta path; per-cell
         # offset for frozen-eta path.  Both ride through aux_batch_slice
@@ -460,6 +529,32 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+        # Decoupled-layout guard.  When the AxisLayout marks `_other`
+        # as excluded from Σ (``layout.decoupled == True``), the full
+        # deviation-parameterised loss (with the kept-gene MVN prior on
+        # ``x_dev``, the deterministic ``_other`` log-rate, and the
+        # corresponding Newton / global-uncertainty re-derivations) is
+        # tracked in the harmonic-hare plan as Commit 2b.  Until that
+        # math lands, fail loudly with a clear remediation message.
+        # The legacy (``layout.decoupled is False``) path runs unchanged.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "NBLN decoupled deviation-parameterisation math "
+                "(loss_fn / Newton / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 2 of the harmonic-hare "
+                "plan landed the scaffolding (AxisLayout, init shapes, "
+                "compositional sampler, pack_result); Commit 2b lands "
+                "the math. Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         # Splice frozen values into a working params_full dict for
         # likelihood computation (Round-4 R4).  The optimizer holds only
         # the reduced params dict (frozen keys excluded).
@@ -703,6 +798,19 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> FinalSweepResult:
+        # Decoupled-layout guard (mirrors ``loss_fn``).  The
+        # deviation-parameterised final sweep is part of Commit 2b.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "NBLN decoupled final_sweep is not yet implemented — "
+                "Commit 2b lands the deviation-parameterised math. "
+                "Pass `correlate_other_column=True` or omit the "
+                "gene_coverage filter to use the legacy path."
+            )
+
         # Round-5 R5-1 fix: splice frozen values into params_full at
         # entry — final_sweep reads params["mu"]/params["r_loc"] which
         # are absent from the reduced optimizer dict when frozen.
@@ -823,6 +931,24 @@ class NBLNObservationModel(LaplaceObservationModel):
         # entry — compute_global_uncertainty reads params["mu"]/["r_loc"]
         # which are absent from the reduced optimizer dict when frozen.
         params_full = self._splice_frozen(params)
+
+        # Decoupled-layout guard.  The Schur re-derivation of the
+        # profiled μ Hessian under the deviation parameterisation
+        # (per-capture-mode M_c^{-1} from the per-cell inverse blocks)
+        # is part of Commit 2b in the harmonic-hare plan.  Until then,
+        # raise so callers cannot silently consume miscalibrated
+        # ``mu_scale`` / ``r_scale`` values.  Legacy fits run unchanged.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "NBLN decoupled compute_global_uncertainty is not yet "
+                "implemented — Commit 2b lands the deviation-"
+                "parameterisation Schur re-derivation by capture mode. "
+                "Pass `correlate_other_column=True` or omit the "
+                "gene_coverage filter to use the legacy path."
+            )
 
         mu = params_full["mu"]
         W = params_full["W"]
@@ -1167,4 +1293,11 @@ class NBLNObservationModel(LaplaceObservationModel):
             global_uncertainty=global_uncertainty or {},
             frozen_params=self._frozen_params,
             w_prior_diagnostics=w_prior_diagnostics,
+            # Persist the axis layout so the bridge in
+            # ``inference/laplace.py`` can attach it to
+            # ``ScribeLaplaceResults.axis_layout``.  ``None`` for the
+            # legacy trivial layout would also be fine, but storing the
+            # layout unconditionally lets downstream tooling rely on
+            # ``result.axis_layout.decoupled`` without a None-check.
+            axis_layout=self._axis_layout,
         )

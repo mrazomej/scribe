@@ -155,6 +155,22 @@ def fit(
     # Pass an explicit string to override.
     d_mode: Optional[str] = None,
     alr_reference_idx: Optional[int] = None,
+    # Whether the trailing aggregated '_other' column (emitted by the
+    # gene-coverage stage when gene_coverage < 1.0) participates in
+    # the latent low-rank covariance Σ = W Wᵀ + diag(d).  Applies to
+    # PLN/NBLN/TSLN-Rate/TSLN-Logit.  Current default ``True`` is the
+    # legacy behaviour where ``_other`` participates as a regular gene
+    # — held at True for the Commit 2 release because the decoupled
+    # math (``False``) lands in Commit 2b; flipping the default early
+    # would route every ``gene_coverage < 1.0`` fit through
+    # ``NotImplementedError``.  When Commit 2b ships, the default
+    # flips to ``False`` (the biologically cleaner setting) and
+    # ``True`` becomes the explicit legacy opt-in.  See
+    # ``scribe.laplace._axis_layout`` for the shape contract,
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other for the
+    # biophysical rationale, and ``ModelConfig.correlate_other_column``
+    # for the per-model wiring status.
+    correlate_other_column: bool = True,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
@@ -1096,6 +1112,7 @@ def fit(
             overdispersion_prior=overdispersion_prior,
             d_mode=d_mode,
             alr_reference_idx=alr_reference_idx,
+            correlate_other_column=correlate_other_column,
             mixture_params=mixture_params,
             guide_rank=guide_rank,
             joint_params=joint_params,

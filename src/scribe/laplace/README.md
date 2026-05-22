@@ -725,6 +725,89 @@ section `sec-nbln-cascade-aggregation` for the full derivation.
   `_resolve_nbln_ppc_arrays`), not from the SVI guide's own `_other`
   column directly — the two represent different aggregates.
 
+### Decorrelating the `_other` aggregate from Σ (`correlate_other_column`)
+
+The trailing `_other` column emitted by the gene-coverage stage is a
+pooled-counts aggregate, not a real gene. Its row in the latent
+low-rank covariance `Σ = W Wᵀ + diag(d)` has no biophysical meaning —
+including it wastes capacity on spurious cross-gene correlations and
+biases the `W` loadings used for regulatory-program identification
+and gauge-invariant diagnostics (see
+[`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd)
+Theorem 2). The `correlate_other_column: bool = False` flag on
+`ModelConfig` (default False, the new recommended behaviour)
+**excludes `_other` from Σ** while keeping it in the observation
+likelihood:
+
+```text
+W shape: (G_kept, K)        # latent-covariance axis (no _other row)
+d shape: (G_kept,)
+mu shape: (G_obs,)           # observation-layer axis (with _other)
+r shape: (G_obs,)            # NB dispersion, observation-layer
+per-cell x_dev: (G_kept,)    # deviation from μ_kept, prior N(0, Σ_kept)
+```
+
+Effective per-gene log-rate fed to the NB likelihood:
+
+- For kept gene `g` at kept-position `k`: `μ[g] + x_dev[k] − η_c`
+- For `_other`: `μ[other_idx] − η_c` — no z-modulation
+
+**Current landing status (Commit 2 of the harmonic-hare plan).** This
+release lands the **scaffolding** for the decorrelated layout — the
+`AxisLayout` abstraction, the signal threading from the
+`gene_coverage` stage through the engine to the obs model,
+`ScribeLaplaceResults.axis_layout` + `G_obs` / `G_kept` properties,
+the layout-aware `init_state` (W and d sized to `G_kept`), and the
+`pack_result` plumbing. The **deviation-parameterised math** in the
+loss / Newton / `compute_global_uncertainty` paths is tracked in
+Commit 2b on the `feature/decorrelate_other_column` branch (the
+plan's per-commit ladder gives the auditor a focused review for
+the scaffolding before the math lands).
+
+**Default is held at `True` (legacy) for Commit 2** so existing
+`gene_coverage < 1.0` fits do not break by routing through the
+not-yet-implemented decoupled math. When Commit 2b ships the math,
+the default flips to `False` (the new biologically cleaner default)
+and `True` becomes the explicit legacy opt-in.
+
+Behaviour matrix for this release (Commit 2, default=True):
+
+| Configuration | Behaviour |
+|---|---|
+| No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. **Recommended path for Commit 2 until Commit 2b lands.** |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | Decoupled layout detected; `loss_fn` raises `NotImplementedError` with a clear message pointing at Commit 2b. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN / TSLN-Rate / TSLN-Logit | Engine raises `NotImplementedError` *before* obs-model construction with a clear pointer at Commits 3 / 4 / 5. |
+| Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |
+| AnnData fit with no gene_coverage but `var_names[-1] == "_other"` (manually-pre-filtered AnnData) | Detected via the AnnData var_names fallback (rev-4 #3); the layout factory honours the literal `_other` sentinel even without the gene_coverage stage running. |
+
+**Disagreement is loud.** When the data context provides BOTH a
+`has_pooled_other` flag AND a `gene_names` tail and the two disagree
+(`has_pooled_other=True` but `gene_names[-1] != "_other"`, or
+vice-versa), `build_axis_layout` raises `ValueError` rather than
+silently choosing one — silent disagreement here can corrupt the
+axis split downstream.
+
+**LNM caveat (NOT done by default).** Auditor finding rev-2 #1
+corrected the original premise. LNM excludes the ALR reference gene
+from Σ by construction — but the gene-coverage stage's auto-selection
+(`apply_gene_coverage_and_alr`) chooses the reference by
+**minimum-variance**, which may or may not be the `_other` column.
+When the auto-selected reference is some other gene, `_other` stays
+in the ALR latent and therefore in Σ — defeating the flag's purpose.
+Commit 6 of the harmonic-hare plan adds real wiring: when
+`correlate_other_column=False` AND a pooled `_other` exists AND no
+explicit reference is set, force the ALR reference to `_other`'s
+position; reject inconsistent explicit overrides. Until Commit 6
+lands, LNM behaviour under this flag is **unchanged from today**.
+
+**Current default-flip schedule.** Commit 2 ships with the default
+held at `True` (legacy) so existing `gene_coverage < 1.0` fits do
+not break by routing through the not-yet-implemented decoupled
+math. When Commit 2b ships the math, the default flips to `False`
+and `True` becomes the explicit legacy opt-in. See
+`ModelConfig.correlate_other_column` docstring for the schedule.
+
 ### Phase-2: Cascade-parameter freeze
 
 The soft cascade above injects Gaussian priors with finite scale; on

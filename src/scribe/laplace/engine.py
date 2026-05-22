@@ -66,6 +66,8 @@ class LaplaceInferenceEngine:
         freeze_values: Optional[Dict[str, Dict[str, Any]]] = None,
         freeze_params: Tuple[str, ...] = (),
         w_prior: Optional[Dict[str, Any]] = None,
+        filtered_gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -129,6 +131,39 @@ class LaplaceInferenceEngine:
         # semantics that need a separate design pass.
         w_prior_strategy = build_w_prior_strategy(w_prior)
 
+        # Early-fail check for `correlate_other_column=False` on the
+        # decoupled-math models that haven't yet been wired (PLN,
+        # TSLN-Rate, TSLN-Logit).  The public API (``scribe.fit`` and
+        # ``ModelConfig.correlate_other_column``) advertises decoupling
+        # for all four PLN/NBLN/TSLN models, but Commit 2 of the
+        # harmonic-hare plan only landed the NBLN scaffolding.  The
+        # other three models' obs likelihoods, Newton steps, and
+        # global-uncertainty paths land in subsequent commits (3 / 4 /
+        # 5).  Until then, catch the inconsistency at the engine
+        # **before** the obs model is constructed so the user gets a
+        # clear, uniform error rather than a silent legacy-behaviour
+        # fall-through that contradicts the API contract.
+        _ccc = bool(
+            getattr(model_config, "correlate_other_column", True)
+        )
+        _has_pool = bool(has_pooled_other) if has_pooled_other else False
+        if (
+            (not _ccc)
+            and _has_pool
+            and bm in ("pln", "twostate_ln_rate", "twostate_ln_logit")
+        ):
+            raise NotImplementedError(
+                f"`{bm}` Laplace fit with "
+                "`correlate_other_column=False` and a pooled "
+                "'_other' column is not yet implemented — Commit 2 of "
+                "the harmonic-hare plan landed only NBLN scaffolding; "
+                "PLN / TSLN-Rate / TSLN-Logit math lands in Commits "
+                "3 / 4 / 5.  Until then, pass "
+                "`correlate_other_column=True` (the current default) "
+                "to use the legacy path with `_other` in Σ, or fit "
+                "without `gene_coverage` filtering."
+            )
+
         if bm == "pln":
             from ._obs_pln import PLNObservationModel
 
@@ -150,6 +185,8 @@ class LaplaceInferenceEngine:
                 max_step=float(
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm == "twostate_ln_rate":
             from ._obs_twostate_ln_rate import TwoStateLNRateObservationModel

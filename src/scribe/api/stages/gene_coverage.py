@@ -124,6 +124,22 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
         ctx._gene_coverage_rank = _gene_coverage_rank
         ctx._excluded_gene_names = _excluded_gene_names
         ctx._filtered_gene_names = _filtered_gene_names
+        # Persist the pooled-`_other` signal on the ctx so the
+        # downstream Laplace engine (any base model) can construct the
+        # correct AxisLayout for `correlate_other_column` decoupling.
+        # Array-input fits (no AnnData → no `_filtered_gene_names`)
+        # rely on this primary signal since they cannot detect `_other`
+        # from gene names.  See `scribe.laplace._axis_layout`.
+        ctx._has_pooled_other = bool(
+            int(np.asarray(~_gene_coverage_mask, dtype=int).sum()) > 0
+        )
+    else:
+        # No gene_coverage filtering was applied → no pooled '_other'.
+        # Still set the attribute so downstream code can rely on it
+        # being present (None means "filter was not applied"; False
+        # means "filter applied but no pooling occurred").
+        if not hasattr(ctx, "_has_pooled_other"):
+            ctx._has_pooled_other = False
 
     # -- ALR reference resolution (LNM models only) ---------------------------
     if ctx.model.lower() in ("lnm", "lnmvcp"):

@@ -404,6 +404,34 @@ def dispatch_inference(ctx: FitContext) -> None:
                 f"base_model={bm!r}, method={method_value!r}."
             )
 
+    # Resolve the two _other-detection signals once so they can be
+    # threaded through to the Laplace engine (which forwards them to
+    # the obs model's AxisLayout factory).  See
+    # ``scribe.laplace._axis_layout.build_axis_layout`` for the
+    # detection-priority contract.
+    #
+    # Names-fallback chain (auditor finding rev-4 #3): when the
+    # gene-coverage stage runs, it populates ``_filtered_gene_names``.
+    # When it does NOT run (e.g. user passed an unfiltered AnnData and
+    # did not set ``gene_coverage``), fall back to AnnData's own
+    # ``var_names`` so a manually-pre-filtered AnnData whose tail is
+    # literally ``"_other"`` still triggers the names-based detection.
+    _filtered_gene_names_for_layout = getattr(
+        ctx, "_filtered_gene_names", None
+    )
+    if _filtered_gene_names_for_layout is None:
+        _adata_for_layout = getattr(ctx, "_adata_for_inference", None)
+        if _adata_for_layout is not None:
+            _vn = getattr(_adata_for_layout, "var_names", None)
+            if _vn is not None:
+                try:
+                    _filtered_gene_names_for_layout = list(_vn.values)
+                except AttributeError:
+                    _filtered_gene_names_for_layout = list(_vn)
+    _has_pooled_other_for_layout = getattr(
+        ctx, "_has_pooled_other", None
+    )
+
     results = _run_inference(
         ctx.inference_config.method,
         model_config=ctx.model_config,
@@ -425,5 +453,10 @@ def dispatch_inference(ctx: FitContext) -> None:
         cascade_source_counts=cascade_source_counts,
         cascade_subset_info=_cascade_subset_info,
         w_prior=w_prior,
+        # Axis-layout signals for `correlate_other_column` decoupling
+        # (see `scribe.laplace._axis_layout`).  Both are forwarded to
+        # the Laplace engine; non-Laplace dispatchers ignore them.
+        filtered_gene_names=_filtered_gene_names_for_layout,
+        has_pooled_other=_has_pooled_other_for_layout,
     )
     ctx.results = results

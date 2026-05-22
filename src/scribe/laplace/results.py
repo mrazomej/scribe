@@ -346,6 +346,25 @@ class ScribeLaplaceResults(
     # The typed ``SubsetInfo`` lives in ``scribe.laplace.priors``; this
     # field is ``Optional[Any]`` to avoid a circular import.
     _cascade_subset_info: Optional[Any] = None
+    #
+    # ``axis_layout`` records the obs-axis / latent-covariance-axis
+    # split used by the obs model under
+    # ``ModelConfig.correlate_other_column``.  Under the legacy layout
+    # (or when no ``_other`` column was emitted) the layout is
+    # trivial and ``G_kept == G_obs``; the shapes of ``W``/``d``/etc.
+    # remain identical to today.  Under the decoupled layout
+    # (``axis_layout.decoupled is True``) ``W`` has shape
+    # ``(G_kept, K)``, ``d`` has shape ``(G_kept,)``, and the per-cell
+    # latent stores a deviation in ``(G_kept,)`` while ``mu`` and ``r``
+    # stay at ``(G_obs,)``.  Downstream tools (PPC, compositional
+    # sampler, ``get_W_compositional``, DE) check this field to
+    # disambiguate the W/d shape from the mu/r shape; see the
+    # ``G_obs`` / ``G_kept`` properties below.  ``None`` for non-PLN/
+    # NBLN/TSLN base models and for legacy fits not threaded through
+    # the engine's gene-name / has-pooled-other plumbing.  Typed
+    # ``Optional[Any]`` to avoid a circular import with
+    # ``scribe.laplace._axis_layout.AxisLayout``.
+    axis_layout: Optional[Any] = None
 
     # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
     # model's ``pack_result`` when a W-prior strategy is configured
@@ -377,6 +396,55 @@ class ScribeLaplaceResults(
     # the result's stored fields as already corrected). See
     # ``scribe.stats.jacobian_map`` for the math and the plan's §3.2.
     map_method: Optional[str] = None
+
+    @property
+    def G_obs(self) -> int:
+        """Length of the observation-layer gene axis.
+
+        Equals the number of count-data columns and the length of
+        observation-only per-gene parameters (``r`` for NBLN/TSLN,
+        ``eta_anchor`` for TSLN-Logit).  Always ``self.n_genes`` when
+        that attribute is populated; otherwise falls back to the
+        ``axis_layout.G_obs`` when an axis layout is present.
+
+        Use this to disambiguate from :attr:`G_kept` (which excludes
+        the trailing ``_other`` pooled column under the decoupled
+        layout).  See ``scribe.laplace._axis_layout.AxisLayout`` for
+        the full shape contract.
+        """
+        if self.n_genes is not None:
+            return int(self.n_genes)
+        if self.axis_layout is not None:
+            return int(self.axis_layout.G_obs)
+        # Last-resort introspection from a known per-gene array.
+        if self.mu is not None and self.mu.ndim >= 1:
+            return int(self.mu.shape[0])
+        raise ValueError(
+            "Cannot determine G_obs: n_genes, axis_layout, and mu are "
+            "all unavailable on this result object."
+        )
+
+    @property
+    def G_kept(self) -> int:
+        """Length of the latent-covariance gene axis.
+
+        Equals the number of rows in ``W`` and ``d`` and the per-cell
+        latent's gene dimension.  Under the **decoupled** layout
+        (``ModelConfig.correlate_other_column=False`` AND data has a
+        trailing ``_other`` aggregate), ``G_kept == G_obs - 1`` and
+        the ``_other`` row is excluded from the regulatory covariance
+        Σ = W Wᵀ + diag(d).  Under the legacy layout (or when no
+        ``_other`` was emitted), ``G_kept == G_obs``.
+
+        Use this when inspecting the shape of ``self.W`` / ``self.d``
+        or building compositional accessors that must operate on the
+        kept-gene subspace (see ``get_W_compositional``).
+        """
+        if self.axis_layout is not None:
+            return int(self.axis_layout.G_kept)
+        # Without an axis_layout we cannot distinguish decoupled from
+        # legacy; fall back to G_obs (today's behaviour).
+        return self.G_obs
 
     def __repr__(self) -> str:
         """Return a concise text summary for interactive inspection.
