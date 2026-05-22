@@ -192,9 +192,26 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         w_prior_strategy: Optional["WPriorStrategy"] = None,
         max_step: float = 5.0,
         n_quad_nodes: int = _DEFAULT_K,
+        gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ):
         self._max_step = float(max_step)
         self._n_quad_nodes = int(n_quad_nodes)
+
+        # Stash gene_names / has_pooled_other for AxisLayout construction
+        # in ``init_state`` (where ``n_genes`` is available).  The layout
+        # captures the G_obs vs G_kept split when
+        # ``model_config.correlate_other_column=False`` and the data has
+        # a trailing ``_other`` pooled column.  Mirrors NBLN's
+        # constructor wiring; see ``scribe.laplace._axis_layout`` for
+        # the detection-priority contract and the contradictory-signal
+        # raise (skipped under legacy ``correlate_other_column=True``).
+        self._gene_names = gene_names
+        self._has_pooled_other = has_pooled_other
+        self._correlate_other_column = bool(
+            getattr(model_config, "correlate_other_column", True)
+        )
+        self._axis_layout = None
 
         from ._w_priors import NoneWPrior
 
@@ -398,6 +415,25 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
+        # Build the AxisLayout now that we know n_genes.  Same shape
+        # contract as NBLN: under the legacy / no-_other path the
+        # layout is trivial (G_kept == G_obs); under the decoupled
+        # path the trailing `_other` row is excluded from Σ so W and
+        # d shrink to G_kept = G_obs - 1.  All downstream code
+        # (loss_fn, final_sweep, compute_global_uncertainty,
+        # pack_result, compositional sampler) branches on
+        # ``self._axis_layout.decoupled`` — when False, every existing
+        # path runs unchanged (bit-equal to legacy).  See
+        # ``scribe.laplace._axis_layout`` for the detection contract.
+        from ._axis_layout import build_axis_layout
+        self._axis_layout = build_axis_layout(
+            n_genes=int(n_genes),
+            correlate_other_column=self._correlate_other_column,
+            gene_names=self._gene_names,
+            has_pooled_other=self._has_pooled_other,
+        )
+        _layout = self._axis_layout
+
         # Per-parameter (forward, inverse).  Supports the dict form
         # ``positive_transform={"mu": "exp", ...}`` so different
         # gene-globals can use different positive maps.
@@ -439,8 +475,18 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         k_off_loc_init = ko_inv(ko_pos)
 
         # W via PCA, d uniform (with its own potentially-distinct transform).
-        W_init = pca_loadings_init(counts_np, latent_dim=int(latent_dim))
-        d_pos = default_d_init(int(n_genes))
+        # W and d live in the LATENT-COVARIANCE axis (G_kept,).  Under
+        # the decoupled layout we slice the count matrix to kept genes
+        # before PCA so the resulting loadings are (G_kept, K) directly
+        # — slicing post-PCA would let `_other` variance leak into
+        # kept-gene loadings via the SVD coupling.  See NBLN's
+        # ``init_state`` for the same pattern.
+        if _layout.decoupled:
+            counts_for_pca = counts_np[:, _layout.kept_idx]
+        else:
+            counts_for_pca = counts_np
+        W_init = pca_loadings_init(counts_for_pca, latent_dim=int(latent_dim))
+        d_pos = default_d_init(int(_layout.G_kept))
         d_loc_init = d_inv(d_pos)
 
         # Per-cell η. Convention: eta = -log(nu). Default zero.
@@ -469,7 +515,22 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         # small p) start far below the MAP — empirically the cause
         # of large-gradient pathological cells in the tail of the
         # capture distribution under the frozen-eta cascade path.
-        latent_loc = latent_loc_init_from_counts(counts_np)
+        #
+        # Under the **decoupled** layout the per-cell latent represents
+        # the deviation ``x_dev = log(u_kept + 1) − μ_kept`` (the
+        # absolute-log-rate prior centre is μ in the legacy
+        # parameterisation; in the deviation parameterisation it is 0
+        # and μ enters the NB log-mean directly).  We initialise at
+        # the deviation form so Newton starts near the MAP for both
+        # layouts.  See NBLN's ``init_state`` for the same pattern.
+        if _layout.decoupled:
+            kept_idx_jnp = jnp.asarray(_layout.kept_idx)
+            _log_u_kept = jnp.log(jnp.asarray(counts_np[:, kept_idx_jnp]) + 1.0)
+            # μ in unconstrained coord; convert to constrained log to subtract.
+            _mu_pos_kept = mu_pos[kept_idx_jnp]
+            latent_loc = _log_u_kept - jnp.log(jnp.maximum(_mu_pos_kept, 1e-30))[None, :]
+        else:
+            latent_loc = latent_loc_init_from_counts(counts_np)
         if eta_loc is not None:
             latent_loc = latent_loc + eta_loc[:, None]
 
@@ -545,6 +606,32 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         gradients on globals flow only through the live ELBO terms
         recomputed at the stop-gradient'd Newton MAP.
         """
+        # Decoupled-layout guard.  When the AxisLayout marks `_other`
+        # as excluded from Σ (``layout.decoupled == True``), the full
+        # deviation-parameterised loss (with the kept-gene MVN prior
+        # on ``x_dev``, the deterministic ``_other`` log-rate, and the
+        # Newton / global-uncertainty re-derivations) is tracked in
+        # the harmonic-hare plan as Commit 3b.  Until that math
+        # lands, fail loudly with a clear remediation message.  The
+        # legacy (``layout.decoupled is False``) path runs unchanged.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Rate decoupled deviation-parameterisation math "
+                "(loss_fn / final_sweep / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 3 of the harmonic-hare "
+                "plan landed the TSLN-Rate scaffolding (AxisLayout, "
+                "init shapes, pack_result); the math lands in a "
+                "subsequent commit.  Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, rate = self._reparam_from_params(params_full)
         W = params_full["W"]
@@ -779,6 +866,20 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         damping: float,
     ) -> FinalSweepResult:
         """Full-population Newton sweep with ``2 × n_newton`` iterations."""
+        # Decoupled-layout guard (mirrors ``loss_fn``).  The
+        # deviation-parameterised final sweep is part of TSLN-Rate's
+        # math commit (Commit 3b in the harmonic-hare plan).
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Rate decoupled final_sweep is not yet implemented — "
+                "see the loss_fn guard for the remediation. Pass "
+                "`correlate_other_column=True` or omit the "
+                "gene_coverage filter to use the legacy path."
+            )
+
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, _rate = self._reparam_from_params(params_full)
         W = params_full["W"]
@@ -958,6 +1059,19 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             from ``curvature_to_scale`` are also surfaced for
             inspection.
         """
+        # Decoupled-layout guard (mirrors ``loss_fn``).
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Rate decoupled compute_global_uncertainty is not "
+                "yet implemented — the deviation-parameterised Schur "
+                "re-derivation by capture mode lands in TSLN-Rate's "
+                "math commit.  Pass `correlate_other_column=True` or "
+                "omit the gene_coverage filter to use the legacy path."
+            )
+
         from ._global_uncertainty import curvature_to_scale
 
         params_full = self._splice_frozen(params)
@@ -1270,4 +1384,11 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 if hasattr(self._w_prior, "diagnostics")
                 else None
             ),
+            # Persist the axis layout (built in init_state) so the
+            # bridge in ``inference/laplace.py`` can attach it to
+            # ``ScribeLaplaceResults.axis_layout``.  Trivial layout
+            # for legacy fits; non-trivial under decoupled (but the
+            # decoupled math raises before reaching here, so this is
+            # mainly future-proofing for Commit 3b).
+            axis_layout=self._axis_layout,
         )

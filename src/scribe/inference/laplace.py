@@ -380,6 +380,12 @@ def _run_laplace_inference(
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
             _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model
+            # (`correlate_other_column` plumbing).  Trivial layout
+            # under the current Commit 3 default; non-trivial under
+            # decoupled but the obs model raises before reaching
+            # here.  See ``scribe.laplace._axis_layout``.
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it

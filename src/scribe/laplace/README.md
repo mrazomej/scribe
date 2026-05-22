@@ -784,7 +784,8 @@ Behaviour matrix for this release (Commit 2, default=True):
 | No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
 | `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. **Recommended path for Commit 2 until Commit 2b lands.** |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | Decoupled layout detected; `loss_fn` raises `NotImplementedError` with a clear message pointing at Commit 2b. |
-| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN / TSLN-Rate / TSLN-Logit | Engine raises `NotImplementedError` *before* obs-model construction with a clear pointer at Commits 3 / 4 / 5. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | Scaffolded as of Commit 3: AxisLayout + init-shape slicing + `pack_result` plumbing are in; the obs model's `loss_fn` / `final_sweep` / `compute_global_uncertainty` raise `NotImplementedError` pointing at TSLN-Rate's math commit (3b). |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN / TSLN-Logit | Engine raises `NotImplementedError` *before* obs-model construction with a clear pointer at Commits 4 / 5. |
 | Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |
 | AnnData fit with no gene_coverage but `var_names[-1] == "_other"` (manually-pre-filtered AnnData) | Detected via the AnnData var_names fallback (rev-4 #3); the layout factory honours the literal `_other` sentinel even without the gene_coverage stage running. |
 

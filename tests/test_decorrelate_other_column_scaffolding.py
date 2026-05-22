@@ -297,8 +297,12 @@ class TestNblnDecoupledRaises:
 
 
 class TestEnginePlnTslnEarlyFail:
-    """PLN/TSLN-Rate/TSLN-Logit raise on decoupled BEFORE obs-model
-    construction (auditor finding rev-4 #1).
+    """PLN/TSLN-Logit raise on decoupled BEFORE obs-model construction.
+
+    As of Commit 3 of the harmonic-hare plan, TSLN-Rate has its own
+    AxisLayout-aware obs model and raises from inside ``loss_fn`` (see
+    :class:`TestTslnRateScaffolding` below).  The engine early-fail
+    now covers only PLN and TSLN-Logit (Commits 4 and 5).
     """
 
     def test_pln_decoupled_raises_at_engine(self):
@@ -315,6 +319,89 @@ class TestEnginePlnTslnEarlyFail:
         msg = str(excinfo.value)
         assert "pln" in msg.lower() or "PLN" in msg
         assert "Commit" in msg
+        assert "correlate_other_column=True" in msg
+
+
+class TestTslnRateScaffolding:
+    """TSLN-Rate scaffolding mirror of NBLN (harmonic-hare Commit 3).
+
+    Same shape contract: when `correlate_other_column=False` and a
+    pooled `_other` column is present, the obs model builds an
+    `AxisLayout` and raises `NotImplementedError` from inside
+    ``loss_fn`` / ``final_sweep`` / ``compute_global_uncertainty``.
+    Legacy fits (no `gene_coverage`, or `correlate_other_column=True`)
+    work unchanged.
+    """
+
+    def test_legacy_no_coverage_works(self):
+        """Plain TSLN-Rate fit (no coverage, no _other) trivial layout."""
+        import scribe
+
+        adata = _make_adata(20, 6, seed=0)
+        res = scribe.fit(
+            adata,
+            model="twostate_ln_rate",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == 6
+        assert res.G_kept == 6
+        # W and d live on the latent-covariance axis (G_kept).  Under
+        # the trivial layout this equals G_obs.
+        if res.W is not None:
+            assert res.W.shape[0] == 6
+        if res.d is not None:
+            assert res.d.shape == (6,)
+
+    def test_legacy_default_with_gene_coverage(self):
+        """Default `correlate_other_column=True` keeps legacy behaviour
+        under `gene_coverage < 1.0` — `_other` participates in Σ as a
+        regular gene; layout is trivial."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        res = scribe.fit(
+            adata,
+            model="twostate_ln_rate",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+            gene_coverage=0.85,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        # G_obs accounts for the trailing `_other` column emitted by
+        # the gene-coverage stage.
+        assert res.G_obs == res.G_kept
+        assert res.G_obs >= 2  # kept + _other at minimum
+
+    def test_decoupled_raises_from_obs_model(self):
+        """Explicit `correlate_other_column=False` with a pooled
+        `_other` column triggers the obs-model NotImplementedError
+        (not the engine early-fail, which now only covers PLN /
+        TSLN-Logit)."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        with pytest.raises(NotImplementedError) as excinfo:
+            scribe.fit(
+                adata,
+                model="twostate_ln_rate",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=5,
+                seed=0,
+                gene_coverage=0.85,
+                correlate_other_column=False,
+            )
+        msg = str(excinfo.value)
+        # Message identifies TSLN-Rate and points at the remediation.
+        assert "TSLN-Rate" in msg
         assert "correlate_other_column=True" in msg
 
 

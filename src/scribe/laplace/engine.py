@@ -132,19 +132,15 @@ class LaplaceInferenceEngine:
         w_prior_strategy = build_w_prior_strategy(w_prior)
 
         # Early-fail check for `correlate_other_column=False` on the
-        # decoupled-math models that haven't yet been wired (PLN,
-        # TSLN-Rate, TSLN-Logit).  The public API (``scribe.fit`` and
-        # ``ModelConfig.correlate_other_column``) advertises decoupling
-        # for all four PLN/NBLN/TSLN models, but Commit 2 of the
-        # harmonic-hare plan only landed the NBLN scaffolding.  The
-        # other three models' obs likelihoods, Newton steps, and
-        # global-uncertainty paths land in subsequent commits (3 / 4 /
-        # 5).  Until then, catch the inconsistency at the engine
-        # **before** the obs model is constructed so the user gets a
-        # clear, uniform error rather than a silent legacy-behaviour
-        # fall-through that contradicts the API contract.
+        # decoupled-math models that haven't yet been wired.  As of
+        # Commit 3 of the harmonic-hare plan, NBLN and TSLN-Rate
+        # both have AxisLayout-aware obs models (their NotImplemented
+        # guards fire from inside ``loss_fn`` etc.), so only PLN and
+        # TSLN-Logit need the engine-level early-fail.  When those
+        # models receive their own AxisLayout wiring (Commits 4 and
+        # 5 of the plan), this guard can be retired entirely.
         #
-        # Detection must match ``build_axis_layout``'s priority chain
+        # Detection matches ``build_axis_layout``'s priority chain
         # (has_pooled_other > gene_names[-1] == "_other"; auditor
         # finding rev-5 #1) — using only ``has_pooled_other`` would
         # silently miss manually-pre-filtered AnnData whose tail is
@@ -154,7 +150,7 @@ class LaplaceInferenceEngine:
         )
         if (
             (not _ccc)
-            and bm in ("pln", "twostate_ln_rate", "twostate_ln_logit")
+            and bm in ("pln", "twostate_ln_logit")
         ):
             from ._axis_layout import build_axis_layout as _build_layout
             _probe_layout = _build_layout(
@@ -168,12 +164,12 @@ class LaplaceInferenceEngine:
                     f"`{bm}` Laplace fit with "
                     "`correlate_other_column=False` and a pooled "
                     "'_other' column is not yet implemented — "
-                    "Commit 2 of the harmonic-hare plan landed only "
-                    "NBLN scaffolding; PLN / TSLN-Rate / TSLN-Logit "
-                    "math lands in Commits 3 / 4 / 5.  Until then, "
-                    "pass `correlate_other_column=True` (the current "
-                    "default) to use the legacy path with `_other` "
-                    "in Σ, or fit without `gene_coverage` filtering."
+                    "Commits 4 (TSLN-Logit) / 5 (PLN) of the "
+                    "harmonic-hare plan land the obs-model wiring. "
+                    "Until then, pass `correlate_other_column=True` "
+                    "(the current default) to use the legacy path "
+                    "with `_other` in Σ, or fit without "
+                    "`gene_coverage` filtering."
                 )
 
         if bm == "pln":
@@ -213,6 +209,8 @@ class LaplaceInferenceEngine:
                 max_step=float(
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm == "twostate_ln_logit":
             from ._obs_twostate_ln_logit import (
