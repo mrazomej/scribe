@@ -99,6 +99,24 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
 - **Custom Distributions**: BetaPrime, LowRankLogisticNormal,
   LowRankPoissonLogNormal, SoftmaxNormal with registered KL divergences
 
+## Recent changes
+
+- **`correlate_other_column` flag (`ModelConfig`).** Controls whether
+  the trailing pooled `_other` column emitted by `gene_coverage<1.0`
+  participates in the latent low-rank covariance Σ used by PLN /
+  NBLN / TSLN-Rate / TSLN-Logit / LNM.  The flag is currently held
+  at the legacy default `True` (pooled `_other` participates in Σ —
+  bit-equal to pre-flag behaviour) while the per-model decoupled
+  math is being rolled out commit-by-commit; the default flips to
+  `False` (the biologically cleaner setting) when the math ships
+  and `True` becomes the explicit legacy opt-in.  LNM realises the
+  decoupling by auto-pinning the ALR reference to `_other`'s
+  position under `False`; explicit conflicting overrides raise.
+  See [`src/scribe/laplace/README.md`](src/scribe/laplace/README.md)
+  *Decorrelating the `_other` aggregate from Σ* for the behaviour
+  matrix and [`paper/_nb_lognormal.qmd`](paper/_nb_lognormal.qmd)
+  §sec-nbln-decorrelate-other for the math.
+
 ## Model Construction Space
 
 SCRIBE models are built compositionally. The likelihood is constructed by

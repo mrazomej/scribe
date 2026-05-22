@@ -789,6 +789,10 @@ Behaviour matrix for this release (Commit 2, default=True):
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN | Scaffolded as of Commit 5: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. As of Commit 5 the engine early-fail block has been **retired entirely** — every affected model owns its own decoupled detection via its obs-model `init_state`. |
 | Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |
 | AnnData fit with no gene_coverage but `var_names[-1] == "_other"` (manually-pre-filtered AnnData) | Detected via the AnnData var_names fallback (rev-4 #3); the layout factory honours the literal `_other` sentinel even without the gene_coverage stage running. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` — LNM / LNMVCP | The ALR reference is auto-pinned to the `_other` position by `apply_gene_coverage_and_alr` (the min-variance auto-selection is skipped under this flag).  LNM realises the decoupling through ALR construction; no deviation reparameterisation needed. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` AND explicit `alr_reference_idx` points to a retained gene — LNM / LNMVCP | `apply_gene_coverage_and_alr` raises `ValueError`: the explicit reference contradicts the flag's intent.  The user must either drop the override (auto-pin to `_other`) or pass `correlate_other_column=True`. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (legacy) AND any explicit `alr_reference_idx` — LNM / LNMVCP | Pass-through: any retained-gene reference accepted silently; references to `_other` raise (preserves today's contract). |
+| Direct `ModelConfig` construction bypassing `apply_gene_coverage_and_alr` with inconsistent `correlate_other_column` / `alr_reference_idx` — LNM | `LNMObservationModel.init_state` raises `ValueError` at init time, naming both flags.  Defensive guard for users who skip the standard engine path. |
 
 **Disagreement is loud.** When the data context provides BOTH a
 `has_pooled_other` flag AND a `gene_names` tail and the two disagree
@@ -797,18 +801,44 @@ vice-versa), `build_axis_layout` raises `ValueError` rather than
 silently choosing one — silent disagreement here can corrupt the
 axis split downstream.
 
-**LNM caveat (NOT done by default).** Auditor finding rev-2 #1
-corrected the original premise. LNM excludes the ALR reference gene
-from Σ by construction — but the gene-coverage stage's auto-selection
-(`apply_gene_coverage_and_alr`) chooses the reference by
-**minimum-variance**, which may or may not be the `_other` column.
-When the auto-selected reference is some other gene, `_other` stays
-in the ALR latent and therefore in Σ — defeating the flag's purpose.
-Commit 6 of the harmonic-hare plan adds real wiring: when
-`correlate_other_column=False` AND a pooled `_other` exists AND no
-explicit reference is set, force the ALR reference to `_other`'s
-position; reject inconsistent explicit overrides. Until Commit 6
-lands, LNM behaviour under this flag is **unchanged from today**.
+**LNM real wiring (Commit 6, landed).** LNM excludes the ALR
+reference gene from Σ by construction.  Under
+`correlate_other_column=False` AND a pooled `_other` column, the
+gene-coverage stage now pins the ALR reference to `_other`'s
+position automatically: the min-variance auto-selection is skipped
+because the variance-winner is typically a low-expression
+individual gene, not the pooled aggregate.  Explicit overrides to
+a non-`_other` reference under this flag raise `ValueError` with
+a message pointing at both flags.  Under legacy
+`correlate_other_column=True`, explicit references to any retained
+gene continue to be accepted as today (bit-equal contract).
+
+A defensive consistency check at `LNMObservationModel.init_state`
+catches the case where a user constructs `ModelConfig` directly and
+bypasses the gene-coverage stage; it raises `ValueError` if the
+detected pooled `_other` and the configured ALR reference disagree.
+Under legacy, the check is a no-op (the trivial `AxisLayout` short-
+circuits before the position check).  See
+`paper/_nb_lognormal.qmd` §sec-nbln-decorrelate-lnm for the
+biophysical rationale and `paper/_logistic_normal_multinomial.qmd`
+§sec-lnm-alr-pooled-other for the LNM-side cross-reference.
+
+**PLN underdispersion caveat.** Under `correlate_other_column=False`,
+PLN's `_other` column has `log_rate = μ_other − η_c` —
+deterministic up to the capture offset.  The marginal on the
+pooled count collapses to `Poisson(exp(μ_other − η_c))` with
+variance equal to mean.  When the pooled tail exhibits substantial
+overdispersion (common in practice, since it aggregates many
+low-expression genes), PLN's predictive intervals on this column
+will be unrealistically narrow.  NBLN / TSLN-Rate / TSLN-Logit do
+not have this issue — their per-gene NB dispersion (or burst
+kernel) fits the `_other` column freely on the observation axis.
+For PLN fits where the pooled tail's overdispersion is biologically
+meaningful, pass `correlate_other_column=True` to retain `_other`
+in Σ (the legacy layout couples `μ_other` to the latent through
+the diagonal `d_other` term).  See
+`paper/_nb_lognormal.qmd` §sec-nbln-decorrelate-pln-caveat for the
+mathematical treatment.
 
 **Current default-flip schedule.** Commit 2 ships with the default
 held at `True` (legacy) so existing `gene_coverage < 1.0` fits do

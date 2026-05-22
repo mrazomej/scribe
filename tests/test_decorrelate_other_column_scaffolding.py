@@ -701,3 +701,294 @@ class TestModelConfigFlag:
             correlate_other_column=False,
         )
         assert res.model_config.correlate_other_column is False
+
+
+# =====================================================================
+# LNM real wiring (Commit 6)
+# =====================================================================
+#
+# LNM is structurally distinct from the four count-likelihood models:
+# it lives in ALR compositional coordinates, where the ALR reference
+# gene is excluded from the latent covariance by construction.  So
+# LNM realises the ``correlate_other_column=False`` decoupling only
+# when the ALR reference is pinned to ``_other``'s position.  Today's
+# auto-selection by minimum variance does NOT guarantee this — the
+# winner of the variance competition is often a low-expression gene,
+# not the pooled aggregate.
+#
+# Commit 6 adds two complementary checks:
+#
+# 1. ``apply_gene_coverage_and_alr`` (the standard engine path):
+#    when ``correlate_other_column=False`` AND a pooled ``_other``
+#    exists AND ``alr_reference_idx`` was not supplied, auto-pin to
+#    ``_other``'s position (skip the min-variance fallback).  When
+#    the user supplies an explicit ``alr_reference_idx`` that does
+#    not resolve to ``_other`` under decoupling, raise.  Under legacy
+#    (``True``), preserve today's contract verbatim.
+#
+# 2. ``LNMObservationModel.__init__`` / ``init_state``: defensive
+#    consistency check that catches direct ``ModelConfig`` construction
+#    bypassing the gene-coverage stage.  Under legacy, no-op (bit-
+#    equal).
+#
+# Tests below cover both checks plus the legacy bit-equal guarantee.
+
+
+class TestLnmRealWiringStage:
+    """``apply_gene_coverage_and_alr`` LNM ALR-reference resolution.
+
+    These exercise the new branch in
+    ``scribe.api.stages.gene_coverage.apply_gene_coverage_and_alr``
+    that pins / validates the ALR reference based on
+    ``correlate_other_column``.
+    """
+
+    def test_decoupled_auto_pins_alr_reference_to_other(self):
+        """``correlate_other_column=False`` + ``gene_coverage<1.0`` +
+        ``alr_reference_idx=None`` → auto-pinned to the filtered
+        ``_other`` position (last index post-filter).
+        """
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata,
+            model="lnm",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        # The resolved reference is on ``ModelConfig`` after the
+        # stages complete; we check it via the result's model_config.
+        # ``_other`` is the last column post-filter — ``G_obs`` is
+        # observation-axis length (kept + 1).
+        assert res.model_config.alr_reference_idx == res.G_obs - 1
+
+    def test_decoupled_explicit_non_other_reference_raises(self):
+        """``correlate_other_column=False`` + explicit
+        ``alr_reference_idx`` that resolves to a retained gene → the
+        stage raises ``ValueError`` pointing at both flags.
+        """
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        with pytest.raises(ValueError) as excinfo:
+            scribe.fit(
+                adata,
+                model="lnm",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=3,
+                seed=0,
+                gene_coverage=0.85,
+                alr_reference_idx=0,  # Index 0 in original space — a
+                # retained gene, NOT ``_other``.
+                correlate_other_column=False,
+            )
+        msg = str(excinfo.value)
+        assert "correlate_other_column=False" in msg
+        assert "_other" in msg
+
+    def test_legacy_explicit_real_gene_reference_passes_through(self):
+        """``correlate_other_column=True`` (default) + explicit
+        ``alr_reference_idx`` that resolves to a retained gene →
+        accepted silently (bit-equal contract per auditor rev-3 #8).
+        """
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata,
+            model="lnm",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+            gene_coverage=0.85,
+            alr_reference_idx=0,
+            correlate_other_column=True,
+        )
+        # The resolved reference is the original index 0 → filtered
+        # index 0 (assuming gene 0 was retained, which it is with
+        # ``coverage=0.85`` on this seed).
+        assert res.model_config.alr_reference_idx == 0
+
+    def test_legacy_no_other_column_min_variance_selection_unchanged(self):
+        """Without ``gene_coverage`` (no ``_other`` column), legacy
+        path runs today's min-variance auto-selection.  Bit-equal.
+        """
+        import scribe
+
+        adata = _make_adata(30, 8, seed=0)
+        res = scribe.fit(
+            adata,
+            model="lnm",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+            # No ``gene_coverage``, no ``_other`` column.
+            correlate_other_column=False,
+        )
+        # The auto-selected reference is in [0, n_genes).  Without
+        # ``_other`` the new code path falls back to min-variance
+        # selection identically to today.
+        assert 0 <= res.model_config.alr_reference_idx < 8
+
+
+class TestLnmRealWiringObsModel:
+    """``LNMObservationModel`` defensive consistency check at init_state.
+
+    These bypass the stage by constructing the obs model directly
+    with a deliberately mismatched ``alr_reference_idx`` /
+    ``correlate_other_column`` combination.  The init_state guard
+    must fire with a clear message naming both flags.
+    """
+
+    def test_decoupled_with_wrong_alr_reference_raises_at_init(self):
+        """Direct construction: ``correlate_other_column=False`` +
+        ``has_pooled_other=True`` + ``alr_reference_idx`` pointing at
+        a non-``_other`` position → ``init_state`` raises.
+        """
+        from scribe.laplace._obs_lnm import LNMObservationModel
+
+        # The defensive guard only reads ``correlate_other_column`` via
+        # ``getattr`` — a ``SimpleNamespace`` stub avoids the full LNM-
+        # specific ``ModelConfig`` validation chain (parameterization,
+        # inference_method, etc.) that's irrelevant to this guard.
+        mc = SimpleNamespace(
+            correlate_other_column=False,
+            positive_transform="softplus",
+        )
+        # Reference is gene 0 (NOT ``_other`` at position 5).
+        obs = LNMObservationModel(
+            d_mode="learned",
+            alr_reference_idx=0,
+            capture_anchor=None,
+            model_config=mc,
+            gene_names=None,
+            has_pooled_other=True,  # primary signal: pooled exists
+        )
+        rng = np.random.default_rng(0)
+        count_data = rng.negative_binomial(
+            5, 0.5, size=(20, 6)
+        ).astype(np.float32)
+        with pytest.raises(ValueError) as excinfo:
+            obs.init_state(
+                count_data=count_data,
+                n_cells=20,
+                n_genes=6,
+                latent_dim=2,
+                seed=0,
+            )
+        msg = str(excinfo.value)
+        assert "correlate_other_column" in msg
+        assert "_other" in msg
+        assert "alr_reference_idx" in msg
+
+    def test_decoupled_with_correct_alr_reference_succeeds(self):
+        """Direct construction: ``correlate_other_column=False`` +
+        ``has_pooled_other=True`` + ``alr_reference_idx`` at the
+        ``_other`` position → ``init_state`` succeeds.
+        """
+        from scribe.laplace._obs_lnm import LNMObservationModel
+
+        mc = SimpleNamespace(
+            correlate_other_column=False,
+            positive_transform="softplus",
+        )
+        # Reference is the ``_other`` position (last index).
+        obs = LNMObservationModel(
+            d_mode="learned",
+            alr_reference_idx=5,
+            capture_anchor=None,
+            model_config=mc,
+            gene_names=None,
+            has_pooled_other=True,
+        )
+        rng = np.random.default_rng(0)
+        count_data = rng.negative_binomial(
+            5, 0.5, size=(20, 6)
+        ).astype(np.float32)
+        # Should not raise.
+        state = obs.init_state(
+            count_data=count_data,
+            n_cells=20,
+            n_genes=6,
+            latent_dim=2,
+            seed=0,
+        )
+        # mu / W live in ALR (G-1) coordinates per today's LNM.
+        assert state.params["mu"].shape == (5,)
+        assert state.params["W"].shape == (5, 2)
+
+    def test_legacy_with_non_other_reference_no_raise(self):
+        """Direct construction: legacy default + ``has_pooled_other``
+        signal + non-``_other`` reference → no raise (bit-equal
+        contract per auditor rev-3 #8).
+        """
+        from scribe.laplace._obs_lnm import LNMObservationModel
+
+        mc = SimpleNamespace(
+            correlate_other_column=True,  # legacy
+            positive_transform="softplus",
+        )
+        obs = LNMObservationModel(
+            d_mode="learned",
+            alr_reference_idx=0,
+            capture_anchor=None,
+            model_config=mc,
+            gene_names=None,
+            has_pooled_other=True,
+        )
+        rng = np.random.default_rng(0)
+        count_data = rng.negative_binomial(
+            5, 0.5, size=(20, 6)
+        ).astype(np.float32)
+        state = obs.init_state(
+            count_data=count_data,
+            n_cells=20,
+            n_genes=6,
+            latent_dim=2,
+            seed=0,
+        )
+        # No raise; legacy path is bit-equal-safe regardless of
+        # whether the reference is ``_other`` or not.
+        assert state.params["mu"].shape == (5,)
+
+    def test_manually_named_other_decoupled_raises(self):
+        """``var_names[-1] == "_other"`` without the gene-coverage
+        stage (so ``has_pooled_other`` is None) → names-fallback
+        detection triggers the guard under decoupling.
+        """
+        from scribe.laplace._obs_lnm import LNMObservationModel
+
+        mc = SimpleNamespace(
+            correlate_other_column=False,
+            positive_transform="softplus",
+        )
+        names = [f"g{i}" for i in range(5)] + [_OTHER_NAME]
+        obs = LNMObservationModel(
+            d_mode="learned",
+            alr_reference_idx=0,  # NOT the ``_other`` position.
+            capture_anchor=None,
+            model_config=mc,
+            gene_names=names,
+            has_pooled_other=None,  # Defer to names fallback.
+        )
+        rng = np.random.default_rng(0)
+        count_data = rng.negative_binomial(
+            5, 0.5, size=(20, 6)
+        ).astype(np.float32)
+        with pytest.raises(ValueError) as excinfo:
+            obs.init_state(
+                count_data=count_data,
+                n_cells=20,
+                n_genes=6,
+                latent_dim=2,
+                seed=0,
+            )
+        assert "_other" in str(excinfo.value)

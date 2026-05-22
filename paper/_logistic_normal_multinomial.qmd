@@ -451,6 +451,30 @@ generative model, and the simplex distribution are unchanged under
 the equivalent CLR or unconstrained softmax-normal forms; only the
 operational cost of fitting differs.
 
+#### Interaction with the pooled `_other` aggregate {#sec-lnm-alr-pooled-other}
+
+The gauge-fixing freedom interacts with the pooled `_other` column
+described in @sec-nbln-decorrelate-other. The ALR reference gene is
+excluded from the latent covariance
+$\underline{\underline{\Sigma}}_\text{ALR}$ by construction — its
+log-proportion is subtracted from every other gene's
+log-proportion, so the reference has no row in
+$\underline{\underline{W}}_\text{ALR}$. Pinning the reference to the
+`_other` position therefore realises the same decorrelation as the
+deviation reparameterisation of @eq-nbln-deviation-prior: the pooled
+aggregate participates in the multinomial likelihood but contributes
+no row to the regulatory-program loadings.
+
+The `correlate_other_column=False` configuration auto-pins the ALR
+reference to `_other`'s position when the gene-coverage stage
+emitted a pooled column; the legacy `True` configuration retains
+today's min-variance auto-selection. See
+@sec-nbln-decorrelate-lnm for the consistency contract and
+@sec-nbln-decorrelate-pln-caveat for the PLN-specific underdispersion
+caveat that does not apply to LNM (LNM's totals likelihood is NB on
+$\sum_g u_{cg}$, which fits the dispersion freely on observed totals
+independent of the simplex partition).
+
 ## Contrasting the Dirichlet and the logistic-normal {#sec-lnm-contrast}
 
 Before developing the full model, it is instructive to compare the two
@@ -2784,7 +2808,7 @@ prefer different directions).
 
 ### Summary
 
-These caveats do not undermine the LNM's central claim---that placing
+These caveats do not affect the LNM's central claim---that placing
 cross-gene correlations in the *generative* model rather than the
 *variational guide* is the structural fix to the Dirichlet's
 zero-correlation-freedom limitation. They do, however, delineate the
@@ -3065,7 +3089,7 @@ better. Under the anchor:
   $r_T = \mu_T \,\phi_T$ then takes its identifying signal from the
   *residual* variance of $u_T$ around the capture-predicted mean.
 
-Crucially, the derived $p \,=\, \phi_T / (1 + \phi_T)$ is a
+The derived $p \,=\, \phi_T / (1 + \phi_T)$ is a
 deterministic function of $\phi_T$, so it cannot drift along the
 $p$-axis as in the canonical / mean_prob variants. **However**, the
 ``mean_odds`` reparameterisation does *not* eliminate the boundary
@@ -3447,8 +3471,7 @@ information about $r_T$ in the totals once the capture is anchored.
 
 #### Where $r_T$'s identifiability migrates to {#sec-lnm-stability-rT-anchor-migration}
 
-This is not a problem for the model — it is a relocation of the
-identifying signal. With the capture anchor in place, the
+The identifying signal simply migrates. With the capture anchor in place, the
 $(p_{\text{capture}}, r_T)$ identifiability ridge that the qmd warned
 about in @sec-mean-residual-identifiability has been collapsed. The
 totals submodel is fully pinned by the capture prior; $r_T$ is no
@@ -3628,7 +3651,7 @@ range. SCRIBE's `LNMGaussianEncoder` (see
 $[-7,\,2]$, corresponding to $s \in [\,9.1\times10^{-4},\,7.4\,]$. The
 lower end is tight enough to keep the KL finite without forcing the
 posterior to be artificially diffuse; the upper end is loose enough that
-no realistic posterior ever binds against it. Crucially, the clamp is
+no realistic posterior ever binds against it. The clamp is
 **only** applied for `lnm`/`lnmvcp` models. Other SCRIBE VAEs use the
 standard unclamped `GaussianEncoder` so their training behavior remains
 bit-identical to pre-stability-pass code.
@@ -3724,14 +3747,14 @@ not "choosing the answer." However, the variational inference problem lives in a
 high-dimensional parameter space ($G - 1$ softmax coordinates per cell, plus
 population-level covariance structure), and the ELBO objective is non-convex with
 many saddle points and plateaux. In this landscape, **proper, informative priors
-are not a luxury but a computational necessity**: they constrain the feasible
+are a computational necessity**: they constrain the feasible
 region enough for stochastic gradient methods to make progress during the
 critical early-training phase when the likelihood surface is still nearly flat.
 A vague or improper prior on $r_T$ does not bias the eventual answer
 appreciably --- but it *does* place the optimizer in a region where the KL
 penalty dominates for thousands of steps before the likelihood becomes
 informative, producing the oscillatory training curves documented at the start
-of this section. The empirical Bayes choice resolves the tension: it supplies
+of this section. The empirical Bayes choice addresses both requirements: it supplies
 the computational regularization the optimizer needs while remaining
 asymptotically irrelevant to the posterior as the number of cells grows.
 

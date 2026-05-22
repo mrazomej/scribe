@@ -163,26 +163,61 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
             and np.any(~np.asarray(_gene_coverage_mask, dtype=bool))
         )
 
+        # Harmonic-hare Commit 6: when ``correlate_other_column=False``
+        # AND a pooled ``_other`` exists, LNM realises the decoupling
+        # by pinning the ALR reference to ``_other``'s position (the
+        # ALR reference gene is excluded from the latent covariance by
+        # construction).  Under legacy (``True``), preserve today's
+        # contract verbatim — including raising if the reference
+        # resolves to ``_other`` — so the bit-equal contract holds.
+        # See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other
+        # and ``paper/_logistic_normal_multinomial.qmd`` cross-ref for
+        # the biophysical rationale.
+        _correlate_other_column = bool(
+            kw.get("correlate_other_column", True)
+        )
+        _other_pos_in_filtered = n_genes - 1  # last position post-filter
+
         if alr_reference_idx is None:
-            # Auto-selection by minimum variance of log-proportion.
-            alr_reference_idx = int(
-                select_alr_reference(ctx.count_data)
-            )
-            _is_other = (
-                _has_pooled_other
-                and alr_reference_idx == ctx.count_data.shape[1] - 1
-            )
-            logging.getLogger(__name__).info(
-                "LNM: auto-selected gene %d as ALR reference "
-                "(%s; minimum-variance criterion).",
-                alr_reference_idx,
-                (
-                    "pooled '_other' pseudo-gene won the variance "
-                    "competition"
-                    if _is_other
-                    else "individual gene"
-                ),
-            )
+            if (not _correlate_other_column) and _has_pooled_other:
+                # Decoupled + pooled ``_other`` exists: pin the ALR
+                # reference to ``_other``'s position so the latent
+                # covariance excludes ``_other`` by construction.
+                # This is the only way LNM realises the same decoupling
+                # the other four models implement via the deviation
+                # reparameterisation.  No min-variance fallback runs
+                # here.
+                alr_reference_idx = int(_other_pos_in_filtered)
+                logging.getLogger(__name__).info(
+                    "LNM (correlate_other_column=False): pinned ALR "
+                    "reference to the pooled '_other' pseudo-gene at "
+                    "filtered position %d.  '_other' is excluded from "
+                    "the latent low-rank covariance by ALR construction; "
+                    "see paper/_nb_lognormal.qmd §sec-nbln-decorrelate-"
+                    "other for the biophysical rationale.",
+                    alr_reference_idx,
+                )
+            else:
+                # Legacy or no-_other path: auto-selection by minimum
+                # variance of log-proportion (today's behaviour).
+                alr_reference_idx = int(
+                    select_alr_reference(ctx.count_data)
+                )
+                _is_other = (
+                    _has_pooled_other
+                    and alr_reference_idx == ctx.count_data.shape[1] - 1
+                )
+                logging.getLogger(__name__).info(
+                    "LNM: auto-selected gene %d as ALR reference "
+                    "(%s; minimum-variance criterion).",
+                    alr_reference_idx,
+                    (
+                        "pooled '_other' pseudo-gene won the variance "
+                        "competition"
+                        if _is_other
+                        else "individual gene"
+                    ),
+                )
         else:
             _ref_input = int(alr_reference_idx)
             if gene_coverage is None:
@@ -218,10 +253,46 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
                 else:
                     alr_reference_idx = _ref_input
 
-            if _has_pooled_other and alr_reference_idx == (n_genes - 1):
-                raise ValueError(
-                    "alr_reference_idx resolved to the pooled 'other' "
-                    "gene. Please select a retained original gene."
-                )
+            # Harmonic-hare Commit 6: bifurcate the post-resolution check
+            # on ``correlate_other_column``.  Under decoupling, an
+            # explicit non-``_other`` reference contradicts the user's
+            # intent to exclude ``_other`` from Σ — raise with a clear
+            # message pointing to both flags.  Under legacy, retain
+            # today's contract (reject any resolution to ``_other``).
+            if _has_pooled_other:
+                if not _correlate_other_column:
+                    if alr_reference_idx != _other_pos_in_filtered:
+                        raise ValueError(
+                            "Inconsistent configuration: "
+                            "correlate_other_column=False requests that "
+                            "the pooled '_other' aggregate be excluded "
+                            "from the LNM latent covariance, but the "
+                            "explicit alr_reference_idx resolves to a "
+                            f"retained gene (filtered position "
+                            f"{alr_reference_idx}, not the '_other' "
+                            f"position {_other_pos_in_filtered}).  "
+                            "Under correlate_other_column=False, the "
+                            "ALR reference must be pinned to '_other' "
+                            "to realise the decoupling.  Either drop "
+                            "the explicit alr_reference_idx (it will "
+                            "auto-pin to '_other') or pass "
+                            "correlate_other_column=True to keep "
+                            "today's behaviour with a real-gene "
+                            "reference."
+                        )
+                else:
+                    # Legacy: explicit references that resolve to a
+                    # real gene are valid; explicit references that
+                    # resolve to ``_other`` are still rejected
+                    # because today's LNM code assumes the reference
+                    # is a real gene.
+                    if alr_reference_idx == _other_pos_in_filtered:
+                        raise ValueError(
+                            "alr_reference_idx resolved to the pooled "
+                            "'other' gene. Please select a retained "
+                            "original gene, or pass "
+                            "correlate_other_column=False to pin the "
+                            "ALR reference to '_other' automatically."
+                        )
 
         ctx.alr_reference_idx = alr_reference_idx

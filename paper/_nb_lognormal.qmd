@@ -2048,7 +2048,7 @@ $${#eq-nbln-cascade-loss}
 with the $\eta_c$ block already entering through the cell-level
 TruncatedNormal prior whose scale $\sigma_M$ is replaced by the per-cell
 empirical scale $s^{(0)}_{\eta, c}$ when the cascade provides one.
-Crucially:
+Two points matter here:
 
 - **The prior terms are not scaled by mini-batch.** They are global
   parameter priors, not per-cell likelihood contributions, so the
@@ -2557,6 +2557,259 @@ relatively large $\sigma_g / \hat{\varrho}_g$ (weakly identified dispersion).
 This is the honest posterior-uncertainty signal: a model that is uncertain
 about gene burstiness **should** produce wider predictive intervals for those
 genes.
+
+## Decorrelating the pooled "_other" aggregate from $\underline{\underline{\Sigma}}$ {#sec-nbln-decorrelate-other}
+
+The gene-coverage stage
+(`scribe.core.gene_coverage.aggregate_counts_by_mask`) emits a
+trailing pooled column `_other` whenever `gene_coverage < 1.0`. The
+column collects the summed UMIs of every gene that failed the
+coverage threshold. By construction it is an aggregate of many
+biologically unrelated genes, not a transcript. Including it as a
+row in the latent low-rank covariance
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ spends
+capacity on cross-gene correlations whose biophysical interpretation
+is undefined: there is no shared promoter, no co-regulating
+transcription factor, no compositional constraint that couples
+`_other`'s count to any individual kept gene.
+
+The `correlate_other_column: bool` flag on `ModelConfig` selects
+between two layouts. The flag also flows through to PLN
+(@sec-poisson-lognormal), TSLN-Rate, and TSLN-Logit
+(@sec-twostate-promoter), all of which share NBLN's latent
+low-rank-plus-diagonal MVN. We develop the construction for NBLN
+because it carries the per-gene NB dispersion $r_g$ that complicates
+the Schur derivation; the other three models are special cases with
+either $r_g \to \infty$ (PLN) or the Beta-Poisson burst kernel
+(TSLN).
+
+### The deviation reparameterisation {#sec-nbln-decorrelate-deviation}
+
+Under `correlate_other_column=False`, the per-cell latent splits into
+two axes:
+
+* $G_\text{obs}$ — observation-axis length. Equal to the count-data
+  column dimension. Per-gene parameters in the observation
+  likelihood ($\underline{r}$, $\underline{\mu}$, and for
+  TSLN-Logit the per-gene $\eta_\text{anchor}$) retain this shape.
+* $G_\text{kept} = G_\text{obs} - 1$ — latent-covariance axis. The
+  trailing `_other` row is excluded from
+  $\underline{\underline{\Sigma}}$. $\underline{\underline{W}}$ has
+  shape $(G_\text{kept}, K)$, $\underline{d}$ has shape
+  $(G_\text{kept},)$, and the per-cell latent deviation
+  $\underline{x}_c^\text{dev}$ has shape $(G_\text{kept},)$.
+
+The latent prior on $\underline{x}_c^\text{dev}$ is centred at zero:
+
+$$
+\underline{x}_c^\text{dev} \sim
+\mathcal{N}\bigl(\underline{0},\
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d})\bigr).
+$${#eq-nbln-deviation-prior}
+
+The per-gene log-rate fed to the NB likelihood is $G_\text{obs}$-long
+and assembled from the deviation plus the kept-gene means:
+
+$$
+\log\text{rate}_{cg} =
+\begin{cases}
+\mu_g + x_{c,\,k(g)}^\text{dev} - \eta_c
+& g \in \text{kept genes (kept-position } k(g))\\[2pt]
+\mu_g - \eta_c
+& g = \text{other\_idx}
+\end{cases}
+$${#eq-nbln-deviation-lograte}
+
+where $\eta_c$ is the per-cell capture log-offset under LNMVCP (zero
+or absent under plain NBLN). The `_other` row receives no
+z-modulation: its count is governed entirely by $\mu_\text{other}$
+and the capture offset.
+
+The legacy path (`correlate_other_column=True`) preserves today's
+absolute-$\underline{x}$ math bit-for-bit. The deviation
+reparameterisation in @eq-nbln-deviation-prior runs only when
+`AxisLayout.decoupled == True`; the engine constructs this object
+from the data shape and the flag at fit-time and threads it through
+every loss, Newton, sampling, and PPC code path.
+
+### Profiled-$\mu$ uncertainty under deviation {#sec-nbln-decorrelate-mu-uncertainty}
+
+Under the deviation reparameterisation, $\underline{\mu}$ no longer
+appears in the MVN prior: it enters only the NB log-likelihood. The
+profiled-$\mu$ Hessian (used by
+@sec-nbln-mu-uncertainty's global-uncertainty machinery to produce
+$\sigma_{\mu_g}$) drops the $\underline{\underline{\Sigma}}^{-1}$
+contribution. For each kept gene $g$ at kept-position $k$:
+
+$$
+-H_{\mu_g,\,\mu_g} = \sum_c a_{c,g},
+\qquad
+-H_{\mu_g,\,x_{c,k}^\text{dev}} = a_{c,g},
+$${#eq-nbln-decoupled-mu-cross}
+
+where $a_{c,g} = (u_{cg} + r_g)\, p_g(z_{cg})\,(1 - p_g(z_{cg}))$ is
+the NB curvature diagonal entry from @eq-nbln-summary-hessian. The
+Schur complement profiles out the kept-axis latent block:
+
+$$
+-H_{\mu_g}^\text{post-prof} =
+\sum_c a_{c,g} - \sum_c a_{c,g}^2 \cdot (M_c^{-1})_{kk},
+$${#eq-nbln-decoupled-mu-schur}
+
+where $M_c$ is the per-cell posterior Hessian on the kept-axis
+latent block in the active capture mode:
+
+* **No capture** (no $\eta_c$): $M_c = \underline{\underline{A}}_c +
+  \underline{\underline{\Sigma}}_\text{kept}^{-1}$, with
+  $\underline{\underline{A}}_c =
+  \mathrm{diag}(\underline{a}_{c,\,\text{kept}})$ the NB curvature
+  diagonal restricted to kept genes. The inverse $M_c^{-1}$ is the
+  output of the x-only Newton's `_woodbury_factors` machinery.
+* **Frozen $\eta_c$** (cascade): identical to no-capture — $\eta_c$
+  contributes a constant offset, not curvature. $M_c^{-1}$ is the
+  x-only Woodbury inverse produced by
+  `newton_step_x_only_offset`.
+* **Soft $\eta_c$** (joint Newton): $M_c^{-1}$ is the
+  $(\underline{x}^\text{dev}, \underline{x}^\text{dev})$ sub-block
+  of the joint $(\underline{x}^\text{dev}, \eta)$ inverse Hessian
+  after profiling $\eta$ out. The block is already computed by
+  `newton_step_joint` and consumed by the existing $r_g$ profiling
+  (@sec-nbln-capture-aware-r); the new $\mu_g$ profiling reuses
+  the same inverse restricted to the $(\text{kept} \times
+  \text{kept})$ submatrix.
+
+For the `_other` row, the cross-Hessian vanishes:
+
+$$
+-H_{\mu_\text{other},\,x_{c,k}^\text{dev}} = 0
+\quad \text{for all } k,
+$${#eq-nbln-decoupled-mu-other-cross}
+
+since $\mu_\text{other}$ does not enter any kept gene's
+$\log\text{rate}_{cg}$ in @eq-nbln-deviation-lograte. The Schur
+correction is zero and
+
+$$
+-H_{\mu_\text{other}}^\text{post-prof} = \sum_c a_{c,\text{other}}.
+$${#eq-nbln-decoupled-mu-other-schur}
+
+A finite informative-Gaussian prior on $\underline{\mu}$ (from the
+cascade in @sec-nbln-svi-cascade) adds $1/\sigma_{\text{prior},g}^2$
+to the diagonal of $-H_{\mu_g,\,\mu_g}$ for every $g$ — kept or
+`_other` — preserving identifiability when the NB curvature is
+small.
+
+### Gauge structure under decoupling {#sec-nbln-decorrelate-gauge}
+
+The compositional gauge analysis of @sec-diffexp-nbln-theorem-W
+projects $\underline{\underline{W}}$ onto the orthogonal complement
+of the all-ones vector $\underline{1}$. Under decoupling, the
+projector centres on $G_\text{kept}$:
+
+$$
+\underline{\underline{W}}_\perp =
+\bigl(\underline{\underline{I}}_{G_\text{kept}} -
+\tfrac{1}{G_\text{kept}}\,\underline{1}\underline{1}^\top\bigr)\,
+\underline{\underline{W}}.
+$${#eq-nbln-decoupled-w-perp}
+
+The projection's domain matches the latent's domain, so Theorem 2 of
+@sec-diffexp-nbln-theorem-W holds unchanged: $\underline{x}^\text{dev}$
+on the kept axis, projected by
+$\underline{\underline{W}}_\perp$, is the gauge-invariant signal that
+drives compositional DE.
+
+The compositional sampler used by PPC and DE constructs the full
+$G_\text{obs}$-length log-rate explicitly:
+
+$$
+\begin{aligned}
+\underline{z} &\sim \mathcal{N}(\underline{0}, \underline{\underline{I}}_K)
+& &\text{(rank-}K\text{ driver)}\\
+\underline{\varepsilon} &\sim \mathcal{N}(\underline{0},
+\underline{\underline{I}}_{G_\text{kept}})
+& &\text{(per-gene innovation)}\\
+\underline{x}^\text{dev} &=
+\underline{\underline{W}}_\perp\,\underline{z} +
+\sqrt{\underline{d}}\,\underline{\varepsilon}
+& &\in \mathbb{R}^{G_\text{kept}}\\
+\underline{\ell}_\text{kept} &=
+\underline{\mu}_\text{kept} + \underline{x}^\text{dev}
+& &\in \mathbb{R}^{G_\text{kept}}\\
+\underline{\ell} &=
+\mathrm{concat}\bigl(\underline{\ell}_\text{kept},\
+\mu_{\text{other}}\bigr)
+& &\in \mathbb{R}^{G_\text{obs}}\\
+\underline{\rho} &= \mathrm{softmax}(\underline{\ell})
+& &\in \Delta^{G_\text{obs}-1}
+\end{aligned}
+$${#eq-nbln-decoupled-composition}
+
+The `_other` column participates in the simplex so kept-gene
+proportions normalise against it, but it contributes no per-draw
+stochastic variability. DE auto-drops the `_other` entry from CLR
+outputs through the per-fit mask that the gene-coverage stage
+populates (see `scribe.de._extract`).
+
+### LNM realises decoupling through ALR-reference pinning {#sec-nbln-decorrelate-lnm}
+
+The logistic-normal multinomial model
+(@sec-logistic-normal-multinomial) lives in ALR compositional
+coordinates rather than absolute log-rates. The ALR transform picks
+a reference gene whose log-proportion is subtracted from every other
+gene's log-proportion; the reference is excluded from the latent
+covariance by construction. LNM therefore realises the same
+decorrelation as @eq-nbln-deviation-prior, but only when the ALR
+reference is pinned to the `_other` position.
+
+When `correlate_other_column=False` and a pooled `_other` exists,
+the gene-coverage stage pins `alr_reference_idx` to the `_other`
+position automatically: the min-variance auto-selection that would
+normally run is skipped, because the variance-winner is typically a
+low-expression individual gene, not the pooled aggregate. Explicit
+overrides to a non-`_other` reference under
+`correlate_other_column=False` raise `ValueError`. Under
+`correlate_other_column=True` (legacy), explicit references to any
+retained gene continue to be accepted as today; this preserves the
+bit-equal contract for users who relied on the prior behaviour.
+
+The LNM observation model carries a defensive consistency check at
+init time for the case where a user bypasses the gene-coverage stage
+by constructing `ModelConfig` directly. The check uses the same
+detection priority chain (`has_pooled_other` → `gene_names[-1] ==
+"_other"` → `False`) that PLN, NBLN, TSLN-Rate, and TSLN-Logit use
+to build their `AxisLayout`.
+
+### PLN underdispersion caveat under decoupling {#sec-nbln-decorrelate-pln-caveat}
+
+PLN's observation likelihood is pure Poisson
+($r_g \to \infty$ limit of NBLN, @sec-nbln-limit-pln). Under
+`correlate_other_column=False`, the `_other` row in PLN has
+$\log\text{rate}_\text{other} = \mu_\text{other} - \eta_c$ —
+deterministic up to the capture offset. The marginal distribution on
+$u_{c,\text{other}}$ collapses to
+$\text{Poisson}(\exp(\mu_\text{other} - \eta_c))$, with variance
+equal to the mean.
+
+The pooled tail is typically the sum of many low-expression genes
+and may exhibit substantial overdispersion in practice. A pure
+Poisson on a pooled tail is a strong modelling assumption: if the
+empirical variance of the `_other` column exceeds its mean by an
+order of magnitude or more, the PLN fit will report unrealistically
+narrow predictive intervals for that column. NBLN, TSLN-Rate, and
+TSLN-Logit do not suffer from this because their per-gene NB
+dispersion $r_\text{other}$ (or burst kernel, for TSLN) is fit
+freely on $G_\text{obs}$ and can absorb the pooled-tail overdispersion.
+
+For PLN fits where the pooled tail's overdispersion is biologically
+meaningful, pass `correlate_other_column=True` to retain `_other` in
+$\underline{\underline{\Sigma}}$. The legacy layout couples
+$\mu_\text{other}$ to the latent $\underline{x}_c$ through the
+diagonal $d_\text{other}$ term, restoring overdispersion at the cost
+of giving the pooled aggregate a biophysically meaningless row in
+$\underline{\underline{W}}$.
 
 ## Mathematical summary {#sec-nbln-summary}
 

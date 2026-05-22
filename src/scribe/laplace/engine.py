@@ -227,11 +227,20 @@ class LaplaceInferenceEngine:
             alr_reference_idx = int(
                 getattr(model_config, "alr_reference_idx", -1)
             )
+            # Harmonic-hare Commit 6: thread the same two axis-layout
+            # signals every other Laplace obs model receives so LNM's
+            # defensive ``correlate_other_column`` / ALR-reference
+            # consistency check has the same detection priority chain.
+            # Array-input fits (no AnnData → no ``filtered_gene_names``)
+            # rely on ``has_pooled_other`` from the gene-coverage stage
+            # to detect ``_other``.
             obs_model = LNMObservationModel(
                 d_mode=d_mode,
                 alr_reference_idx=alr_reference_idx,
                 capture_anchor=capture_anchor,
                 model_config=model_config,
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         else:
             raise NotImplementedError(
