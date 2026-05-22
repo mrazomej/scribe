@@ -143,26 +143,38 @@ class LaplaceInferenceEngine:
         # **before** the obs model is constructed so the user gets a
         # clear, uniform error rather than a silent legacy-behaviour
         # fall-through that contradicts the API contract.
+        #
+        # Detection must match ``build_axis_layout``'s priority chain
+        # (has_pooled_other > gene_names[-1] == "_other"; auditor
+        # finding rev-5 #1) — using only ``has_pooled_other`` would
+        # silently miss manually-pre-filtered AnnData whose tail is
+        # literally ``"_other"`` (no ``gene_coverage`` stage ran).
         _ccc = bool(
             getattr(model_config, "correlate_other_column", True)
         )
-        _has_pool = bool(has_pooled_other) if has_pooled_other else False
         if (
             (not _ccc)
-            and _has_pool
             and bm in ("pln", "twostate_ln_rate", "twostate_ln_logit")
         ):
-            raise NotImplementedError(
-                f"`{bm}` Laplace fit with "
-                "`correlate_other_column=False` and a pooled "
-                "'_other' column is not yet implemented — Commit 2 of "
-                "the harmonic-hare plan landed only NBLN scaffolding; "
-                "PLN / TSLN-Rate / TSLN-Logit math lands in Commits "
-                "3 / 4 / 5.  Until then, pass "
-                "`correlate_other_column=True` (the current default) "
-                "to use the legacy path with `_other` in Σ, or fit "
-                "without `gene_coverage` filtering."
+            from ._axis_layout import build_axis_layout as _build_layout
+            _probe_layout = _build_layout(
+                n_genes=int(n_genes),
+                correlate_other_column=False,
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
+            if _probe_layout.decoupled:
+                raise NotImplementedError(
+                    f"`{bm}` Laplace fit with "
+                    "`correlate_other_column=False` and a pooled "
+                    "'_other' column is not yet implemented — "
+                    "Commit 2 of the harmonic-hare plan landed only "
+                    "NBLN scaffolding; PLN / TSLN-Rate / TSLN-Logit "
+                    "math lands in Commits 3 / 4 / 5.  Until then, "
+                    "pass `correlate_other_column=True` (the current "
+                    "default) to use the legacy path with `_other` "
+                    "in Σ, or fit without `gene_coverage` filtering."
+                )
 
         if bm == "pln":
             from ._obs_pln import PLNObservationModel

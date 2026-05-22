@@ -734,10 +734,17 @@ including it wastes capacity on spurious cross-gene correlations and
 biases the `W` loadings used for regulatory-program identification
 and gauge-invariant diagnostics (see
 [`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd)
-Theorem 2). The `correlate_other_column: bool = False` flag on
-`ModelConfig` (default False, the new recommended behaviour)
-**excludes `_other` from Σ** while keeping it in the observation
-likelihood:
+Theorem 2). The `correlate_other_column: bool` flag on `ModelConfig`
+controls whether the trailing `_other` row participates in Σ.
+
+**Current default in this release: `True`** (legacy — `_other`
+participates in Σ, identical to pre-flag behaviour). The default is
+deliberately held at `True` because the decoupled-math path (`False`)
+is implemented only as scaffolding in this commit; the actual
+deviation-parameterisation math (loss / Newton / global-uncertainty)
+lands in Commit 2b. When 2b ships, the default flips to `False`
+(the biologically cleaner setting) and `True` becomes the explicit
+legacy opt-in. Under `False`, the layout has:
 
 ```text
 W shape: (G_kept, K)        # latent-covariance axis (no _other row)

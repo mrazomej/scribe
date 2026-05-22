@@ -184,8 +184,20 @@ def build_axis_layout(
         names_say_other = (str(gene_names[-1]) == _OTHER_NAME)
 
     # Contradictory-signal check: raise loudly when both signals are
-    # present and disagree (auditor finding rev-3 Medium).
-    if has_pooled_other is not None and names_say_other is not None:
+    # present and disagree (auditor finding rev-3 Medium).  Skip this
+    # check under ``correlate_other_column=True`` — the legacy path
+    # always produces a trivial layout regardless of the signals, so
+    # disagreement cannot corrupt the axis split (rev-5 #2: legacy
+    # must never break, even when AnnData has a manually-named
+    # ``_other`` tail without the ``gene_coverage`` stage running).
+    # The check is only load-bearing on the decoupled path because
+    # only there does the layout actually consume the signals to
+    # split rows of W / d / x.
+    if (
+        not correlate_other_column
+        and has_pooled_other is not None
+        and names_say_other is not None
+    ):
         if bool(has_pooled_other) != bool(names_say_other):
             raise ValueError(
                 f"Contradictory '_other' signals: has_pooled_other="
@@ -196,7 +208,10 @@ def build_axis_layout(
                 "indicates metadata drift between the gene-coverage "
                 "stage and the gene-names array — silent disagreement "
                 "can corrupt the axis-decoupling. Fix the calling "
-                "pipeline to ensure both signals agree."
+                "pipeline to ensure both signals agree, or pass "
+                "`correlate_other_column=True` to use the legacy "
+                "trivial layout (in which the signals are advisory "
+                "and disagreement is harmless)."
             )
 
     # Resolve the effective signal in priority order:

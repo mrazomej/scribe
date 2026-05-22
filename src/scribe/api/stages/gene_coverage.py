@@ -134,12 +134,19 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
             int(np.asarray(~_gene_coverage_mask, dtype=int).sum()) > 0
         )
     else:
-        # No gene_coverage filtering was applied → no pooled '_other'.
-        # Still set the attribute so downstream code can rely on it
-        # being present (None means "filter was not applied"; False
-        # means "filter applied but no pooling occurred").
+        # No gene_coverage filtering was applied.  Use ``None`` (not
+        # ``False``) so downstream signals (e.g. AnnData var_names
+        # fallback in ``run_inference.py``) can take primary
+        # responsibility for detecting a manually-named ``_other``
+        # tail.  ``False`` here would be an *explicit* "no _other"
+        # claim, which conflicts with the var_names fallback when
+        # the user manually pre-filtered their AnnData and named
+        # the trailing aggregate ``_other`` (auditor finding rev-5
+        # #2 cascade: ``has_pooled_other=False`` + names-say-other
+        # would otherwise raise the contradictory-signal ValueError
+        # under ``correlate_other_column=False``).
         if not hasattr(ctx, "_has_pooled_other"):
-            ctx._has_pooled_other = False
+            ctx._has_pooled_other = None
 
     # -- ALR reference resolution (LNM models only) ---------------------------
     if ctx.model.lower() in ("lnm", "lnmvcp"):

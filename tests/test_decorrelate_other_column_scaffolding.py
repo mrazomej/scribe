@@ -136,6 +136,36 @@ class TestAxisLayoutFactory:
                 has_pooled_other=True,
             )
 
+    def test_contradictory_signals_silent_under_legacy_flag(self):
+        """Auditor rev-5 #2: legacy mode never breaks.
+
+        When `correlate_other_column=True`, the layout is always
+        trivial regardless of signals — so disagreement between
+        `has_pooled_other` and `gene_names[-1]` cannot corrupt the
+        axis split.  The check is skipped to keep the legacy path
+        bit-equal even on metadata-drift edge cases (e.g.
+        manually-pre-filtered AnnData whose tail is literally
+        ``_other`` but no gene_coverage stage ran).
+        """
+        # Disagreement that would raise under `False` is silent here.
+        layout = build_axis_layout(
+            5,
+            correlate_other_column=True,
+            gene_names=["g1", "g2", "g3", "g4", _OTHER_NAME],
+            has_pooled_other=False,
+        )
+        assert layout.decoupled is False
+        assert layout.G_kept == layout.G_obs == 5
+
+        # Symmetric case (other direction of disagreement).
+        layout2 = build_axis_layout(
+            5,
+            correlate_other_column=True,
+            gene_names=["g1", "g2", "g3", "g4", "g5"],
+            has_pooled_other=True,
+        )
+        assert layout2.decoupled is False
+
 
 class TestAxisLayoutInvariants:
     """`AxisLayout`'s `__post_init__` enforces shape invariants."""
