@@ -7,9 +7,19 @@ aggregate, not a real gene.  Including it in the latent low-rank
 covariance ``Σ = W Wᵀ + diag(d)`` wastes capacity on biophysically
 meaningless cross-gene correlations.
 
-The ``correlate_other_column`` flag on ``ModelConfig`` (default
-``False``) excludes ``"_other"`` from Σ while keeping it in the
-observation likelihood.  This requires distinguishing two gene axes
+The ``correlate_other_column`` flag on ``ModelConfig`` controls
+whether the trailing ``"_other"`` row participates in Σ.  The
+runtime default is held at ``True`` (legacy) for the harmonic-hare
+Commit 2-4 series because the decoupled-math path is implemented
+only as scaffolding (loss / Newton / global-uncertainty raise
+``NotImplementedError``); when the per-model math lands, the
+default flips to ``False`` (the biologically cleaner setting) and
+``True`` becomes the explicit legacy opt-in.  See
+``scribe.models.config.base.ModelConfig.correlate_other_column``
+for the schedule.
+
+When ``False``, the layout excludes ``"_other"`` from Σ while
+keeping it in the observation likelihood.  This requires distinguishing two gene axes
 throughout the model code:
 
 * ``G_obs`` — the observation-layer axis.  Length of the count-data

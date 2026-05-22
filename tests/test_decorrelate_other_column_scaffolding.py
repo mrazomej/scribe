@@ -7,7 +7,11 @@ plan §Commit 2:
   (`build_axis_layout`) — with the rev-3 ``has_pooled_other``
   primary signal and the contradictory-signal raise.
 * :class:`scribe.models.config.ModelConfig.correlate_other_column`
-  flag (default False) accepted by :func:`scribe.fit`.
+  flag accepted by :func:`scribe.fit`.  Runtime default is held at
+  ``True`` (legacy) for the harmonic-hare Commit 2-4 series until
+  the per-model decoupled-math kernels land; the default flips to
+  ``False`` (the new biologically-cleaner setting) when 2b / 3b /
+  4b ship.
 * :class:`scribe.laplace.NBLNObservationModel` accepts
   ``gene_names`` and ``has_pooled_other``, builds an ``AxisLayout``
   at init, slices W/d/latent_loc when decoupled, and threads the
