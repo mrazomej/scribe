@@ -27,6 +27,74 @@ from ._results_shared import (
 )
 
 
+# =====================================================================
+# Decoupled-layout scatter helpers
+# =====================================================================
+#
+# Under ``correlate_other_column=False`` with a pooled trailing
+# ``_other`` column, the PLN-family latent ``W`` / ``d`` live on the
+# kept axis (G_kept) while per-gene quantities like ``μ`` and ``r``
+# stay on the observation axis (G_obs).  Every PPC kernel that draws
+# fresh latent from the prior must therefore:
+#
+#   1. sample ``x_dev = z @ Wᵀ + √d ⊙ ε`` on G_kept,
+#   2. scatter onto G_obs: kept positions get ``μ + x_dev``; the
+#      single ``other_idx`` keeps ``μ`` only (deterministic, no
+#      per-draw z modulation — matches the math contract).
+#
+# This is the same pattern used by ``get_compositional_samples`` and
+# the deviation-form Newton kernels in ``_newton_nbln``.
+
+
+def _scatter_x_dev_into_full(
+    mu_b: jnp.ndarray,
+    x_dev: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    target_shape: tuple,
+) -> jnp.ndarray:
+    """Build full G_obs log-rate by scattering kept-axis ``x_dev``.
+
+    Parameters
+    ----------
+    mu_b : jnp.ndarray
+        Broadcast-compatible μ tensor whose last axis is ``G_obs`` —
+        either shape ``(G_obs,)``, ``(1, G_obs)``, ``(S, G_obs)``, or
+        higher rank.  Provides the per-gene baseline (kept positions
+        get ``μ + x_dev``; ``_other`` keeps ``μ``).
+    x_dev : jnp.ndarray
+        Per-draw kept-axis deviation tensor with the same leading
+        batch axes as ``target_shape`` and trailing axis ``G_kept``.
+    kept_idx : jnp.ndarray, shape (G_kept,) int
+        Positions of kept genes in the G_obs axis.
+    target_shape : tuple
+        Desired output shape (must end in G_obs).
+
+    Returns
+    -------
+    jnp.ndarray of shape ``target_shape``
+        ``x[..., kept_idx[k]] = μ[..., kept_idx[k]] + x_dev[..., k]``
+        ``x[..., other_idx]   = μ[..., other_idx]``  (no x_dev term)
+    """
+    base = jnp.broadcast_to(mu_b, target_shape)
+    return base.at[..., kept_idx].add(x_dev)
+
+
+def _reconstruct_full_log_rate_from_kept(
+    x_loc_kept: jnp.ndarray,
+    mu: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+) -> jnp.ndarray:
+    """Build the full ``(N, G_obs)`` per-cell log-rate from kept x_dev.
+
+    Used by per-cell PPC kernels (MAP-only and Laplace) when
+    ``x_loc_kept`` is the converged ``x_dev`` on the kept axis.
+    """
+    n_cells = int(x_loc_kept.shape[0])
+    G_obs = int(mu.shape[0])
+    base = jnp.broadcast_to(mu[None, :], (n_cells, G_obs))
+    return base.at[:, kept_idx].add(x_loc_kept)
+
+
 def _ppc_pln_marginal(
     rng_key: jax.Array,
     n_samples: int,
@@ -98,6 +166,12 @@ def _ppc_pln_library_anchored(
     # Shape (S, G).  When provided, replaces the broadcast point ``mu``.
     # PLN never sets this (no cascade-freeze on PLN).
     mu_samples: Optional[jnp.ndarray] = None,
+    # Commit 2b: when ``kept_idx`` is provided (decoupled NBLN layout),
+    # the latent is built by sampling ``x_dev`` on G_kept and
+    # scattering ``μ + x_dev`` at kept positions; ``_other`` stays at
+    # ``μ`` (deterministic).  Under PLN / legacy NBLN (``kept_idx is
+    # None``), the kernel runs unchanged.
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Draw PLN library-anchored predictive samples.
 
@@ -137,26 +211,45 @@ def _ppc_pln_library_anchored(
         jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1).astype(jnp.int32)
     )
     n_cells = int(library_sizes.shape[0])
-    g_genes = int(mu.shape[0])
+    g_obs = int(mu.shape[0])
+    g_kept = int(W.shape[0])  # G_kept under decoupled; == G_obs under legacy
     k_factors = int(W.shape[1])
+    # Per-draw sampling axis size for ``eps`` / ``x_dev``.  Under
+    # decoupling this is G_kept; under legacy it's G_obs (same value).
+    g_eff = g_kept if kept_idx is not None else g_obs
 
     mu_samples_arr = (
         jnp.asarray(mu_samples) if mu_samples is not None else None
     )
 
     def _mu_term(start: int, size: int) -> jnp.ndarray:
-        # Returns shape (size, 1, G) for broadcast against (size, n_cells, G).
+        # Returns shape (size, 1, G_obs) for broadcast against (size, n_cells, G_obs).
         if mu_samples_arr is not None:
             return mu_samples_arr[start : start + size, None, :]
         return mu[None, None, :]
+
+    def _build_x(
+        size: int,
+        k1: jax.Array,
+        k2: jax.Array,
+        start: int,
+    ) -> jnp.ndarray:
+        """Per-chunk latent log-rate of shape ``(size, n_cells, G_obs)``."""
+        z = jax.random.normal(k1, (size, n_cells, k_factors), dtype=mu.dtype)
+        eps = jax.random.normal(k2, (size, n_cells, g_eff), dtype=mu.dtype)
+        mu_term = _mu_term(start, size)  # (size, 1, G_obs)
+        if kept_idx is not None:
+            # Decoupled: build kept-axis x_dev, scatter onto G_obs.
+            x_dev = z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+            base = jnp.broadcast_to(mu_term, (size, n_cells, g_obs))
+            return base.at[..., kept_idx].add(x_dev)
+        return mu_term + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
 
     chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
     if chunk_size is None or chunk_size >= n_samples:
         size = int(n_samples)
         k1, k2, k3 = jax.random.split(rng_key, 3)
-        z = jax.random.normal(k1, (size, n_cells, k_factors), dtype=mu.dtype)
-        eps = jax.random.normal(k2, (size, n_cells, g_genes), dtype=mu.dtype)
-        x = _mu_term(0, size) + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        x = _build_x(size, k1, k2, start=0)
         p = jax.nn.softmax(x, axis=-1)
         n_b = jnp.broadcast_to(library_sizes, (size,) + library_sizes.shape)
         return np.asarray(_multinomial_sample(k3, n_b, p))
@@ -169,9 +262,7 @@ def _ppc_pln_library_anchored(
         end = min(start + chunk_size, n_samples)
         size = end - start
         k1, k2, k3 = jax.random.split(chunk_keys[i], 3)
-        z = jax.random.normal(k1, (size, n_cells, k_factors), dtype=mu.dtype)
-        eps = jax.random.normal(k2, (size, n_cells, g_genes), dtype=mu.dtype)
-        x = _mu_term(start, size) + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        x = _build_x(size, k1, k2, start=start)
         p = jax.nn.softmax(x, axis=-1)
         n_b = jnp.broadcast_to(library_sizes, (size,) + library_sizes.shape)
         pieces.append(np.asarray(_multinomial_sample(k3, n_b, p)))
@@ -382,6 +473,10 @@ def _ppc_nbln_marginal(
     r_samples: Optional[jnp.ndarray] = None,
     mu_samples: Optional[jnp.ndarray] = None,
     eta_samples: Optional[jnp.ndarray] = None,
+    # Commit 2b: under ``correlate_other_column=False``, the latent
+    # ``W`` / ``d`` live on G_kept; the per-draw x_dev gets scattered
+    # onto the full G_obs axis (``_other`` deterministic at μ_other).
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Fully marginal NBLN posterior predictive samples.
 
@@ -396,6 +491,12 @@ def _ppc_nbln_marginal(
       space — i.e. NBLN's target coord); else the point ``mu``.
     - ``eta``: ``eta_samples`` if provided (shape ``(S,)``, constrained
       ``[0, ∞)``); else legacy uniform-pick from ``eta_loc``.
+
+    When ``kept_idx`` is provided (decoupled layout, Commit 2b), the
+    fresh ``x`` is built by sampling ``x_dev`` on G_kept and scattering
+    ``μ + x_dev`` at kept positions, ``μ`` at ``_other`` (deterministic).
+    Under the legacy / trivial layout (``kept_idx is None``), the
+    sampler runs unchanged.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
@@ -403,14 +504,25 @@ def _ppc_nbln_marginal(
     k_factors = int(W.shape[1])
     k1, k2, k3, k4, k5 = jax.random.split(rng_key, 5)
     z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
-    eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
 
     # mu: per-draw if provided, else broadcast point.
     if mu_samples is not None:
-        mu_b = jnp.asarray(mu_samples)  # (S, G)
+        mu_b = jnp.asarray(mu_samples)  # (S, G_obs)
     else:
         mu_b = mu[None, :]  # broadcasts over S
-    x = mu_b + z @ W.T + jnp.sqrt(d)[None, :] * eps
+
+    if kept_idx is not None:
+        # Decoupled: latent lives on G_kept; scatter onto G_obs.
+        g_kept = int(W.shape[0])
+        eps = jax.random.normal(k2, (n_samples, g_kept), dtype=mu.dtype)
+        x_dev = z @ W.T + jnp.sqrt(d)[None, :] * eps
+        x = _scatter_x_dev_into_full(
+            mu_b, x_dev, kept_idx, (n_samples, g_genes)
+        )
+    else:
+        # Legacy: latent lives on G_obs directly.
+        eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
+        x = mu_b + z @ W.T + jnp.sqrt(d)[None, :] * eps
 
     # eta: per-draw if provided; else legacy uniform-pick from eta_loc; else 0.
     if eta_samples is not None:
@@ -448,17 +560,42 @@ def _ppc_nbln_per_cell(
     x_loc: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray],
     r: jnp.ndarray,
+    # Commit 2b: under decoupled layout, ``x_loc`` is the kept-axis
+    # deviation ``x_dev`` (shape ``(N, G_kept)``).  Need ``mu`` and
+    # ``kept_idx`` to reconstruct the full ``(N, G_obs)`` log-rate.
+    mu: Optional[jnp.ndarray] = None,
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Per-cell MAP-only NBLN predictive samples.
 
     Mirrors :func:`_ppc_pln_per_cell` but emits NB counts conditional
     on the per-cell MAP latent ``(x_loc, eta_loc)``.
+
+    When ``kept_idx`` is provided (decoupled layout, Commit 2b),
+    ``x_loc`` carries the kept-axis ``x_dev``; ``mu`` is required so
+    the full per-gene log-rate can be reconstructed as
+    ``μ_g + x_dev[c, k_g]`` for kept genes and ``μ_g`` for ``_other``.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
-    log_mean = (
-        x_loc - eta_loc[:, None] if eta_loc is not None else x_loc
-    )
+    if kept_idx is not None:
+        if mu is None:
+            raise ValueError(
+                "_ppc_nbln_per_cell requires ``mu`` when ``kept_idx`` "
+                "is provided (decoupled layout)."
+            )
+        full_log_rate = _reconstruct_full_log_rate_from_kept(
+            x_loc, mu, kept_idx
+        )
+        log_mean = (
+            full_log_rate - eta_loc[:, None]
+            if eta_loc is not None
+            else full_log_rate
+        )
+    else:
+        log_mean = (
+            x_loc - eta_loc[:, None] if eta_loc is not None else x_loc
+        )
     log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
     n_cells, g_genes = log_mean.shape
     log_mean_b = jnp.broadcast_to(
@@ -488,6 +625,13 @@ def _ppc_nbln_per_cell_laplace(
     # than redrawing ``x`` from its prior.
     r_samples: Optional[jnp.ndarray] = None,
     eta_samples: Optional[jnp.ndarray] = None,
+    # Commit 2b: decoupled-layout reconstruction.  When ``kept_idx`` is
+    # provided, ``x_loc`` is ``x_dev`` on G_kept (W, d also on G_kept);
+    # the full per-gene log-rate is reconstructed via
+    # ``μ + x_dev`` (kept) ``μ`` (other), and the per-cell Laplace
+    # noise is sampled on G_kept and scattered to G_obs.
+    mu: Optional[jnp.ndarray] = None,
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Per-cell Laplace-perturbed NBLN predictive samples.
 
@@ -503,16 +647,49 @@ def _ppc_nbln_per_cell_laplace(
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
-    n_cells, g_genes = x_loc.shape
+    n_cells = int(x_loc.shape[0])
     k_factors = int(W.shape[1])
     k1, k2, k3, k4 = jax.random.split(rng_key, 4)
-    z = jax.random.normal(
-        k1, (n_samples, n_cells, k_factors), dtype=x_loc.dtype
-    )
-    eps = jax.random.normal(
-        k2, (n_samples, n_cells, g_genes), dtype=x_loc.dtype
-    )
-    x = x_loc[None, :, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+
+    if kept_idx is not None:
+        # Decoupled: ``x_loc`` is ``x_dev`` on G_kept; W/d are on G_kept;
+        # per-cell Laplace noise lives on G_kept too.  Build full
+        # G_obs log-rate by scattering kept latent with μ at all
+        # genes (so ``_other`` gets only μ + the per-cell deviation
+        # from the MAP, not a per-draw kept-latent draw).
+        if mu is None:
+            raise ValueError(
+                "_ppc_nbln_per_cell_laplace requires ``mu`` when "
+                "``kept_idx`` is provided (decoupled layout)."
+            )
+        g_obs = int(mu.shape[0])
+        g_kept = int(W.shape[0])
+        z = jax.random.normal(
+            k1, (n_samples, n_cells, k_factors), dtype=x_loc.dtype
+        )
+        eps = jax.random.normal(
+            k2, (n_samples, n_cells, g_kept), dtype=x_loc.dtype
+        )
+        # Per-cell, per-draw x_dev on kept axis: MAP shift + Laplace noise.
+        x_dev_full = (
+            x_loc[None, :, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        )  # (S, N, G_kept)
+        # Scatter onto G_obs: ``μ + x_dev`` at kept, ``μ`` at ``_other``.
+        mu_full = jnp.broadcast_to(
+            mu[None, None, :], (n_samples, n_cells, g_obs)
+        )
+        x = mu_full.at[..., kept_idx].add(x_dev_full)
+        g_genes = g_obs
+    else:
+        # Legacy: ``x_loc`` already on G_obs.
+        n_cells, g_genes = x_loc.shape
+        z = jax.random.normal(
+            k1, (n_samples, n_cells, k_factors), dtype=x_loc.dtype
+        )
+        eps = jax.random.normal(
+            k2, (n_samples, n_cells, g_genes), dtype=x_loc.dtype
+        )
+        x = x_loc[None, :, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
 
     # eta: per-draw per-cell if provided; else legacy point.
     if eta_samples is not None:

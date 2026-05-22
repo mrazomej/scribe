@@ -413,6 +413,14 @@ class SamplingResultsMixin:
                         per_cell=False,
                     )
                     mu_samples = arrays["mu_samples"]
+                # Commit 2b: decoupled NBLN scatters x_dev (G_kept) into
+                # the full G_obs simplex; ``_other`` is deterministic.
+                _layout = getattr(self, "axis_layout", None)
+                _kept_idx_jx = (
+                    jnp.asarray(_layout.kept_idx)
+                    if _layout is not None and _layout.decoupled
+                    else None
+                )
                 return _ppc_pln_library_anchored(
                     rng_key,
                     n_samples,
@@ -421,6 +429,7 @@ class SamplingResultsMixin:
                     self.d,
                     counts=counts,
                     mu_samples=mu_samples,
+                    kept_idx=_kept_idx_jx,
                 )
             if bm in ("lnm", "lnmvcp"):
                 return _ppc_lnm_library_anchored(
@@ -461,6 +470,15 @@ class SamplingResultsMixin:
                 n_samples,
                 per_cell=False,
             )
+            # Commit 2b: thread kept_idx through to the marginal kernel
+            # so the latent ``W`` / ``d`` (G_kept) get scattered onto
+            # the full G_obs axis under decoupling.
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_nbln_marginal(
                 rng_key,
                 n_samples,
@@ -475,6 +493,7 @@ class SamplingResultsMixin:
                 r_samples=arrays["r_samples"],
                 mu_samples=arrays["mu_samples"],
                 eta_samples=arrays["eta_samples"],
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
@@ -609,6 +628,16 @@ class SamplingResultsMixin:
                 n_samples,
                 per_cell=True,
             )
+            # Commit 2b: thread mu + kept_idx through for decoupled NBLN
+            # so the per-cell kernel reconstructs full G_obs log-rate
+            # from kept-axis ``x_dev`` (which is what ``x_loc`` carries
+            # under decoupling).
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -622,6 +651,8 @@ class SamplingResultsMixin:
                 pos_forward=pos_fwd,
                 r_samples=arrays["r_samples"],
                 eta_samples=arrays["eta_samples"],
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
@@ -729,12 +760,23 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
+            # Commit 2b: under decoupling, ``x_loc`` is ``x_dev`` on
+            # G_kept; the kernel needs ``mu`` + ``kept_idx`` to
+            # reconstruct the full G_obs per-cell log-rate.
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_nbln_per_cell(
                 rng_key,
                 n_samples,
                 self.x_loc,
                 self.eta_loc,
                 self.r,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_per_cell(

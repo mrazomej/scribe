@@ -435,11 +435,33 @@ class DispatchResultsMixin:
         bm = _base_model(self.model_config)
         if bm in ("pln", "nbln"):
             d_key = "d_nbln" if bm == "nbln" else "d_pln"
+            # Commit 2b: under decoupled NBLN, ``self.x_loc`` is the
+            # kept-axis deviation ``x_dev`` (shape ``(N, G_kept)``).
+            # ``y_log_rate`` is conceptually the full per-gene log-rate
+            # at the MAP, so reconstruct it on G_obs:
+            #     y_log_rate[c, kept[k]] = μ[kept[k]] + x_dev[c, k]
+            #     y_log_rate[c, other_idx] = μ[other_idx]
+            # Under legacy / trivial layout, ``x_loc`` is already the
+            # full G_obs log-rate.
+            _layout = getattr(self, "axis_layout", None)
+            _is_decoupled = _layout is not None and _layout.decoupled
+            if _is_decoupled and self.x_loc is not None:
+                _kept_idx = jnp.asarray(_layout.kept_idx)
+                _n_cells = int(self.x_loc.shape[0])
+                _G_obs = int(self.mu.shape[0])
+                _y_log_rate_full = jnp.broadcast_to(
+                    self.mu[None, :], (_n_cells, _G_obs)
+                )
+                _y_log_rate_full = _y_log_rate_full.at[:, _kept_idx].add(
+                    self.x_loc
+                )
+            else:
+                _y_log_rate_full = self.x_loc
             out = {
                 "mu": self.mu,
                 "W": self.W,
                 d_key: self.d,
-                "y_log_rate": self.x_loc,
+                "y_log_rate": _y_log_rate_full,
             }
             if self.eta_loc is not None:
                 out["eta_capture"] = self.eta_loc
@@ -892,14 +914,45 @@ class DispatchResultsMixin:
 
         bm = _base_model(self.model_config)
         if bm in ("pln", "nbln"):
+            # Commit 2b: under decoupled NBLN, ``W`` / ``d`` live on
+            # G_kept while ``mu`` lives on G_obs.  Pad ``W`` with zero
+            # rows at ``other_idx`` (no z modulation) and ``d`` with a
+            # tiny epsilon at ``other_idx`` (LowRankMultivariateNormal
+            # requires positive diagonal entries).  The resulting
+            # distribution is effectively singular at ``_other``
+            # (variance ≈ 0), matching the math contract: ``_other``'s
+            # log-rate is deterministic at ``μ_other``.
+            _layout = getattr(self, "axis_layout", None)
+            _is_decoupled = _layout is not None and _layout.decoupled
+            if _is_decoupled:
+                _G_obs = int(self.mu.shape[0])
+                _K = int(self.W.shape[1])
+                _kept_idx = jnp.asarray(_layout.kept_idx)
+                _W_padded = jnp.zeros((_G_obs, _K), dtype=self.W.dtype)
+                _W_padded = _W_padded.at[_kept_idx].set(self.W)
+                # Tiny positive epsilon so the MVN diagonal is valid;
+                # callers should treat ``_other``'s variance as 0.
+                _d_padded = jnp.full(
+                    (_G_obs,), 1e-12, dtype=self.d.dtype
+                )
+                _d_padded = _d_padded.at[_kept_idx].set(self.d)
+                _W_for_dist = _W_padded
+                _d_for_dist = _d_padded
+            else:
+                _W_for_dist = self.W
+                _d_for_dist = self.d
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                    loc=self.mu,
+                    cov_factor=_W_for_dist,
+                    cov_diag=_d_for_dist,
                 ),
             }
             if bm == "pln":
                 out["lambda_rate"] = LowRankPoissonLogNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                    loc=self.mu,
+                    cov_factor=_W_for_dist,
+                    cov_diag=_d_for_dist,
                 )
             if bm == "nbln":
                 # Cascade-freeze: when a parameter is frozen, NBLN's

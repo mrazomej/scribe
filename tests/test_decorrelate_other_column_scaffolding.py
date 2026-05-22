@@ -417,6 +417,103 @@ class TestNblnDecoupledMath:
         assert res.W.shape[0] == res.G_obs
         assert res.d.shape == (res.G_obs,)
 
+    def test_decoupled_get_map_returns_full_g_obs_log_rate(self):
+        """``get_map()["y_log_rate"]`` reconstructs the full per-cell
+        G_obs log-rate under decoupling.  Under the deviation
+        reparameterisation, ``x_loc`` carries ``x_dev`` on G_kept; the
+        accessor must scatter ``μ + x_dev`` at kept positions and use
+        ``μ`` at ``_other``."""
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        m = res.get_map()
+        assert m["y_log_rate"].shape == (30, res.G_obs)
+        # ``_other`` column entry is deterministically ``μ[other_idx]``
+        # for every cell (no per-cell x_dev contribution).
+        other_idx = res.axis_layout.other_idx
+        # Float32 comparison: within float epsilon.
+        import numpy as _np
+        assert _np.allclose(
+            _np.asarray(m["y_log_rate"])[:, other_idx],
+            float(res.mu[other_idx]),
+            atol=1e-5,
+        )
+
+    def test_decoupled_get_distributions_y_log_rate_event_shape(self):
+        """``get_distributions()["y_log_rate"]`` returns a
+        ``LowRankMultivariateNormal`` on the full G_obs axis with W/d
+        padded so the ``_other`` row has effectively-zero variance
+        (~1e-12).  Samples have shape ``(G_obs,)``."""
+        import jax
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        d = res.get_distributions()
+        y = d["y_log_rate"]
+        assert y.event_shape == (res.G_obs,)
+        s = y.sample(jax.random.PRNGKey(0), sample_shape=(64,))
+        assert s.shape == (64, res.G_obs)
+        # ``_other``'s samples concentrate tightly around μ_other (the
+        # 1e-12 epsilon variance + zero W row gives variance ~1e-12).
+        other_idx = res.axis_layout.other_idx
+        other_samples = _np.asarray(s[:, other_idx])
+        assert _np.std(other_samples) < 1e-3
+        assert _np.allclose(
+            _np.mean(other_samples),
+            float(res.mu[other_idx]),
+            atol=1e-3,
+        )
+
+    def test_decoupled_ppc_all_levels_full_g_obs_shape(self):
+        """All four PPC pathways (marginal / library_anchored / per_cell
+        Laplace / get_map_ppc) emit counts on the full G_obs axis under
+        decoupling.  Auditor finding: the helpers used to assume one
+        shared gene axis and crashed under decoupled NBLN."""
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        # The library-anchored / per-cell kernels only consume per-cell
+        # library sizes from ``counts``, so a synthetic count matrix
+        # of the post-coverage shape ``(n_cells, G_obs)`` is enough —
+        # the values don't enter the predictive draws beyond ``sum``.
+        counts_for_ppc = _np.full((30, res.G_obs), 1.0, dtype=_np.float32)
+
+        m = res.get_ppc_samples(n_samples=4, level="marginal")
+        assert m.shape == (4, res.G_obs)
+
+        la = res.get_ppc_samples(
+            n_samples=2, level="library_anchored", counts=counts_for_ppc,
+        )
+        assert la.shape == (2, 30, res.G_obs)
+
+        pc = res.get_ppc_samples(
+            n_samples=2, level="per_cell", counts=counts_for_ppc,
+        )
+        assert pc.shape == (2, 30, res.G_obs)
+
+        mp = res.get_map_ppc_samples(n_samples=2)
+        assert mp.shape == (2, 30, res.G_obs)
+
     def test_legacy_no_coverage_bit_equal_after_2b(self):
         """Legacy NBLN fit on data WITHOUT ``_other`` continues to use
         the existing code path bit-equal to before Commit 2b.  All
