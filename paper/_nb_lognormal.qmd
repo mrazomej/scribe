@@ -2584,23 +2584,6 @@ the Schur derivation; the other three models are special cases with
 either $r_g \to \infty$ (PLN) or the Beta-Poisson burst kernel
 (TSLN).
 
-::: {.callout-note}
-## Current implementation status
-
-The runtime default is `correlate_other_column=True` (legacy). The
-axis-layout scaffolding, engine threading, and per-model fail-fast
-guards have landed for PLN, NBLN, TSLN-Rate, and TSLN-Logit, but the
-deviation-parameterised math sketched below (loss, Newton steps,
-profiled-$\mu$ Schur derivation) is not yet wired into the four count
-likelihoods — they raise `NotImplementedError` under `False`. LNM is
-the exception: its decoupling lives in the ALR-reference pinning and
-is end-to-end correct under both flag values today, because the ALR
-construction excludes the reference gene from $\Sigma$ by definition.
-The default flips to `False` once the per-model math commits land for
-the four count likelihoods. See `src/scribe/laplace/README.md` for
-the per-model landing status.
-:::
-
 ### The deviation reparameterisation {#sec-nbln-decorrelate-deviation}
 
 Under `correlate_other_column=False`, the per-cell latent splits into

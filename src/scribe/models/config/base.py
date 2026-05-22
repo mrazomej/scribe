@@ -466,13 +466,14 @@ class ModelConfig(BaseModel):
     # abstraction (``scribe.laplace._axis_layout``), engine threading
     # of ``gene_names`` + ``has_pooled_other``, per-model fail-fast
     # guards on PLN/NBLN/TSLN-Rate/TSLN-Logit, and LNM real wiring
-    # through ALR-reference pinning.  But the deviation-parameterised
-    # math (loss_fn / Newton / global_uncertainty) for the four count
-    # likelihoods is NOT yet implemented — those obs models raise
-    # ``NotImplementedError`` under ``False``.  The default stays
-    # ``True`` until the per-model math commits (2b / 3b / 4b / 5b)
-    # land; at that point the default flips to ``False`` and ``True``
-    # becomes the explicit legacy opt-in.
+    # through ALR-reference pinning.  NBLN's deviation-form math has
+    # landed (Commit 2b: loss / Newton / global_uncertainty / sampler
+    # under the deviation reparameterisation).  TSLN-Rate / TSLN-
+    # Logit / PLN still raise ``NotImplementedError`` under decoupling
+    # — their math commits (3b / 4b / 5b) are pending.  The default
+    # stays ``True`` until all four math commits land; at that point
+    # the default flips to ``False`` and ``True`` becomes the
+    # explicit legacy opt-in.
     #
     # **LNM / LNMVCP** is the exception: LNM realises the decoupling
     # without the deviation reparameterisation because the ALR
@@ -494,13 +495,13 @@ class ModelConfig(BaseModel):
             "in the latent low-rank covariance Σ = W Wᵀ + diag(d).  "
             "Current default `True` is the LEGACY behaviour.  "
             "Scaffolding for `False` has landed across "
-            "PLN/NBLN/TSLN-Rate/TSLN-Logit (axis split, engine "
-            "threading, fail-fast guards) and LNM has real wiring via "
-            "ALR-reference auto-pinning, but the deviation-parameterised "
-            "math for the four count likelihoods is not yet implemented "
-            "— they raise NotImplementedError under `False`.  The "
-            "default flips to `False` once the per-model math commits "
-            "(2b/3b/4b/5b) land."
+            "PLN/NBLN/TSLN-Rate/TSLN-Logit, and the deviation-"
+            "parameterised math is live for NBLN (Commit 2b) and LNM "
+            "(via ALR-reference auto-pinning, Commit 6).  TSLN-Rate, "
+            "TSLN-Logit, and PLN still raise NotImplementedError "
+            "under `False` until their math commits (3b/4b/5b) land. "
+            "The default flips to `False` once those three commits "
+            "ship."
         ),
     )
 

@@ -738,13 +738,14 @@ Theorem 2). The `correlate_other_column: bool` flag on `ModelConfig`
 controls whether the trailing `_other` row participates in Σ.
 
 **Current default in this release: `True`** (legacy — `_other`
-participates in Σ, identical to pre-flag behaviour). The default is
-deliberately held at `True` because the decoupled-math path (`False`)
-is implemented only as scaffolding in this commit; the actual
-deviation-parameterisation math (loss / Newton / global-uncertainty)
-lands in Commit 2b. When 2b ships, the default flips to `False`
-(the biologically cleaner setting) and `True` becomes the explicit
-legacy opt-in. Under `False`, the layout has:
+participates in Σ, identical to pre-flag behaviour). NBLN's
+decoupled-math path landed in Commit 2b; TSLN-Rate / TSLN-Logit /
+PLN are still scaffolding-only and raise `NotImplementedError`
+under `False` until their math commits (3b / 4b / 5b) land. The
+default stays at `True` until all four math commits ship, at which
+point it flips to `False` (the biologically cleaner setting) and
+`True` becomes the explicit legacy opt-in. Under `False`, the
+layout has:
 
 ```text
 W shape: (G_kept, K)        # latent-covariance axis (no _other row)
@@ -759,31 +760,32 @@ Effective per-gene log-rate fed to the NB likelihood:
 - For kept gene `g` at kept-position `k`: `μ[g] + x_dev[k] − η_c`
 - For `_other`: `μ[other_idx] − η_c` — no z-modulation
 
-**Current landing status (Commit 2 of the harmonic-hare plan).** This
-release lands the **scaffolding** for the decorrelated layout — the
-`AxisLayout` abstraction, the signal threading from the
-`gene_coverage` stage through the engine to the obs model,
+**Current landing status (harmonic-hare plan).** All scaffolding
+commits (2–6) have landed: the `AxisLayout` abstraction, signal
+threading from `gene_coverage` through the engine to the obs model,
 `ScribeLaplaceResults.axis_layout` + `G_obs` / `G_kept` properties,
-the layout-aware `init_state` (W and d sized to `G_kept`), and the
-`pack_result` plumbing. The **deviation-parameterised math** in the
-loss / Newton / `compute_global_uncertainty` paths is tracked in
-Commit 2b on the `feature/decorrelate_other_column` branch (the
-plan's per-commit ladder gives the auditor a focused review for
-the scaffolding before the math lands).
+layout-aware `init_state` (W and d sized to `G_kept`), and
+`pack_result` plumbing.  NBLN's deviation-parameterised math has
+landed (Commit 2b: loss, Newton, profiled-μ Schur,
+`compute_global_uncertainty`, decoupled compositional sampler).
+TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) still raise
+`NotImplementedError` under `correlate_other_column=False` —
+their math commits are pending.  LNM has been correct end-to-end
+since Commit 6 via ALR-reference pinning.
 
-**Default is held at `True` (legacy) for Commit 2** so existing
-`gene_coverage < 1.0` fits do not break by routing through the
-not-yet-implemented decoupled math. When Commit 2b ships the math,
-the default flips to `False` (the new biologically cleaner default)
-and `True` becomes the explicit legacy opt-in.
+**Default stays at `True` (legacy)** so existing fits don't break
+by routing through the three count models without math yet.  Once
+3b / 4b / 5b ship, the default flips to `False` and `True` becomes
+the explicit legacy opt-in.
 
-Behaviour matrix for this release (Commit 2, default=True):
+Behaviour matrix (current state — NBLN math live, TSLN-Rate /
+TSLN-Logit / PLN pending):
 
 | Configuration | Behaviour |
 |---|---|
 | No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
-| `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. **Recommended path for Commit 2 until Commit 2b lands.** |
-| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | Decoupled layout detected; `loss_fn` raises `NotImplementedError` with a clear message pointing at Commit 2b. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | **Decoupled math live (Commit 2b).** `x_dev ~ N(0, Σ_kept)` per cell; μ moves into NB likelihood; `_other`'s log-rate is deterministic (`μ_other − η`); compositional sampler scatters kept x_dev onto full G_obs simplex. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | Scaffolded as of Commit 3: AxisLayout + init-shape slicing + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError` pointing at TSLN-Rate's math commit (3b). |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Logit | Scaffolded as of Commit 4: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. Per-gene `rate` / `kappa` / `eta_anchor` stay on G_obs under decoupled — only `W` / `d` / per-cell `z` shrink to `G_kept`. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN | Scaffolded as of Commit 5: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. As of Commit 5 the engine early-fail block has been **retired entirely** — every affected model owns its own decoupled detection via its obs-model `init_state`. |

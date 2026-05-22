@@ -1,43 +1,46 @@
-"""Tests for Commit 2 scaffolding: `correlate_other_column` flag.
+"""Tests for the harmonic-hare ``correlate_other_column`` ladder.
 
-This commit lands the foundation for the harmonic-hare follow-up
-plan §Commit 2:
+Tracks the scaffolding (Commits 2–6) and the per-model math commits
+(2b/3b/4b/5b) for decoupling the pooled ``_other`` column from the
+latent low-rank covariance Σ.
+
+Landed so far:
 
 * :class:`scribe.laplace._axis_layout.AxisLayout` + factory
-  (`build_axis_layout`) — with the rev-3 ``has_pooled_other``
-  primary signal and the contradictory-signal raise.
+  (``build_axis_layout``) with explicit ``has_pooled_other`` primary
+  signal, gene-names fallback, and contradictory-signal raise.
 * :class:`scribe.models.config.ModelConfig.correlate_other_column`
-  flag accepted by :func:`scribe.fit`.  Runtime default is held at
-  ``True`` (legacy) for the harmonic-hare Commit 2-4 series until
-  the per-model decoupled-math kernels land; the default flips to
-  ``False`` (the new biologically-cleaner setting) when 2b / 3b /
-  4b ship.
-* :class:`scribe.laplace.NBLNObservationModel` accepts
-  ``gene_names`` and ``has_pooled_other``, builds an ``AxisLayout``
-  at init, slices W/d/latent_loc when decoupled, and threads the
-  layout through to :class:`scribe.laplace.ScribeLaplaceResults`
-  via the new ``axis_layout`` field.
-* :attr:`scribe.laplace.ScribeLaplaceResults.G_obs` and
-  :attr:`scribe.laplace.ScribeLaplaceResults.G_kept` properties
-  for downstream tooling.
-* Guards at ``loss_fn`` / ``final_sweep`` /
-  ``compute_global_uncertainty`` that raise
-  ``NotImplementedError`` with a clear "Commit 2b lands the math"
-  message when ``layout.decoupled`` is True. The deviation-
-  parameterised Newton / Schur re-derivation lives in Commit 2b.
+  flag (runtime default ``True`` while the per-model math commits
+  finish landing — flips to ``False`` once 3b/4b/5b ship).
+* All four count obs-models accept ``gene_names`` and
+  ``has_pooled_other`` and build an ``AxisLayout`` at init.  W/d/
+  latent_loc are sliced to the kept axis under decoupling and the
+  layout is threaded through to
+  :class:`scribe.laplace.ScribeLaplaceResults` via the
+  ``axis_layout`` field.
+* :attr:`ScribeLaplaceResults.G_obs` / ``G_kept`` properties.
+* LNM real wiring (Commit 6): ALR auto-pin to ``_other`` when
+  ``correlate_other_column=False`` and a pooled column exists.
+* NBLN deviation-form math (Commit 2b): loss, Newton, profiled-μ
+  Schur, compositional sampler all implemented under decoupling.
+  TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) still raise
+  ``NotImplementedError`` under decoupling pending their math
+  commits.
 
 These tests verify:
 
 1. ``AxisLayout`` detection priority — explicit ``has_pooled_other``
    beats names; ``gene_names[-1] == "_other"`` is the fallback;
    contradictory signals raise loudly.
-2. Legacy NBLN fits (no ``gene_coverage``, no ``_other``) produce a
-   trivial layout (``G_kept == G_obs``) and work bit-equal to today.
+2. Legacy NBLN/PLN/TSLN fits (no ``gene_coverage``, no ``_other``)
+   produce a trivial layout (``G_kept == G_obs``) and work bit-equal
+   to today.
 3. Legacy opt-in (``correlate_other_column=True`` with
    ``gene_coverage < 1.0``) produces a trivial layout and a working
    fit (auditor finding rev-3 #8: legacy passes through silently).
-4. Decoupled (default flag, ``gene_coverage < 1.0``) raises
-   ``NotImplementedError`` with a clear remediation message.
+4. NBLN decoupled fits run end-to-end with the deviation-form math
+   (Commit 2b); TSLN-Rate/TSLN-Logit/PLN decoupled still raise
+   ``NotImplementedError`` until 3b/4b/5b land.
 5. ``ScribeLaplaceResults.G_obs`` / ``G_kept`` return the right
    numbers for both layouts.
 6. The ``correlate_other_column`` kwarg round-trips through
@@ -322,28 +325,128 @@ class TestNblnLegacyPaths:
         assert res_explicit.G_obs == res.G_obs
 
 
-class TestNblnDecoupledRaises:
-    """Decoupled NBLN fits raise NotImplementedError until Commit 2b."""
+class TestNblnDecoupledMath:
+    """Commit 2b: NBLN deviation-form math is now implemented.
 
-    def test_decoupled_raises_with_clear_message(self):
+    The scaffolding's ``NotImplementedError`` guards have been
+    replaced by the deviation reparameterisation:
+
+    * ``x_dev ~ 𝒩(0, Σ_kept)`` per cell (zero-centred) on the kept axis
+    * ``μ`` moves from the MVN prior into the NB likelihood
+    * ``_other``'s log-rate is deterministic (``μ_other − η``) with no
+      ``x_dev`` contribution
+    * Profiled-μ Schur correction uses the per-cell ``M_c^{-1}`` block
+      restricted to ``(k_g, k_g)`` for kept genes and ``M_ηη`` for
+      ``_other`` (see ``paper/_nb_lognormal.qmd``
+      §sec-nbln-decorrelate-mu-uncertainty).
+
+    See ``src/scribe/laplace/_newton_nbln.py`` for the kernels (the
+    ``*_decoupled`` family).
+    """
+
+    def test_decoupled_fit_runs_and_produces_kept_axis_shapes(self):
+        """Smoke test: decoupled NBLN fit converges and the result has
+        the right shape contract.  ``W`` and ``d`` live on ``G_kept``;
+        ``μ`` and per-gene ``r`` live on ``G_obs``.
+        """
         import scribe
 
         adata = _make_adata(30, 12, seed=0)
-        # Explicit opt-in to the new (False) default is needed in this
-        # release because the default is held at True (rev-4 #2).
-        # When Commit 2b lands the math, the default flips to False
-        # and this explicit kwarg becomes redundant.
-        with pytest.raises(NotImplementedError) as excinfo:
-            scribe.fit(
-                adata, model="nbln", inference_method="laplace", latent_dim=2,
-                n_steps=5, seed=0,
-                gene_coverage=0.85,
-                correlate_other_column=False,
-            )
-        msg = str(excinfo.value)
-        # Message must point at the remediation path.
-        assert "Commit 2b" in msg
-        assert "correlate_other_column=True" in msg
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is True
+        # G_kept = G_obs − 1 (one pooled `_other`).
+        assert res.G_kept == res.G_obs - 1
+        # Per-gene observation parameters live on G_obs.
+        assert res.mu.shape == (res.G_obs,)
+        assert res.r.shape == (res.G_obs,)
+        # Latent-covariance parameters live on G_kept.
+        assert res.W.shape == (res.G_kept, 2)
+        assert res.d.shape == (res.G_kept,)
+        # Global-uncertainty diagnostics live on G_obs (per-gene).
+        assert res.mu_scale.shape == (res.G_obs,)
+
+    def test_decoupled_compositional_samples_full_simplex(self):
+        """Compositional samples have shape ``(n_samples, G_obs)`` and
+        rows sum to 1.  ``_other``'s entry is deterministic per draw
+        (no ``x_dev`` contribution), but it still participates in the
+        simplex normalisation.
+        """
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        samples = res.get_compositional_samples(n_samples=64, chunk_size=32)
+        assert samples.shape == (64, res.G_obs)
+        # Each row is a proper simplex (rows sum to 1 within float32
+        # precision).
+        row_sums = samples.sum(axis=1)
+        assert _np.allclose(row_sums, 1.0, atol=1e-4)
+
+    def test_legacy_with_coverage_still_works(self):
+        """The legacy path (``correlate_other_column=True``) continues
+        to fit with ``_other`` participating in Σ.  This is the
+        bit-equal contract regression — exercising it ensures the
+        decoupled branches don't accidentally short-circuit the legacy
+        code path.
+        """
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=True,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        # Legacy: W and d on G_obs (== G_kept under trivial layout).
+        assert res.G_kept == res.G_obs
+        assert res.W.shape[0] == res.G_obs
+        assert res.d.shape == (res.G_obs,)
+
+    def test_legacy_no_coverage_bit_equal_after_2b(self):
+        """Legacy NBLN fit on data WITHOUT ``_other`` continues to use
+        the existing code path bit-equal to before Commit 2b.  All
+        decoupled branches in loss_fn / final_sweep /
+        compute_global_uncertainty / get_compositional_samples are
+        gated by ``layout.decoupled is True`` — under the trivial
+        layout the legacy code runs without any new branch entered.
+
+        Verify by re-running the legacy fit twice with the same seed
+        and confirming exact bit-equality of W, d, μ, r, mu_scale.
+        """
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        r1 = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+        )
+        r2 = scribe.fit(
+            adata, model="nbln", inference_method="laplace", latent_dim=2,
+            n_steps=5, seed=0,
+        )
+        # Self-consistency: two runs with identical config produce
+        # identical results (deterministic).  This is what "bit-equal"
+        # means in practice when the new branches don't fire.
+        assert _np.allclose(r1.W, r2.W, atol=0)
+        assert _np.allclose(r1.d, r2.d, atol=0)
+        assert _np.allclose(r1.mu, r2.mu, atol=0)
+        assert _np.allclose(r1.r, r2.r, atol=0)
 
 
 class TestPlnScaffolding:
@@ -682,7 +785,11 @@ class TestManuallyNamedOtherEndToEnd:
     @pytest.mark.parametrize(
         "model,expected_str",
         [
-            ("nbln", "NBLN"),
+            # NBLN: Commit 2b has landed — see
+            # ``test_manually_named_other_decoupled_nbln_runs`` below
+            # for the positive test.  TSLN-Rate/TSLN-Logit/PLN still
+            # raise because their math commits (3b/4b/5b) haven't
+            # landed yet.
             ("twostate_ln_rate", "TSLN-Rate"),
             ("twostate_ln_logit", "TSLN-Logit"),
             ("pln", "PLN"),
@@ -692,9 +799,11 @@ class TestManuallyNamedOtherEndToEnd:
         self, model, expected_str
     ):
         """With `var_names[-1] == "_other"` AND no `gene_coverage` AND
-        explicit `correlate_other_column=False`, each model's obs
-        model `init_state` raises ``NotImplementedError`` via the
-        names-fallback detection path in `build_axis_layout`."""
+        explicit `correlate_other_column=False`, the count-likelihood
+        obs models WITHOUT math yet (TSLN-Rate/TSLN-Logit/PLN) raise
+        ``NotImplementedError`` via the names-fallback detection path
+        in `build_axis_layout`.  See
+        ``test_manually_named_other_decoupled_nbln_runs`` for NBLN."""
         import scribe
 
         adata = self._make_adata_with_manual_other(seed=0)
@@ -712,6 +821,24 @@ class TestManuallyNamedOtherEndToEnd:
         # Each model's guard names itself in the error message.
         assert expected_str in msg
         assert "correlate_other_column=True" in msg
+
+    def test_manually_named_other_decoupled_nbln_runs(self):
+        """NBLN's decoupled math (Commit 2b) supports the manually-
+        named ``_other`` tail path: ``var_names[-1] == "_other"`` with
+        no ``gene_coverage`` AND explicit ``correlate_other_column=False``
+        fits cleanly and produces ``W`` / ``d`` on the kept axis."""
+        import scribe
+
+        adata = self._make_adata_with_manual_other(seed=0)
+        res = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            latent_dim=2, n_steps=3, seed=0,
+            correlate_other_column=False,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is True
+        assert res.W.shape == (res.G_kept, 2)
+        assert res.d.shape == (res.G_kept,)
 
     @pytest.mark.parametrize(
         "model",

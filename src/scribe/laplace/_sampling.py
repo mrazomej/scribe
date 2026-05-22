@@ -163,9 +163,7 @@ def _resolve_nbln_ppc_arrays(
     # because the amortizer needs full counts) must be sliced to the
     # subset gene axis to match ``self.mu``/``self.W``/``self.d``.
     gene_idx = getattr(result, "_subset_gene_index", None)
-    gene_idx_jnp = (
-        jnp.asarray(gene_idx) if gene_idx is not None else None
-    )
+    gene_idx_jnp = jnp.asarray(gene_idx) if gene_idx is not None else None
 
     k_cascade, k_r_lap, k_eta_pick, k_r_exp, k_mu_exp, k_eta_exp = (
         jax.random.split(rng_key, 6)
@@ -174,7 +172,10 @@ def _resolve_nbln_ppc_arrays(
     cascade_samples = None
     if frozen and cascade is not None:
         cascade_samples = _draw_nbln_cascade_samples(
-            cascade, cascade_counts, n_samples, k_cascade,
+            cascade,
+            cascade_counts,
+            n_samples,
+            k_cascade,
         )
 
     # Subset-aware cascade routing.  When the Laplace fit's gene panel
@@ -209,6 +210,7 @@ def _resolve_nbln_ppc_arrays(
             _aggregate_other_nb,
             _assemble_per_gene_subset_samples,
         )
+
         _r_src = jnp.asarray(cascade_samples["r"])
         _mu_src = jnp.asarray(cascade_samples["mu"])
         _r_kept = _assemble_per_gene_subset_samples(
@@ -242,11 +244,7 @@ def _resolve_nbln_ppc_arrays(
     eta_samples: Optional[jnp.ndarray] = None
 
     # ---- r ---------------------------------------------------------
-    if (
-        "r" in frozen
-        and cascade_samples is not None
-        and "r" in cascade_samples
-    ):
+    if "r" in frozen and cascade_samples is not None and "r" in cascade_samples:
         # SVI ``r`` is in positive (constrained) space — feed directly
         # to ``LogMeanNegativeBinomial(concentration=...)``.  Subset to
         # the result's gene axis, then expand pool to n_samples.
@@ -288,11 +286,11 @@ def _resolve_nbln_ppc_arrays(
         # SVI ``mu`` is the NB mean (positive); NBLN's ``mu`` is the
         # log-rate prior mean — apply ``log`` per sample.  Subset to
         # gene axis, then expand pool to n_samples.
-        mu_pos = _gene_slice(jnp.asarray(cascade_samples["mu"]))  # (S, G_subset)
+        mu_pos = _gene_slice(
+            jnp.asarray(cascade_samples["mu"])
+        )  # (S, G_subset)
         mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
-        mu_samples = _expand_pool_to_n_samples(
-            mu_log, n_samples, k_mu_exp
-        )
+        mu_samples = _expand_pool_to_n_samples(mu_log, n_samples, k_mu_exp)
 
     # ---- eta -------------------------------------------------------
     # Eta is per-cell, not per-gene; no gene-subset slicing needed.
@@ -318,9 +316,7 @@ def _resolve_nbln_ppc_arrays(
                 eta_full, n_samples, k_eta_exp
             )  # (n_samples, N)
             n_cells = int(eta_expanded.shape[1])
-            cell_idx = jax.random.randint(
-                k_eta_pick, (n_samples,), 0, n_cells
-            )
+            cell_idx = jax.random.randint(k_eta_pick, (n_samples,), 0, n_cells)
             eta_samples = eta_expanded[jnp.arange(n_samples), cell_idx]
 
     return {
@@ -411,12 +407,20 @@ class SamplingResultsMixin:
                 mu_samples = None
                 if bm == "nbln":
                     arrays = _resolve_nbln_ppc_arrays(
-                        self, rng_key, n_samples, per_cell=False,
+                        self,
+                        rng_key,
+                        n_samples,
+                        per_cell=False,
                     )
                     mu_samples = arrays["mu_samples"]
                 return _ppc_pln_library_anchored(
-                    rng_key, n_samples, self.mu, self.W, self.d,
-                    counts=counts, mu_samples=mu_samples,
+                    rng_key,
+                    n_samples,
+                    self.mu,
+                    self.W,
+                    self.d,
+                    counts=counts,
+                    mu_samples=mu_samples,
                 )
             if bm in ("lnm", "lnmvcp"):
                 return _ppc_lnm_library_anchored(
@@ -452,7 +456,10 @@ class SamplingResultsMixin:
             # - non-frozen with Laplace Normal → Normal(loc, scale);
             # - otherwise → None, helper falls back to legacy logic.
             arrays = _resolve_nbln_ppc_arrays(
-                self, rng_key, n_samples, per_cell=False,
+                self,
+                rng_key,
+                n_samples,
+                per_cell=False,
             )
             return _ppc_nbln_marginal(
                 rng_key,
@@ -597,7 +604,10 @@ class SamplingResultsMixin:
             # conditions on the cell-specific MAP ``x_loc`` rather
             # than redrawing ``x`` from its prior).
             arrays = _resolve_nbln_ppc_arrays(
-                self, rng_key, n_samples, per_cell=True,
+                self,
+                rng_key,
+                n_samples,
+                per_cell=True,
             )
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
@@ -859,7 +869,7 @@ class SamplingResultsMixin:
             # NB / Poisson-Beta compound) never enters here — compositions
             # are pre-observation-noise.  For TSLN-Rate the gene-level
             # Beta concentration is an observation-noise layer too: in
-            # expectation ``E[u_g | log_rate, p] = exp(log_rate) · p`` and
+            # expectation ``⟨u_g | log_rate, p⟩ = exp(log_rate) · p`` and
             # under softmax-of-log-rates the gene-level Beta noise
             # averages out, so the compositional view is identical to
             # PLN/NBLN.
@@ -877,12 +887,33 @@ class SamplingResultsMixin:
             # pre-softmax latent magnitudes smaller, which is friendlier to
             # floating-point precision.  For PLN where gauge contamination is
             # typically smaller this is functionally a no-op.
+            #
+            # Decoupled-layout branch (Commit 2b for NBLN; same pattern
+            # applies to PLN/TSLN-* once their math commits land): under
+            # ``correlate_other_column=False``, ``W`` and ``d`` live on
+            # the kept-gene axis (G_kept) while ``μ`` lives on the full
+            # observation axis (G_obs).  We sample ``x_dev`` on G_kept,
+            # scatter ``μ_kept + x_dev`` at kept positions, and use
+            # ``μ_other`` directly at ``other_idx`` (deterministic, no
+            # z modulation — matching the math-contract).
             mu = jnp.asarray(self.mu)
             W = jnp.asarray(self.get_W_compositional())
             d = self.d
             ref_idx = None
-            n_genes_full = int(W.shape[0])
+            n_genes_full = int(mu.shape[0])
             is_alr = False
+            _axis_layout = getattr(self, "axis_layout", None)
+            is_decoupled = _axis_layout is not None and getattr(
+                _axis_layout, "decoupled", False
+            )
+            if is_decoupled:
+                _kept_idx_dev = jnp.asarray(
+                    _axis_layout.kept_idx, dtype=jnp.int32
+                )
+                _other_idx_dev = int(_axis_layout.other_idx)
+            else:
+                _kept_idx_dev = None
+                _other_idx_dev = None
         else:
             raise NotImplementedError(
                 f"get_compositional_samples not implemented for "
@@ -895,7 +926,18 @@ class SamplingResultsMixin:
             d = jnp.asarray(d)
         sqrt_d = jnp.sqrt(jnp.maximum(d, 0.0))
 
-        G_eff = int(mu.shape[0])
+        # Latent dimension for sampling ``z`` / ``ε``:
+        #   • PLN/NBLN legacy: ``G_eff = G_obs`` (mu axis).
+        #   • PLN/NBLN decoupled: ``G_eff = G_kept = W.shape[0]`` (since
+        #     ``W`` lives on the kept axis under decoupling).
+        #   • LNM/LNMVCP: ``G_eff = G_obs − 1`` (ALR latent), already
+        #     enforced via the ``n_genes_full = W.shape[0] + 1`` line.
+        if (not is_alr) and (
+            "_kept_idx_dev" in locals() and _kept_idx_dev is not None
+        ):
+            G_eff = int(W.shape[0])  # G_kept
+        else:
+            G_eff = int(W.shape[0])
         k = int(W.shape[1])
 
         n_total = int(n_samples)
@@ -909,7 +951,20 @@ class SamplingResultsMixin:
             k_z, k_eps = jax.random.split(chunk_keys[i])
             z = jax.random.normal(k_z, (size, k), dtype=mu.dtype)
             eps = jax.random.normal(k_eps, (size, G_eff), dtype=mu.dtype)
-            latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
+            # Under decoupling, ``z @ W.T + sqrt_d * eps`` lives on
+            # G_kept and represents the per-draw ``x_dev``.  We add μ
+            # on the G_obs axis by scattering: μ_kept + x_dev at kept
+            # positions, μ_other unchanged at ``other_idx``.
+            # Under legacy / LNM, ``latent = μ + z @ W.T + sqrt_d * eps``
+            # directly on the full axis as before.
+            if (not is_alr) and (
+                "_kept_idx_dev" in locals() and _kept_idx_dev is not None
+            ):
+                x_dev = z @ W.T + sqrt_d[None, :] * eps  # (size, G_kept)
+                latent = jnp.broadcast_to(mu[None, :], (size, n_genes_full))
+                latent = latent.at[:, _kept_idx_dev].add(x_dev)
+            else:
+                latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
 
             if is_alr:
                 # ALR → simplex: augment with a zero at the reference
@@ -919,7 +974,10 @@ class SamplingResultsMixin:
                 full = full.at[..., jnp.asarray(other)].set(latent)
                 simplex = jax.nn.softmax(full, axis=-1)
             else:
-                # PLN: softmax of log-rate; η cancels.
+                # PLN: softmax of log-rate; η cancels.  Under decoupled
+                # the latent is already on the full G_obs axis (scatter
+                # above), so softmax produces a proper simplex of size
+                # G_obs with ``_other`` participating deterministically.
                 simplex = jax.nn.softmax(latent, axis=-1)
 
             pieces.append(_np.asarray(simplex))

@@ -58,14 +58,23 @@ from ._global_uncertainty import (
 )
 from ._newton_nbln import (
     laplace_log_det_neg_H_batch,
+    laplace_log_det_neg_H_batch_decoupled,
     laplace_log_det_neg_H_batch_x_only,
+    laplace_log_det_neg_H_batch_x_only_decoupled,
     laplace_log_det_neg_H_batch_x_only_offset,
+    laplace_log_det_neg_H_batch_x_only_offset_decoupled,
     laplace_newton_batch,
+    laplace_newton_batch_decoupled,
     laplace_newton_batch_x_only,
+    laplace_newton_batch_x_only_decoupled,
     laplace_newton_batch_x_only_offset,
+    laplace_newton_batch_x_only_offset_decoupled,
     nbln_grad_split_batch,
+    nbln_grad_split_batch_decoupled,
     nbln_grad_x_only_norm_batch,
+    nbln_grad_x_only_norm_batch_decoupled,
     nbln_grad_x_only_offset_norm_batch,
+    nbln_grad_x_only_offset_norm_batch_decoupled,
 )
 
 
@@ -320,30 +329,12 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
-        # Early guard for the decoupled path (auditor rev-6 #3): the
-        # decoupled-math kernels in ``loss_fn`` / ``final_sweep`` /
-        # ``compute_global_uncertainty`` raise NotImplementedError,
-        # but ``init_state`` itself still allocates W/d/latent_loc
-        # at the kept-gene shapes.  On tiny / degenerate data those
-        # allocations could fail (e.g. PCA on too few cells) and
-        # surface a confusing shape error before the user sees the
-        # intended NotImplementedError.  Fail fast here so the user
-        # gets the clearest possible signal.  Legacy (trivial)
-        # layouts skip this — init runs unchanged from today.
-        if _layout.decoupled:
-            raise NotImplementedError(
-                "NBLN decoupled deviation-parameterisation math "
-                "(loss_fn / Newton / global_uncertainty under "
-                "`correlate_other_column=False` with a pooled '_other') "
-                "is not yet implemented — Commit 2 of the harmonic-hare "
-                "plan landed the scaffolding (AxisLayout, init shapes, "
-                "compositional sampler, pack_result); Commit 2b lands "
-                "the math. Until then, either pass "
-                "`correlate_other_column=True` to recover legacy "
-                "behaviour (with `_other` in Σ) or fit on data without "
-                "a trailing '_other' column (gene_coverage == 1.0 or "
-                "no gene_coverage filter)."
-            )
+        # Commit 2b: the decoupled path is now fully implemented.  No
+        # early guard here — init proceeds for both layouts.  The
+        # decoupled branches in ``loss_fn`` / ``final_sweep`` /
+        # ``compute_global_uncertainty`` consume ``self._axis_layout``
+        # directly and drive the deviation-form Newton kernels in
+        # ``_newton_nbln`` (the ``*_decoupled`` family).
 
         # --- mu init: frozen overrides prior overrides data-driven ---
         # `mu` lives in the OBSERVATION-layer axis (G_obs,) under BOTH
@@ -554,31 +545,19 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        # Decoupled-layout guard.  When the AxisLayout marks `_other`
-        # as excluded from Σ (``layout.decoupled == True``), the full
-        # deviation-parameterised loss (with the kept-gene MVN prior on
-        # ``x_dev``, the deterministic ``_other`` log-rate, and the
-        # corresponding Newton / global-uncertainty re-derivations) is
-        # tracked in the harmonic-hare plan as Commit 2b.  Until that
-        # math lands, fail loudly with a clear remediation message.
-        # The legacy (``layout.decoupled is False``) path runs unchanged.
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "NBLN decoupled deviation-parameterisation math "
-                "(loss_fn / Newton / global_uncertainty under "
-                "`correlate_other_column=False` with a pooled '_other') "
-                "is not yet implemented — Commit 2 of the harmonic-hare "
-                "plan landed the scaffolding (AxisLayout, init shapes, "
-                "compositional sampler, pack_result); Commit 2b lands "
-                "the math. Until then, either pass "
-                "`correlate_other_column=True` to recover legacy "
-                "behaviour (with `_other` in Σ) or fit on data without "
-                "a trailing '_other' column (gene_coverage == 1.0 or "
-                "no gene_coverage filter)."
-            )
+        # Commit 2b: under the decoupled layout
+        # (``self._axis_layout.decoupled == True``) the loss runs the
+        # deviation-parameterised Newton kernels from ``_newton_nbln``.
+        # The legacy (``decoupled is False``) path is untouched and
+        # bit-equal to today.  The branch is taken below at the Newton
+        # dispatch; here we just resolve the kept_idx into a JAX array
+        # once so it can be threaded into the vmapped Newton kernels.
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
+        if _is_decoupled:
+            _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+        else:
+            _kept_idx_j = None  # unused on the legacy path
 
         # Splice frozen values into a working params_full dict for
         # likelihood computation (Round-4 R4).  The optimizer holds only
@@ -614,115 +593,215 @@ class NBLNObservationModel(LaplaceObservationModel):
         # 1. Frozen eta: x-only Newton with offset = freeze value.
         # 2. Soft eta (prior or anchor): joint (x, η) Newton.
         # 3. No capture: plain x-only Newton.
+        #
+        # Commit 2b: each branch has a decoupled twin selected by
+        # ``_is_decoupled``.  The decoupled kernels live on the kept-
+        # gene axis: ``latent_init`` (carried through ``x_new``) has
+        # shape ``(N, G_kept)`` and represents ``x_dev`` (deviation
+        # from μ).  Downstream code builds the full ``(N, G_obs)``
+        # ``log_mean`` for the NB log-prob by scattering ``x_dev`` at
+        # kept positions and reading ``μ`` directly at ``other_idx``.
         if self.freezes_eta:
             eta_offset_batch = aux_batch["eta_frozen"]
             eta_offset_sg = jax.lax.stop_gradient(eta_offset_batch)
-            x_new, _gn, _ = laplace_newton_batch_x_only_offset(
-                latent_init_sg,
-                counts_batch,
-                mu_sg,
-                W_sg,
-                d_sg,
-                r_sg,
-                eta_offset_sg,
-                n_newton,
-                damping,
-                self._max_step,
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = eta_offset_batch  # carried forward to result/PPC.
-            log_det = laplace_log_det_neg_H_batch_x_only_offset(
-                x_new,
-                eta_offset_batch,
-                counts_batch,
-                r,
-                W,
-                d,
-            )
-            log_mean = x_new - eta_offset_batch[:, None]
-            # Per-block grad split: only x-block exists in this path.
-            # When eta is frozen, omit the η key from the progress
-            # display entirely — there's no η Newton variable to
-            # diagnose, and displaying zeros would mislead.  The driver
-            # iterates over whatever keys are present in gn_blocks.
-            # Use the *offset-aware* helper: the NB factors must be
-            # evaluated at ``log_rate = x − η_offset``, not at ``x``
-            # (the latter saturates ``p → 0`` and produces enormous
-            # spurious gradients while the Newton MAP is actually fine).
-            gn_x = nbln_grad_x_only_offset_norm_batch(
-                x_new,
-                counts_batch,
-                mu_sg,
-                W_sg,
-                d_sg,
-                r_sg,
-                eta_offset_sg,
-            )
+            if _is_decoupled:
+                x_new, _gn, _ = laplace_newton_batch_x_only_offset_decoupled(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    eta_offset_sg,
+                    _kept_idx_j,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_offset_batch
+                log_det = laplace_log_det_neg_H_batch_x_only_offset_decoupled(
+                    x_new, eta_offset_batch, counts_batch, r, W, d, mu,
+                    _kept_idx_j,
+                )
+                gn_x = nbln_grad_x_only_offset_norm_batch_decoupled(
+                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                    eta_offset_sg, _kept_idx_j,
+                )
+            else:
+                x_new, _gn, _ = laplace_newton_batch_x_only_offset(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    eta_offset_sg,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_offset_batch  # carried forward to result/PPC.
+                log_det = laplace_log_det_neg_H_batch_x_only_offset(
+                    x_new,
+                    eta_offset_batch,
+                    counts_batch,
+                    r,
+                    W,
+                    d,
+                )
+                # Use the *offset-aware* helper: NB factors must be
+                # evaluated at ``log_rate = x − η_offset``, not at
+                # ``x`` (the latter saturates ``p → 0`` and produces
+                # enormous spurious gradients while the Newton MAP is
+                # actually fine).
+                gn_x = nbln_grad_x_only_offset_norm_batch(
+                    x_new,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    eta_offset_sg,
+                )
             gn_blocks = {"x": gn_x}
         elif self.uses_capture:
             eta_init_sg = jax.lax.stop_gradient(eta_init)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
             sigma_eta_sg = jax.lax.stop_gradient(sigma_eta_batch)
-            x_new, eta_new, _gn, _ = laplace_newton_batch(
-                latent_init_sg,
-                eta_init_sg,
-                counts_batch,
-                mu_sg,
-                W_sg,
-                d_sg,
-                r_sg,
-                eta_anchor_sg,
-                sigma_eta_sg,
-                n_newton,
-                damping,
-                self._max_step,
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = jax.lax.stop_gradient(eta_new)
-            log_det = laplace_log_det_neg_H_batch(
-                x_new, eta_new, counts_batch, r, W, d, sigma_eta_batch
-            )
-            log_mean = x_new - eta_new[:, None]
-            # Per-block grad split for the progress display.  The
-            # Newton kernel returns a joint ``L∞`` over ``(x, η)`` --
-            # useful for divergence detection but unhelpful for
-            # diagnosing which block is stalling.  Re-evaluate ∇f at
-            # the post-Newton MAP and split into x- and η-block
-            # norms.  Cost: one extra Woodbury solve per cell.
-            gn_x, gn_eta = nbln_grad_split_batch(
-                x_new,
-                eta_new,
-                counts_batch,
-                mu_sg,
-                W_sg,
-                d_sg,
-                r_sg,
-                eta_anchor_sg,
-                sigma_eta_sg,
-            )
+            if _is_decoupled:
+                x_new, eta_new, _gn, _ = laplace_newton_batch_decoupled(
+                    latent_init_sg,
+                    eta_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    _kept_idx_j,
+                    eta_anchor_sg,
+                    sigma_eta_sg,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = jax.lax.stop_gradient(eta_new)
+                log_det = laplace_log_det_neg_H_batch_decoupled(
+                    x_new, eta_new, counts_batch, r, W, d, mu,
+                    _kept_idx_j, sigma_eta_batch,
+                )
+                gn_x, gn_eta = nbln_grad_split_batch_decoupled(
+                    x_new, eta_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                    _kept_idx_j, eta_anchor_sg, sigma_eta_sg,
+                )
+            else:
+                x_new, eta_new, _gn, _ = laplace_newton_batch(
+                    latent_init_sg,
+                    eta_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    eta_anchor_sg,
+                    sigma_eta_sg,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = jax.lax.stop_gradient(eta_new)
+                log_det = laplace_log_det_neg_H_batch(
+                    x_new, eta_new, counts_batch, r, W, d, sigma_eta_batch
+                )
+                # Per-block grad split for the progress display.
+                gn_x, gn_eta = nbln_grad_split_batch(
+                    x_new,
+                    eta_new,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    eta_anchor_sg,
+                    sigma_eta_sg,
+                )
             gn_blocks = {"x": gn_x, "η": gn_eta}
         else:
-            x_new, _gn, _ = laplace_newton_batch_x_only(
-                latent_init_sg,
-                counts_batch,
-                mu_sg,
-                W_sg,
-                d_sg,
-                r_sg,
-                n_newton,
-                damping,
-                self._max_step,
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = eta_init  # placeholder, not used downstream
-            log_det = laplace_log_det_neg_H_batch_x_only(
-                x_new, None, counts_batch, r, W, d, 1.0
-            )
-            log_mean = x_new
-            gn_x = nbln_grad_x_only_norm_batch(
-                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
-            )
+            if _is_decoupled:
+                x_new, _gn, _ = laplace_newton_batch_x_only_decoupled(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    _kept_idx_j,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_init  # placeholder
+                log_det = laplace_log_det_neg_H_batch_x_only_decoupled(
+                    x_new, None, counts_batch, r, W, d, mu,
+                    _kept_idx_j, 1.0,
+                )
+                gn_x = nbln_grad_x_only_norm_batch_decoupled(
+                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                    _kept_idx_j,
+                )
+            else:
+                x_new, _gn, _ = laplace_newton_batch_x_only(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_sg,
+                    W_sg,
+                    d_sg,
+                    r_sg,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_init  # placeholder, not used downstream
+                log_det = laplace_log_det_neg_H_batch_x_only(
+                    x_new, None, counts_batch, r, W, d, 1.0
+                )
+                gn_x = nbln_grad_x_only_norm_batch(
+                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
+                )
             gn_blocks = {"x": gn_x}
+
+        # Build per-cell, per-gene log_mean (== log_rate = x − η or x
+        # under no-capture) for the NB likelihood.  Under decoupling,
+        # ``x_new`` holds ``x_dev`` on ``(N, G_kept)`` and we scatter to
+        # the full ``(N, G_obs)`` log_mean via μ + x_dev for kept genes
+        # and μ for ``_other``.
+        if _is_decoupled:
+            # Per-cell base = μ broadcast across cells, minus η when
+            # capture is active (frozen-η or soft-η); η is None on the
+            # no-capture path.
+            if self.uses_capture or self.freezes_eta:
+                _eta_sub = (
+                    eta_new[:, None] if eta_new.ndim == 1 else eta_new
+                )  # (N, 1)
+                base = mu[None, :] - _eta_sub  # (N, G_obs)
+            else:
+                base = jnp.broadcast_to(
+                    mu[None, :], (x_new.shape[0], mu.shape[0])
+                )
+            # Scatter x_dev contribution at kept positions.
+            log_mean = base.at[:, _kept_idx_j].add(x_new)
+        else:
+            if self.freezes_eta:
+                log_mean = x_new - eta_offset_batch[:, None]
+            elif self.uses_capture:
+                log_mean = x_new - eta_new[:, None]
+            else:
+                log_mean = x_new
 
         # NB log-prob in log-space.  Includes the full PMF (factorial
         # constant and all) -- the absolute scale of the loss is not
@@ -737,11 +816,23 @@ class NBLNObservationModel(LaplaceObservationModel):
             .sum(axis=-1)
         )
 
-        # MVN prior on x.
-        diff = x_new - mu[None, :]
+        # MVN prior on the per-cell latent.
+        #   Legacy: ``x ~ N(μ, Σ)`` on G_obs, with Σ = W Wᵀ + diag(d).
+        #     diff = x − μ, MVN dim G = G_obs.
+        #   Decoupled: ``x_dev ~ N(0, Σ_kept)`` on G_kept, with
+        #     Σ_kept = W Wᵀ + diag(d), W: (G_kept, k), d: (G_kept,).
+        #     diff = x_dev (zero-centred), MVN dim G = G_kept.
+        # μ has moved into the NB likelihood under decoupling — see the
+        # math contract at the top of ``_newton_nbln.py``'s decoupled
+        # section.
+        if _is_decoupled:
+            diff = x_new  # x_dev_new, already zero-centred
+            G = int(_layout.G_kept)
+        else:
+            diff = x_new - mu[None, :]
+            G = mu.shape[0]
         quad = _woodbury_quadform(W, d, diff)
         log_det_sigma = _woodbury_logdet_sigma(W, d)
-        G = mu.shape[0]
         mvn_lp = (
             -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
         )
@@ -823,19 +914,6 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> FinalSweepResult:
-        # Decoupled-layout guard (mirrors ``loss_fn``).  The
-        # deviation-parameterised final sweep is part of Commit 2b.
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "NBLN decoupled final_sweep is not yet implemented — "
-                "Commit 2b lands the deviation-parameterised math. "
-                "Pass `correlate_other_column=True` or omit the "
-                "gene_coverage filter to use the legacy path."
-            )
-
         # Round-5 R5-1 fix: splice frozen values into params_full at
         # entry — final_sweep reads params["mu"]/params["r_loc"] which
         # are absent from the reduced optimizer dict when frozen.
@@ -846,53 +924,85 @@ class NBLNObservationModel(LaplaceObservationModel):
         d = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
         r = jax.lax.stop_gradient(self._pos_forward(params_full["r_loc"]))
 
+        # Decoupled-layout branch (Commit 2b): the final sweep mirrors
+        # ``loss_fn``'s four-way Newton dispatch but lives on the kept
+        # axis.  ``latent_loc`` carries ``x_dev`` shape ``(N, G_kept)``;
+        # ``x_final`` returns the same shape.
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
+        if _is_decoupled:
+            _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+
         # Four-way Newton dispatch (parallels loss_fn).
         if self.freezes_eta:
             # x-only Newton with fixed per-cell offset from aux_data.
             eta_offset = aux_data["eta_frozen"]
-            x_final, gn_final, _ = laplace_newton_batch_x_only_offset(
-                latent_loc,
-                count_data,
-                mu,
-                W,
-                d,
-                r,
-                eta_offset,
-                n_newton,
-                damping,
-                self._max_step,
-            )
+            if _is_decoupled:
+                x_final, gn_final, _ = (
+                    laplace_newton_batch_x_only_offset_decoupled(
+                        latent_loc, count_data, mu, W, d, r, eta_offset,
+                        _kept_idx_j, n_newton, damping, self._max_step,
+                    )
+                )
+            else:
+                x_final, gn_final, _ = laplace_newton_batch_x_only_offset(
+                    latent_loc,
+                    count_data,
+                    mu,
+                    W,
+                    d,
+                    r,
+                    eta_offset,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
             # Carry the frozen eta forward so the result's `eta_loc` is
             # populated — PPC needs this to compute `log_mean = x − eta`.
             eta_final = eta_offset
         elif self.uses_capture:
             sigma_eta_full = aux_data["eta_scale"]
-            x_final, eta_final, gn_final, _ = laplace_newton_batch(
-                latent_loc,
-                eta_loc,
-                count_data,
-                mu,
-                W,
-                d,
-                r,
-                eta_anchor,
-                sigma_eta_full,
-                n_newton,
-                damping,
-                self._max_step,
-            )
+            if _is_decoupled:
+                x_final, eta_final, gn_final, _ = (
+                    laplace_newton_batch_decoupled(
+                        latent_loc, eta_loc, count_data, mu, W, d, r,
+                        _kept_idx_j, eta_anchor, sigma_eta_full, n_newton,
+                        damping, self._max_step,
+                    )
+                )
+            else:
+                x_final, eta_final, gn_final, _ = laplace_newton_batch(
+                    latent_loc,
+                    eta_loc,
+                    count_data,
+                    mu,
+                    W,
+                    d,
+                    r,
+                    eta_anchor,
+                    sigma_eta_full,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
         else:
-            x_final, gn_final, _ = laplace_newton_batch_x_only(
-                latent_loc,
-                count_data,
-                mu,
-                W,
-                d,
-                r,
-                n_newton,
-                damping,
-                self._max_step,
-            )
+            if _is_decoupled:
+                x_final, gn_final, _ = laplace_newton_batch_x_only_decoupled(
+                    latent_loc, count_data, mu, W, d, r, _kept_idx_j,
+                    n_newton, damping, self._max_step,
+                )
+            else:
+                x_final, gn_final, _ = laplace_newton_batch_x_only(
+                    latent_loc,
+                    count_data,
+                    mu,
+                    W,
+                    d,
+                    r,
+                    n_newton,
+                    damping,
+                    self._max_step,
+                )
             eta_final = None
 
         return FinalSweepResult(
@@ -957,23 +1067,16 @@ class NBLNObservationModel(LaplaceObservationModel):
         # which are absent from the reduced optimizer dict when frozen.
         params_full = self._splice_frozen(params)
 
-        # Decoupled-layout guard.  The Schur re-derivation of the
-        # profiled μ Hessian under the deviation parameterisation
-        # (per-capture-mode M_c^{-1} from the per-cell inverse blocks)
-        # is part of Commit 2b in the harmonic-hare plan.  Until then,
-        # raise so callers cannot silently consume miscalibrated
-        # ``mu_scale`` / ``r_scale`` values.  Legacy fits run unchanged.
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "NBLN decoupled compute_global_uncertainty is not yet "
-                "implemented — Commit 2b lands the deviation-"
-                "parameterisation Schur re-derivation by capture mode. "
-                "Pass `correlate_other_column=True` or omit the "
-                "gene_coverage filter to use the legacy path."
-            )
+        # Commit 2b: under the decoupled layout, the profiled μ Hessian
+        # derivation differs because μ no longer enters the MVN prior —
+        # it lives only in the NB observation likelihood.  The
+        # decoupled branch is implemented inline below at the
+        # ``H_mu_profiled_diag`` assembly; the per-cell inverse-block
+        # plumbing above produces the right factors for both paths
+        # (it always operates on the W/d natural axis, which is
+        # G_kept under decoupling and G_obs under legacy).
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
 
         mu = params_full["mu"]
         W = params_full["W"]
@@ -984,11 +1087,26 @@ class NBLNObservationModel(LaplaceObservationModel):
 
         N, G = count_data.shape
 
-        # Compute effective log-rate at each cell.
-        if self.uses_capture and eta_loc is not None:
-            log_rate_all = latent_loc - eta_loc[:, None]
+        # Compute effective log-rate at each cell, on the FULL G_obs
+        # axis regardless of layout.  Under decoupling, ``latent_loc``
+        # has shape ``(N, G_kept)`` and carries ``x_dev``; we scatter
+        # ``μ + x_dev`` at kept positions and use ``μ`` at ``other_idx``,
+        # then subtract η if capture is active.  Under legacy the
+        # formula is unchanged.
+        if _is_decoupled:
+            _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+            # Base = μ broadcast across cells minus η when capture is on.
+            if self.uses_capture and eta_loc is not None:
+                _base = mu[None, :] - eta_loc[:, None]
+            else:
+                _base = jnp.broadcast_to(mu[None, :], (N, G))
+            # Scatter ``x_dev`` at kept positions; ``_other`` retains μ − η.
+            log_rate_all = _base.at[:, _kept_idx_j].add(latent_loc)
         else:
-            log_rate_all = latent_loc
+            if self.uses_capture and eta_loc is not None:
+                log_rate_all = latent_loc - eta_loc[:, None]
+            else:
+                log_rate_all = latent_loc
 
         # --- Per-cell, per-gene NB Hessian entries via autodiff -------
         # H_{r_loc_g, r_loc_g} and H_{r_loc_g, log_rate_g} per gene per
@@ -1111,22 +1229,50 @@ class NBLNObservationModel(LaplaceObservationModel):
             correction = jnp.sum(Y * Y, axis=0)  # (G,)
             return m_inv + correction
 
+        # Resolve kept_idx once for the decoupled per-cell function.
+        if _is_decoupled:
+            _kept_idx_inv = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+        else:
+            _kept_idx_inv = None
+
         def _per_cell_inverse_blocks(
             log_rate_c: jnp.ndarray,
             u_c: jnp.ndarray,
             sigma_eta_c: jnp.ndarray,
-        ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            """Return (joint_inv_xx_diag, joint_inv_xη, joint_inv_ηη)."""
+        ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            """Return ``(joint_inv_xx_diag, joint_inv_xη, joint_inv_ηη, a_full)``.
+
+            Under legacy: ``joint_inv_*`` live on ``(G_obs,)``; ``a_full``
+            is the same ``a`` already used inside the Woodbury (returned
+            for parity with the decoupled path so the caller can use it
+            uniformly).
+
+            Under decoupling: ``joint_inv_xx_diag`` and ``joint_inv_xeta``
+            live on ``(G_kept,)``; ``joint_inv_etaeta`` is scalar; the
+            Woodbury factors operate on ``a_kept = a_full[kept_idx]``,
+            while ``a_full`` (G_obs,) is returned for the μ profiled
+            formula (which needs the NB curvature at every gene
+            including ``_other``).
+            """
             nb = _nb_factors(log_rate_c, u_c, r)
-            a_c = nb["a"]
-            factors = _woodbury_factors(W, d, a_c, damping=0.0)
+            a_full = nb["a"]
+            if _is_decoupled:
+                a_for_woodbury = a_full[_kept_idx_inv]
+            else:
+                a_for_woodbury = a_full
+            factors = _woodbury_factors(W, d, a_for_woodbury, damping=0.0)
             A_inv_diag = _A_inv_diag_from_factors(factors)
             if capture_on:
-                A_inv_a = _solve_A(factors, a_c)  # (G,)
+                A_inv_a = _solve_A(factors, a_for_woodbury)
+                # Schur scalar s_η: η couples to ALL genes' NB curvature
+                # under both layouts (the decoupled `_other` still
+                # contributes via its NB likelihood term, just not via
+                # the latent x_dev).  ``sum(a_full)`` is the right
+                # denominator regardless of layout.
                 s_eta = jnp.maximum(
-                    jnp.sum(a_c)
+                    jnp.sum(a_full)
                     + 1.0 / (sigma_eta_c**2)
-                    - jnp.dot(a_c, A_inv_a),
+                    - jnp.dot(a_for_woodbury, A_inv_a),
                     1e-30,
                 )
                 joint_inv_xx_diag = A_inv_diag + (A_inv_a**2) / s_eta
@@ -1134,9 +1280,9 @@ class NBLNObservationModel(LaplaceObservationModel):
                 joint_inv_etaeta = 1.0 / s_eta
             else:
                 joint_inv_xx_diag = A_inv_diag
-                joint_inv_xeta = jnp.zeros_like(a_c)
-                joint_inv_etaeta = jnp.asarray(0.0, dtype=a_c.dtype)
-            return joint_inv_xx_diag, joint_inv_xeta, joint_inv_etaeta
+                joint_inv_xeta = jnp.zeros_like(a_for_woodbury)
+                joint_inv_etaeta = jnp.asarray(0.0, dtype=a_for_woodbury.dtype)
+            return joint_inv_xx_diag, joint_inv_xeta, joint_inv_etaeta, a_full
 
         _per_cell_vmap = jax.vmap(_per_cell_inverse_blocks, in_axes=(0, 0, 0))
 
@@ -1155,20 +1301,22 @@ class NBLNObservationModel(LaplaceObservationModel):
         _joint_xx_chunks = []
         _joint_xeta_chunks = []
         _joint_etaeta_chunks = []
+        _a_full_chunks = []
         for lr, u, se in zip(_chunks_lr, _chunks_u, _chunks_sigma):
-            jx, jxe, jee = _per_cell_vmap(lr, u, se)
+            jx, jxe, jee, af = _per_cell_vmap(lr, u, se)
             _joint_xx_chunks.append(jx)
             _joint_xeta_chunks.append(jxe)
             _joint_etaeta_chunks.append(jee)
-        joint_inv_xx_diag_all = jnp.concatenate(
-            _joint_xx_chunks, axis=0
-        )  # (N, G)
-        joint_inv_xeta_all = jnp.concatenate(
-            _joint_xeta_chunks, axis=0
-        )  # (N, G)
+            _a_full_chunks.append(af)
+        # Under legacy: ``(N, G_obs)``.  Under decoupling: ``(N, G_kept)``.
+        joint_inv_xx_diag_all = jnp.concatenate(_joint_xx_chunks, axis=0)
+        joint_inv_xeta_all = jnp.concatenate(_joint_xeta_chunks, axis=0)
         joint_inv_etaeta_all = jnp.concatenate(
             _joint_etaeta_chunks, axis=0
         )  # (N,)
+        # ``a_full_all`` is always on ``(N, G_obs)`` — the NB curvature
+        # at every gene, used by the decoupled μ formula.
+        a_full_all = jnp.concatenate(_a_full_chunks, axis=0)
 
         # --- r profiled Hessian diagonal (Round-3 Finding B) -----------
         # capture-off:  Schur_g = sum_c H_rx_cg² · joint_inv_xx_diag_cg
@@ -1179,15 +1327,46 @@ class NBLNObservationModel(LaplaceObservationModel):
         # The bracket comes from H_{r,η}_cg = -H_{r,x}_cg (chain rule on
         # log_rate = x - η).
         H_rr_summed = jnp.sum(H_rr_all, axis=0)  # (G,)
-        if capture_on:
-            bracket = (
+        if _is_decoupled:
+            # Decoupled bracket structure (Commit 2b): the joint
+            # inverse blocks live on the kept axis, so we assemble the
+            # per-gene-on-G_obs Schur correction in two pieces:
+            #   • kept gene g at position k_g — bracket combines the
+            #     kept-axis ``M_xx``, ``M_xη``, and the scalar ``M_ηη``.
+            #   • ``_other`` — no x_dev coupling, so only the η block
+            #     contributes (``M_ηη``).
+            # Under no-capture / frozen-η the ``M_xη`` and ``M_ηη`` blocks
+            # are zero (by construction inside _per_cell_inverse_blocks),
+            # so the formulas collapse to "kept gets ``M_xx_diag``, ``_other``
+            # gets zero" — both correct.
+            kept_idx_np = np.asarray(_layout.kept_idx)
+            other_idx_int = int(_layout.other_idx)
+            bracket_kept = (
                 joint_inv_xx_diag_all
                 - 2.0 * joint_inv_xeta_all
                 + joint_inv_etaeta_all[:, None]
-            )  # (N, G)
+            )  # (N, G_kept)
+            H_rx_kept = H_rx_all[:, kept_idx_np]  # (N, G_kept)
+            H_rx_other = H_rx_all[:, other_idx_int]  # (N,)
+            r_schur_kept = jnp.sum(
+                H_rx_kept ** 2 * bracket_kept, axis=0
+            )  # (G_kept,)
+            r_schur_other = jnp.sum(
+                H_rx_other ** 2 * joint_inv_etaeta_all
+            )  # scalar
+            r_schur = jnp.zeros((G,), dtype=H_rr_summed.dtype)
+            r_schur = r_schur.at[kept_idx_np].set(r_schur_kept)
+            r_schur = r_schur.at[other_idx_int].set(r_schur_other)
         else:
-            bracket = joint_inv_xx_diag_all
-        r_schur = jnp.sum(H_rx_all**2 * bracket, axis=0)  # (G,)
+            if capture_on:
+                bracket = (
+                    joint_inv_xx_diag_all
+                    - 2.0 * joint_inv_xeta_all
+                    + joint_inv_etaeta_all[:, None]
+                )  # (N, G)
+            else:
+                bracket = joint_inv_xx_diag_all
+            r_schur = jnp.sum(H_rx_all**2 * bracket, axis=0)  # (G,)
         H_r_profiled_diag = H_rr_summed - r_schur
 
         # Prior precision injection on r_loc (Round-1 Finding 2).
@@ -1212,18 +1391,54 @@ class NBLNObservationModel(LaplaceObservationModel):
         else:
             r_scale, r_diag = curvature_to_scale(H_r_profiled_diag)
 
-        # --- mu profiled Hessian diagonal (diagonal-Σ approximation) ---
-        # Cross-Hessian -H_{μ_g, x_{c,g}} = (Σ^{-1})_{g,g} in the
-        # diagonal approximation.  μ does not couple to η_c (NB likelihood
-        # depends on x, η only; prior on x couples to μ).  So per cell:
-        #   H_μμ_profile_cg ≈ (Σ^{-1})_{gg} − (Σ^{-1})_{gg}² · joint_inv_xx_diag_cg
-        # Summed over cells:
-        #   H_μμ_profile_g = Σ^{-1}_{gg} · [ N − Σ^{-1}_{gg} · sum_c joint_inv_xx_diag_cg ]
-        sigma_inv_diag = woodbury_inv_diag(W, d)  # (G,) — exact
-        sum_joint_xx_diag = jnp.sum(joint_inv_xx_diag_all, axis=0)  # (G,)
-        H_mu_profiled_diag = sigma_inv_diag * (
-            float(N) - sigma_inv_diag * sum_joint_xx_diag
-        )
+        # --- mu profiled Hessian diagonal ---
+        # The legacy and decoupled formulas differ structurally because
+        # ``μ`` enters different parts of the per-cell log-density:
+        #
+        # • Legacy (``correlate_other_column=True``): ``x ~ N(μ, Σ)``;
+        #   ``μ`` lives in the MVN prior, NOT the NB likelihood.  The
+        #   profiled curvature is the diagonal-Σ approximation:
+        #     H_μμ_profile_g = Σ⁻¹_{gg} · [N − Σ⁻¹_{gg} · Σ_c joint_inv_xx_diag_cg]
+        #
+        # • Decoupled (Commit 2b): ``x_dev ~ N(0, Σ_kept)``; ``μ`` moves
+        #   into the NB likelihood (``log_rate_g = μ_g + x_dev[k_g] − η``
+        #   for kept genes, ``μ_g − η`` for ``_other``).  The profiled
+        #   curvature is then:
+        #     For kept gene g at k_g:
+        #       H_μμ_profile_g = Σ_c [a_full_cg − a_full_cg² · bracket_kept_{c,k_g}]
+        #     For ``_other``:
+        #       H_μμ_profile_other = Σ_c [a_full_c,other − a_full_c,other² · M_ηη_c]
+        #   where bracket_kept = M_xx − 2·M_xη + M_ηη as for the r path.
+        #   See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-mu-uncertainty.
+        if _is_decoupled:
+            # ``bracket_kept`` and ``kept_idx_np`` / ``other_idx_int``
+            # already built in the r Schur block above (same chunk of
+            # data) — reuse them here.
+            a_kept_all = a_full_all[:, kept_idx_np]  # (N, G_kept)
+            a_other_all = a_full_all[:, other_idx_int]  # (N,)
+            H_mu_kept = (
+                jnp.sum(a_kept_all, axis=0)
+                - jnp.sum(a_kept_all ** 2 * bracket_kept, axis=0)
+            )  # (G_kept,)
+            H_mu_other = (
+                jnp.sum(a_other_all)
+                - jnp.sum(a_other_all ** 2 * joint_inv_etaeta_all)
+            )  # scalar
+            H_mu_profiled_diag = jnp.zeros((G,), dtype=mu.dtype)
+            H_mu_profiled_diag = H_mu_profiled_diag.at[kept_idx_np].set(
+                H_mu_kept
+            )
+            H_mu_profiled_diag = H_mu_profiled_diag.at[other_idx_int].set(
+                H_mu_other
+            )
+        else:
+            sigma_inv_diag = woodbury_inv_diag(W, d)  # (G,) — exact
+            sum_joint_xx_diag = jnp.sum(
+                joint_inv_xx_diag_all, axis=0
+            )  # (G,)
+            H_mu_profiled_diag = sigma_inv_diag * (
+                float(N) - sigma_inv_diag * sum_joint_xx_diag
+            )
 
         # Prior precision injection on mu.
         if self._prior_mu is not None and "mu" not in self._frozen_params:
