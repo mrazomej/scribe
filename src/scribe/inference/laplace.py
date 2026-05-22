@@ -324,6 +324,9 @@ def _run_laplace_inference(
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
             _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model (`correlate_other_column`
+            # plumbing).  Harmonic-hare Commit 4 scaffolding.
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     if base_model == "twostate_ln_rate":

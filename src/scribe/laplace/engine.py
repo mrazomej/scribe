@@ -133,12 +133,12 @@ class LaplaceInferenceEngine:
 
         # Early-fail check for `correlate_other_column=False` on the
         # decoupled-math models that haven't yet been wired.  As of
-        # Commit 3 of the harmonic-hare plan, NBLN and TSLN-Rate
-        # both have AxisLayout-aware obs models (their NotImplemented
-        # guards fire from inside ``loss_fn`` etc.), so only PLN and
-        # TSLN-Logit need the engine-level early-fail.  When those
-        # models receive their own AxisLayout wiring (Commits 4 and
-        # 5 of the plan), this guard can be retired entirely.
+        # Commit 4 of the harmonic-hare plan, NBLN, TSLN-Rate, AND
+        # TSLN-Logit all have AxisLayout-aware obs models (their
+        # NotImplementedError guards fire from inside ``init_state``
+        # / ``loss_fn`` etc.), so only PLN needs the engine-level
+        # early-fail.  When PLN receives its own AxisLayout wiring
+        # (Commit 5), this guard can be retired entirely.
         #
         # Detection matches ``build_axis_layout``'s priority chain
         # (has_pooled_other > gene_names[-1] == "_other"; auditor
@@ -150,7 +150,7 @@ class LaplaceInferenceEngine:
         )
         if (
             (not _ccc)
-            and bm in ("pln", "twostate_ln_logit")
+            and bm in ("pln",)
         ):
             from ._axis_layout import build_axis_layout as _build_layout
             _probe_layout = _build_layout(
@@ -164,12 +164,12 @@ class LaplaceInferenceEngine:
                     f"`{bm}` Laplace fit with "
                     "`correlate_other_column=False` and a pooled "
                     "'_other' column is not yet implemented — "
-                    "Commits 4 (TSLN-Logit) / 5 (PLN) of the "
-                    "harmonic-hare plan land the obs-model wiring. "
-                    "Until then, pass `correlate_other_column=True` "
-                    "(the current default) to use the legacy path "
-                    "with `_other` in Σ, or fit without "
-                    "`gene_coverage` filtering."
+                    "Commit 5 (PLN) of the harmonic-hare plan "
+                    "lands the obs-model wiring.  Until then, "
+                    "pass `correlate_other_column=True` (the "
+                    "current default) to use the legacy path with "
+                    "`_other` in Σ, or fit without `gene_coverage` "
+                    "filtering."
                 )
 
         if bm == "pln":
@@ -235,6 +235,8 @@ class LaplaceInferenceEngine:
                 max_step=float(
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel

@@ -297,12 +297,13 @@ class TestNblnDecoupledRaises:
 
 
 class TestEnginePlnTslnEarlyFail:
-    """PLN/TSLN-Logit raise on decoupled BEFORE obs-model construction.
+    """PLN raises on decoupled BEFORE obs-model construction.
 
-    As of Commit 3 of the harmonic-hare plan, TSLN-Rate has its own
-    AxisLayout-aware obs model and raises from inside ``loss_fn`` (see
-    :class:`TestTslnRateScaffolding` below).  The engine early-fail
-    now covers only PLN and TSLN-Logit (Commits 4 and 5).
+    As of Commit 4 of the harmonic-hare plan, NBLN, TSLN-Rate, AND
+    TSLN-Logit have AxisLayout-aware obs models and raise from
+    inside ``init_state`` (see :class:`TestTslnRateScaffolding` and
+    :class:`TestTslnLogitScaffolding` below).  Only PLN remains on
+    the engine early-fail path (Commit 5).
     """
 
     def test_pln_decoupled_raises_at_engine(self):
@@ -383,8 +384,7 @@ class TestTslnRateScaffolding:
     def test_decoupled_raises_from_obs_model(self):
         """Explicit `correlate_other_column=False` with a pooled
         `_other` column triggers the obs-model NotImplementedError
-        (not the engine early-fail, which now only covers PLN /
-        TSLN-Logit)."""
+        (not the engine early-fail)."""
         import scribe
 
         adata = _make_adata(20, 8, seed=0)
@@ -403,6 +403,66 @@ class TestTslnRateScaffolding:
         # Message identifies TSLN-Rate and points at the remediation.
         assert "TSLN-Rate" in msg
         assert "correlate_other_column=True" in msg
+
+
+class TestTslnLogitScaffolding:
+    """TSLN-Logit scaffolding mirror of NBLN / TSLN-Rate (Commit 4).
+
+    Per-gene parameters ``rate`` / ``kappa`` / ``eta_anchor`` stay on
+    the OBSERVATION-layer axis (G_obs,) under decoupled — they're
+    per-gene baselines, not regulatory.  Only ``W`` / ``d`` / per-cell
+    z shrink to G_kept.  The decoupled-math path is deferred to a
+    later commit; for now ``init_state`` fails fast with a clear
+    NotImplementedError.
+    """
+
+    def test_decoupled_raises_from_obs_model(self):
+        """Explicit `correlate_other_column=False` with a pooled
+        `_other` column triggers the TSLN-Logit obs-model
+        NotImplementedError (not the engine early-fail, which has
+        retired ``twostate_ln_logit`` as of Commit 4)."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        with pytest.raises(NotImplementedError) as excinfo:
+            scribe.fit(
+                adata,
+                model="twostate_ln_logit",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=5,
+                seed=0,
+                gene_coverage=0.85,
+                correlate_other_column=False,
+            )
+        msg = str(excinfo.value)
+        assert "TSLN-Logit" in msg
+        assert "correlate_other_column=True" in msg
+
+    def test_engine_early_fail_now_only_pln(self):
+        """As of Commit 4 the engine early-fail set has narrowed to
+        PLN only (NBLN / TSLN-Rate / TSLN-Logit all have AxisLayout-
+        aware obs models).  Confirm PLN still raises the engine
+        message (pointing at Commit 5)."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        with pytest.raises(NotImplementedError) as excinfo:
+            scribe.fit(
+                adata,
+                model="pln",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=5,
+                seed=0,
+                gene_coverage=0.85,
+                correlate_other_column=False,
+            )
+        msg = str(excinfo.value)
+        # PLN engine guard points at Commit 5 now (not the old
+        # "Commits 3 / 4 / 5" string from earlier engine guards).
+        assert "Commit 5" in msg
+        assert "pln" in msg.lower() or "PLN" in msg
 
 
 # =====================================================================

@@ -228,9 +228,28 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         w_prior_strategy: Optional["WPriorStrategy"] = None,
         max_step: float = 5.0,
         n_quad_nodes: int = _DEFAULT_K,
+        gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ):
         self._max_step = float(max_step)
         self._n_quad_nodes = int(n_quad_nodes)
+
+        # Stash gene_names / has_pooled_other for AxisLayout construction
+        # in ``init_state``.  Mirrors NBLN / TSLN-Rate scaffolding (Commits
+        # 2 / 3 of the harmonic-hare plan).  TSLN-Logit's per-gene
+        # parameters split across two axes under decoupled:
+        #   - ``rate`` / ``kappa`` / ``eta_anchor`` live on the
+        #     **observation-layer** axis (G_obs,) — they're per-gene
+        #     baselines, not regulatory.
+        #   - ``W`` / ``d`` / per-cell z live on the **latent-covariance**
+        #     axis (G_kept,) — these encode the regulatory deviation.
+        # See ``scribe.laplace._axis_layout`` for the shape contract.
+        self._gene_names = gene_names
+        self._has_pooled_other = has_pooled_other
+        self._correlate_other_column = bool(
+            getattr(model_config, "correlate_other_column", True)
+        )
+        self._axis_layout = None
 
         from ._w_priors import NoneWPrior
 
@@ -457,6 +476,38 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
+        # Build the AxisLayout (harmonic-hare Commit 4 scaffolding).
+        # See NBLN / TSLN-Rate for the precedent.  TSLN-Logit's
+        # per-gene parameters (rate, kappa, eta_anchor) stay on the
+        # OBSERVATION axis (G_obs,) under decoupled; only W, d, and
+        # the per-cell z latent shrink to G_kept.
+        from ._axis_layout import build_axis_layout
+        self._axis_layout = build_axis_layout(
+            n_genes=int(n_genes),
+            correlate_other_column=self._correlate_other_column,
+            gene_names=self._gene_names,
+            has_pooled_other=self._has_pooled_other,
+        )
+        _layout = self._axis_layout
+
+        # Early fail-fast guard (auditor rev-6 #3) for the decoupled
+        # path.  TSLN-Logit's deviation-parameterised math lands in
+        # a subsequent commit; until then raise here BEFORE any of
+        # the W/d/latent allocations.
+        if _layout.decoupled:
+            raise NotImplementedError(
+                "TSLN-Logit decoupled deviation-parameterisation math "
+                "(loss_fn / final_sweep / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 4 of the harmonic-hare "
+                "plan landed only the TSLN-Logit scaffolding; the math "
+                "lands in a subsequent commit.  Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         # ---- rate: frozen > prior > data (default 2 · empirical_mean) ----
         # The default corresponds to ``eta_anchor_init = 0`` (i.e.,
         # σ(θ_anchor) = 0.5), so that ``E[u | z=0] = rate · σ(0) =
@@ -581,6 +632,19 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         Soft-cascade and biology-anchored modes are rejected in
         ``__init__`` so this loss_fn never sees them.
         """
+        # Defensive decoupled-layout guard.  ``init_state`` raises
+        # earlier when ``layout.decoupled`` so we should never reach
+        # here under decoupled, but mirror NBLN / TSLN-Rate's
+        # layered defense for direct-construction call paths.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Logit decoupled loss_fn is not yet implemented — "
+                "see the init_state guard for the remediation."
+            )
+
         params_full = self._splice_frozen(params)
         rate, kappa, eta_anchor = self._globals_from_params(params_full)
         W = params_full["W"]
@@ -747,6 +811,16 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         damping: float,
     ) -> FinalSweepResult:
         """Full-population Newton sweep with ``2 × n_newton`` iterations."""
+        # Defensive decoupled-layout guard (see loss_fn).
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Logit decoupled final_sweep is not yet "
+                "implemented — see the init_state guard."
+            )
+
         params_full = self._splice_frozen(params)
         rate, kappa, eta_anchor_gene = self._globals_from_params(params_full)
         W = params_full["W"]
@@ -873,6 +947,16 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         means this method typically returns NaN for every gene-level
         scale field; that is expected.
         """
+        # Defensive decoupled-layout guard (see loss_fn).
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "TSLN-Logit decoupled compute_global_uncertainty is "
+                "not yet implemented — see the init_state guard."
+            )
+
         from ._global_uncertainty import curvature_to_scale
 
         params_full = self._splice_frozen(params)
@@ -1148,4 +1232,12 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
                 if hasattr(self._w_prior, "diagnostics")
                 else None
             ),
+            # Persist the axis layout (built in init_state) so the
+            # bridge in ``inference/laplace.py`` can attach it to
+            # ``ScribeLaplaceResults.axis_layout``.  Trivial layout
+            # under legacy / no-_other; non-trivial under decoupled
+            # — but the decoupled init_state guard raises before
+            # reaching here, so this is future-proofing for when the
+            # math lands.
+            axis_layout=self._axis_layout,
         )
