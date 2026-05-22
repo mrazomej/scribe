@@ -9,12 +9,20 @@ meaningless cross-gene correlations.
 
 The ``correlate_other_column`` flag on ``ModelConfig`` controls
 whether the trailing ``"_other"`` row participates in Σ.  The
-runtime default is held at ``True`` (legacy) for the harmonic-hare
-Commit 2-4 series because the decoupled-math path is implemented
-only as scaffolding (loss / Newton / global-uncertainty raise
-``NotImplementedError``); when the per-model math lands, the
-default flips to ``False`` (the biologically cleaner setting) and
-``True`` becomes the explicit legacy opt-in.  See
+runtime default is held at ``True`` (legacy) across the harmonic-
+hare scaffolding ladder (Commits 2-6, all landed): the layout
+abstraction, signal threading, fail-fast guards on the count-
+likelihood obs models, and LNM real wiring through ALR-reference
+pinning are all in place, but the deviation-parameterised math
+for PLN / NBLN / TSLN-Rate / TSLN-Logit (loss / Newton / global-
+uncertainty) is implemented only as scaffolding — those obs models
+raise ``NotImplementedError`` under decoupling.  When the per-model
+math commits (2b / 3b / 4b / 5b) land, the default flips to
+``False`` and ``True`` becomes the explicit legacy opt-in.  LNM
+realises the decoupling without the deviation reparameterisation:
+the ALR construction excludes the reference gene from Σ, so the
+gene-coverage stage's auto-pin to ``_other``'s position (under
+``False``) suffices and the math commits do not affect LNM.  See
 ``scribe.models.config.base.ModelConfig.correlate_other_column``
 for the schedule.
 

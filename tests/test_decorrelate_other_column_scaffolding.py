@@ -838,6 +838,98 @@ class TestLnmRealWiringStage:
         # selection identically to today.
         assert 0 <= res.model_config.alr_reference_idx < 8
 
+    def test_manually_named_other_decoupled_auto_pins_via_names(self):
+        """Auditor rev-9 Medium: when ``gene_coverage`` is None AND
+        AnnData ``var_names[-1] == "_other"`` AND
+        ``correlate_other_column=False``, the stage's names-fallback
+        path must auto-pin the ALR reference to ``_other``'s
+        position rather than running min-variance selection.  This
+        keeps the LNM stage's detection priority consistent with the
+        shared ``build_axis_layout`` factory used by the four
+        count-likelihood obs models.
+        """
+        import scribe
+
+        n_genes = 8
+        adata = _make_adata(30, n_genes, seed=0)
+        # Manually rename the trailing column to the ``_other``
+        # sentinel — simulating a user who pre-filtered their
+        # AnnData upstream WITHOUT calling the gene_coverage stage.
+        names = [f"g{i}" for i in range(n_genes - 1)] + [_OTHER_NAME]
+        adata.var_names = names
+
+        res = scribe.fit(
+            adata,
+            model="lnm",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+            correlate_other_column=False,
+            # No ``gene_coverage``, no explicit ``alr_reference_idx``.
+        )
+        # Auto-pinned to the ``_other`` position (last column).
+        assert res.model_config.alr_reference_idx == n_genes - 1
+
+    def test_manually_named_other_decoupled_explicit_non_other_raises(self):
+        """Auditor rev-9 Medium follow-up: when the names-fallback
+        detected a pooled ``_other`` AND the user supplies an
+        explicit non-``_other`` ``alr_reference_idx`` AND
+        ``correlate_other_column=False``, the stage must raise — same
+        contract as the coverage-emitted-``_other`` path.
+        """
+        import scribe
+
+        n_genes = 8
+        adata = _make_adata(30, n_genes, seed=0)
+        names = [f"g{i}" for i in range(n_genes - 1)] + [_OTHER_NAME]
+        adata.var_names = names
+
+        with pytest.raises(ValueError) as excinfo:
+            scribe.fit(
+                adata,
+                model="lnm",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=3,
+                seed=0,
+                correlate_other_column=False,
+                alr_reference_idx=0,  # Real gene, not ``_other``.
+            )
+        msg = str(excinfo.value)
+        assert "correlate_other_column=False" in msg
+        assert "_other" in msg
+
+    def test_manually_named_other_legacy_auto_runs_min_variance(self):
+        """Auditor rev-9 Medium: under legacy
+        ``correlate_other_column=True``, the names-fallback must NOT
+        force the ALR reference to ``_other`` — that would break the
+        bit-equal contract for users who have a real gene literally
+        named ``_other``.  Min-variance auto-selection runs as today.
+        """
+        import scribe
+
+        n_genes = 8
+        adata = _make_adata(30, n_genes, seed=0)
+        names = [f"g{i}" for i in range(n_genes - 1)] + [_OTHER_NAME]
+        adata.var_names = names
+
+        res = scribe.fit(
+            adata,
+            model="lnm",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+            correlate_other_column=True,  # legacy
+        )
+        # Under legacy, min-variance ran — the result is some index
+        # in [0, n_genes).  It might happen to be ``_other``'s
+        # position; either way, the stage did NOT force-pin.  The
+        # observable contract here is that the fit succeeds and the
+        # reference is a valid index.
+        assert 0 <= res.model_config.alr_reference_idx < n_genes
+
 
 class TestLnmRealWiringObsModel:
     """``LNMObservationModel`` defensive consistency check at init_state.

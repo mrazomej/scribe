@@ -158,9 +158,40 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
         _gene_coverage_mask = ctx._gene_coverage_mask
         _original_n_genes = ctx._original_n_genes
 
-        _has_pooled_other = bool(
+        # Mask-derived signal (load-bearing for the original→filtered
+        # index mapping below — only meaningful when the gene_coverage
+        # stage actually ran).
+        _has_pooled_other_from_mask = bool(
             _gene_coverage_mask is not None
             and np.any(~np.asarray(_gene_coverage_mask, dtype=bool))
+        )
+
+        # Names-derived fallback (auditor rev-9 Medium): detects a
+        # manually-pre-filtered AnnData where the user named the
+        # trailing column ``_other`` WITHOUT running the gene_coverage
+        # stage.  Matches the detection priority used by
+        # ``scribe.laplace._axis_layout.build_axis_layout`` so the LNM
+        # auto-pin behaviour is consistent with the four count-
+        # likelihood models' shared layout path.  Only consulted when
+        # ``gene_coverage`` is None — when the stage ran, the mask is
+        # the authoritative signal (even if it says no pooling
+        # happened: a coincidental ``var_names[-1] == "_other"`` would
+        # be a real retained gene, not a pooled aggregate, and must
+        # not trigger the fallback).  Array-input fits (no AnnData)
+        # have no names and cannot trigger this path by design.
+        _has_pooled_other_from_names = False
+        if gene_coverage is None and ctx.adata is not None:
+            try:
+                _var_names = ctx.adata.var_names.tolist()
+                _has_pooled_other_from_names = (
+                    len(_var_names) == n_genes
+                    and str(_var_names[-1]) == "_other"
+                )
+            except Exception:
+                _has_pooled_other_from_names = False
+
+        _has_pooled_other = (
+            _has_pooled_other_from_mask or _has_pooled_other_from_names
         )
 
         # Harmonic-hare Commit 6: when ``correlate_other_column=False``
