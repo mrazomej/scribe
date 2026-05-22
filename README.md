@@ -579,6 +579,52 @@ print(nbln_results.w_prior_diagnostics["effective_rank"])
 corr = nbln_results.get_correlation_compositional()
 ```
 
+**Broad-SVI → narrow-Laplace cascade with hierarchical-`p`.** Because
+NBLN's covariance matrix is hard to identify when `G` is large, you
+may want the upstream SVI to fit on the **full** gene panel
+(``gene_coverage=1.0``) while the NBLN-Laplace runs on a tighter
+subset (``gene_coverage=0.99``, ~10K top-expressed genes in a typical
+heavy-tailed dataset). The cascade auto-detects the panel mismatch
+and aggregates the SVI's per-gene posteriors on the dropped genes
+into NBLN's pooled ``_other`` column via per-sample NB moment
+matching:
+
+```python
+# Broad SVI (all 20K genes) with hierarchical-`p` shrinkage.
+# `prob_prior` activates a hierarchical prior on logit(p_g); options
+# are "none" (default; flat shared-p), "gaussian", "horseshoe", or
+# "neg".  All choices require `unconstrained=True`.
+svi_results = scribe.fit(
+    adata,
+    model="nbdm",
+    prob_prior="gaussian",   # or "horseshoe" / "neg"
+    unconstrained=True,
+    gene_coverage=1.0,
+    inference_method="svi",
+    n_steps=250_000,
+)
+
+# Narrow NBLN-Laplace (~10K genes); SVI per-gene posteriors on the
+# remaining ~10K genes are pooled into NBLN's `_other` column via
+# per-sample NB moment matching.  Convention: higher `gene_coverage`
+# keeps MORE genes, so SVI's value must be >= the Laplace value.
+nbln_results = scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    informative_priors_from=svi_results,
+    gene_coverage=0.99,
+    n_steps=20_000,
+)
+```
+
+The Laplace gene panel must be a **subset** of the SVI gene panel
+(`SVI gene_coverage >= Laplace gene_coverage`); inverting the
+direction raises a `ValueError` listing the missing genes. See
+[`paper/_nb_lognormal.qmd`](paper/_nb_lognormal.qmd) section
+`sec-nbln-cascade-aggregation` for the moment-matching derivation
+and its caveats.
+
 End-to-end tutorial: [`docs/tutorials/jurkat_cells_nbln.py`](docs/tutorials/jurkat_cells_nbln.py).
 Theory: [`docs/theory/nb-lognormal.md`](docs/theory/nb-lognormal.md) and
 [`docs/theory/loadings-shrinkage.md`](docs/theory/loadings-shrinkage.md).

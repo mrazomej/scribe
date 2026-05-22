@@ -711,6 +711,191 @@ controls **how much of the per-gene count variability is intrinsic** (NB-like,
 spike at zero) **versus driven by extrinsic regulatory fluctuations**
 (absorbed into $\underline{\underline{\Sigma}}$).
 
+## Cascading from hierarchical-$p$ to NB-LogNormal with broader-coverage sources {#sec-nbln-cascade-aggregation}
+
+The NB-LogNormal model carries a low-rank-plus-diagonal covariance
+$\underline{\underline{\Sigma}}$ with $G(K{+}1)$ parameters on top of the
+per-gene globals $(r_g, \mu_g)$. For typical scRNA-seq panels of $G \sim 10^4$
+genes this is poorly identified from scratch and the per-cell Newton can
+diverge on low-count, low-$r$ cells when $r_{loc}$, $\mu$, and $\eta_{loc}$
+sit on effectively flat priors. The remedy in the codebase is an
+informative-prior cascade: fit a simpler model with stochastic variational
+inference (SVI) on the same data, then use those posterior summaries to
+anchor the NB-LogNormal Laplace fit.
+
+The natural cascade source is the hierarchical-$p$ NBDM of
+@sec-hierarchical-p: a per-gene NB likelihood whose latent $p_g$ is
+partial-pooled across genes through a Gaussian (or horseshoe / NEG)
+prior on $\text{logit}(p_g)$. The relationship to NB-LogNormal is
+deterministic: hierarchical-$p$'s per-gene $(r_g, p_g)$ samples map to
+NB mean samples via
+
+$$
+\mu_g = r_g \cdot \frac{1 - p_g}{p_g},
+$${#eq-nbln-hp-mu-from-rp}
+
+and NB-LogNormal re-uses those moment-matched $(r_g, \mu_g)$ marginals
+as Gaussian priors on its unconstrained $(r, \mu)$ coordinates. The
+cascade is **agnostic** to the upstream shrinkage choice — in
+[src/scribe/api/fit.py](../src/scribe/api/fit.py) the option
+``prob_prior`` accepts the values ``"none"`` (default; flat
+shared-$p$), ``"gaussian"`` (the model derived in
+@sec-hierarchical-p), ``"horseshoe"`` (regularized Finnish
+horseshoe), and ``"neg"`` (Normal-Exponential-Gamma, friendlier to
+SVI than horseshoe); all four expose ``mu`` per posterior sample and
+feed the same downstream adapter.
+
+### Broad-to-narrow gene-coverage hierarchy {#sec-nbln-cascade-coverage-hierarchy}
+
+A practical wrinkle: NB-LogNormal's $\underline{\underline{\Sigma}}$ is much
+easier to fit when restricted to the high-coverage subset of genes (say,
+``gene_coverage = 0.99`` — the top $\sim 10^4$ expressed genes in a
+heavy-tailed dataset of $\sim 2 \times 10^4$ total). The upstream
+hierarchical-$p$ fit, by contrast, benefits from running on the full panel
+(``gene_coverage = 1.0``) so the population hyperparameters
+$(\mu_p, \sigma_p)$ are well-anchored by all the data. In the codebase's
+convention higher ``gene_coverage`` keeps **more** genes (cumulative
+expression threshold), so the broad-to-narrow direction is
+
+$$
+\text{SVI \texttt{gene\_coverage}} \;\geq\; \text{Laplace \texttt{gene\_coverage}}.
+$$
+
+Both stages share the same ``aggregate_counts_by_mask`` pipeline in
+[src/scribe/core/gene_coverage.py](../src/scribe/core/gene_coverage.py),
+which collapses the low-abundance tail into a trailing ``"_other"``
+column. When the SVI panel is **strictly** broader than the Laplace
+panel, the SVI's per-gene posteriors on the SVI-kept-but-Laplace-dropped
+genes need to be **aggregated** into the Laplace target's pooled
+``"_other"`` column. The SVI's own ``"_other"`` posterior (if present)
+contributes to the same aggregate, because it represents a *different*
+pool than the target's ``"_other"``.
+
+### Per-sample NB moment matching {#sec-nbln-cascade-moment-matching}
+
+Let $S_{\text{drop}}$ denote the SVI-kept-but-Laplace-dropped gene set,
+and let $(r_{\text{svi-other}}^{(s)}, \mu_{\text{svi-other}}^{(s)})$ be
+the SVI's own pooled-other posterior at sample $s$ (zero terms when the
+SVI used ``gene_coverage = 1.0`` and emitted no upstream
+``"_other"``). The pooled-NB mean and dispersion-of-the-sum for the
+target's trailing ``"_other"`` slot are
+
+$$
+\mu_{\text{other}}^{(s)} \;=\; \mu_{\text{svi-other}}^{(s)}
+\;+\; \sum_{g \in S_{\text{drop}}} \mu_g^{(s)},
+$${#eq-nbln-cascade-mu-other}
+
+$$
+r_{\text{other}}^{(s)} \;=\; \frac{
+    \bigl(\mu_{\text{other}}^{(s)}\bigr)^2
+}{
+    \dfrac{\bigl(\mu_{\text{svi-other}}^{(s)}\bigr)^2}{r_{\text{svi-other}}^{(s)}}
+    \;+\; \displaystyle\sum_{g \in S_{\text{drop}}} \dfrac{\bigl(\mu_g^{(s)}\bigr)^2}{r_g^{(s)}}
+}.
+$${#eq-nbln-cascade-r-other}
+
+Equation @eq-nbln-cascade-r-other is the closed-form solution to the
+variance-matching condition
+
+$$
+\mu_{\text{other}} + \frac{\mu_{\text{other}}^2}{r_{\text{other}}}
+\;=\;
+\sum_{g \in \mathcal{C}} \Bigl( \mu_g + \frac{\mu_g^2}{r_g} \Bigr),
+$$
+
+where $\mathcal{C} = S_{\text{drop}} \cup \{\text{svi-other}\}$ is the
+set of NB terms contributing to the aggregate. The Poisson term cancels
+because $\sum_g \mu_g = \mu_{\text{other}}$ by @eq-nbln-cascade-mu-other,
+leaving the pure overdispersion balance
+$\mu_{\text{other}}^2 / r_{\text{other}} = \sum_g \mu_g^2 / r_g$.
+
+The aggregation runs **per posterior sample** $s$, producing a stream
+$\{(r_{\text{other}}^{(s)}, \mu_{\text{other}}^{(s)})\}_{s=1}^S$ that is
+then moment-matched to a Gaussian prior over the NB-LogNormal target
+coordinate exactly as for the other per-gene slots. This preserves the
+upstream's posterior uncertainty: a gene the SVI is uncertain about
+contributes uncertainty to the pooled ``"_other"``'s prior scale, just
+as for the kept genes.
+
+### What "moment matching" means here, and what it does not {#sec-nbln-cascade-moment-matching-caveat}
+
+A clarification is essential. The formula in
+@eq-nbln-cascade-mu-other--@eq-nbln-cascade-r-other matches the
+**first two moments** of the aggregate $\sum_{g \in \mathcal{C}} u_{cg}$
+under the upstream model's conditional-independence assumption: each
+contributing NB term is independent given $(r_g, p_g)$, so the
+aggregate's mean is the sum of means and the aggregate's variance is
+the sum of variances. Equation @eq-nbln-cascade-r-other inverts the
+NB variance formula $\text{Var}(u) = \mu + \mu^2/r$ for the unique
+$(r_{\text{other}}, \mu_{\text{other}})$ that match those two moments.
+
+This is **NOT** a distributional identity. The sum of independent
+NB random variables with gene-specific success probabilities $p_g$ is
+*not itself* an NB except in the shared-$p$ NBDM limit
+(@sec-dirichlet-multinomial). Even in that limit the marginal is NB
+only because of the closure property $\text{NB}(r_T, p) =
+\sum_g \text{NB}(r_g, p)$ with $r_T = \sum_g r_g$ — which the
+hierarchical-$p$ relaxation explicitly breaks. We are therefore
+approximating the aggregate by the closest NB on its first two
+moments. For the purpose of anchoring a Laplace fit's
+$(r_{\text{other}}, \mu_{\text{other}})$ posterior — which the
+NB-LogNormal observation likelihood will then itself update from the
+data — this is sufficient and well-calibrated.
+
+### Why per-sample and not per-moment {#sec-nbln-cascade-per-sample}
+
+A tempting shortcut is to moment-match the source's $(r_g, \mu_g)$
+posteriors to Gaussian priors *first*, then aggregate those Gaussians
+into a single Gaussian on the target's $(r_{\text{other}},
+\mu_{\text{other}})$. This would be wrong: the map from
+$(r, \mu)$ to the NB variance $\mu + \mu^2/r$ is nonlinear in both
+arguments, so a Gaussian approximation in $(r, \mu)$ space does not
+propagate cleanly through the variance accounting. Aggregating per
+posterior sample and only *then* moment-matching across samples
+preserves the nonlinear $\mu^2/r$ relationship that links the pooled
+NB's mean and variance.
+
+### Limiting cases {#sec-nbln-cascade-limits}
+
+The aggregator has three useful degenerations.
+
+* **Equal panels** ($S_{\text{drop}} = \emptyset$ and no SVI
+``"_other"``). The cascade short-circuits to the
+pass-through path: no aggregation runs and the resulting prior is
+bit-equal to the legacy (pre-aggregation) behavior.
+
+* **Source has its own ``"_other"`` but no extra drops**
+($S_{\text{drop}} = \emptyset$, SVI ``"_other"`` present). The
+aggregator degenerates to the identity on the SVI's
+``"_other"`` posterior, simply passing those samples through to the
+target's ``"_other"`` slot.
+
+* **Source used ``gene_coverage = 1.0``, target uses
+``< 1.0``** ($S_{\text{drop}} \neq \emptyset$, no SVI ``"_other"``).
+The aggregator runs over the per-gene SVI samples only, treating each
+dropped gene as one of the contributing NB terms.
+
+### TSLN caveat {#sec-nbln-cascade-tsln}
+
+The same cascade machinery applies to the two-state LogNormal (TSLN)
+target, but the two-state telegraph parameters
+$(\mu_g, b_g, k_{\text{off},g})$ do **not** close under summation: a
+sum of independent Poisson-Beta marginals is not Poisson-Beta. The
+implementation handles this pragmatically: $\mu_{\text{other}}$ is
+aggregated exactly via additive sum, while $(b_{\text{other}},
+k_{\text{off,other}})$ inherit the SVI's ``"_other"`` posterior when
+one is present, falling back to per-sample medians across the dropped
+genes otherwise. The dispersion-shape parameters of the aggregate are
+therefore deliberately *vague* — sufficient to prevent NaNs in the
+Laplace M-step, but not claiming to be the closed-form aggregate.
+
+The TSLN-Logit variant
+(``rate``, ``kappa``, ``eta_anchor``) is even less tractable under
+summation, and the subset cascade is intentionally unsupported for
+that variant in the current release. The implementation raises
+``NotImplementedError`` and points users at the rate variant as the
+recommended target for broad-to-narrow cascades.
+
 ## Low-rank parameterization of $\underline{\underline{\Sigma}}$ {#sec-nbln-low-rank}
 
 For typical scRNA-seq applications with $G$ on the order of $2 \times 10^3$

@@ -52,6 +52,12 @@ def dispatch_inference(ctx: FitContext) -> None:
     informative_priors_from = ctx.kwargs.get("informative_priors_from")
     informative_priors = None
     capture_mode_override = None
+    # Subset-aware cascade metadata.  ``None`` for plain (non-cascade)
+    # fits and for equal-panel cascades; populated when the Laplace
+    # target's panel is a strict subset of the SVI source's so PPC and
+    # frozen-moment-match consumers can re-aggregate samples onto the
+    # target gene axis.  See ``scribe.laplace.priors.SubsetInfo``.
+    _cascade_subset_info = None
 
     if informative_priors_from is not None:
         # --- Scope validation (Round-4 Finding 1; round-7 extended) -----
@@ -135,6 +141,32 @@ def dispatch_inference(ctx: FitContext) -> None:
             _pos_xform_str = ctx.model_config.positive_transform
             if not isinstance(_pos_xform_str, (str, dict)):
                 _pos_xform_str = "softplus"
+
+        # --- Compute subset-aware cascade metadata (single source of truth)
+        # ``_check_gene_identity`` returns ``(strict_var_name_verified,
+        # identity_method, subset_info)``.  Capturing it once here lets us
+        # persist ``subset_info`` on the result for PPC routing without
+        # repeating gene-identity logic across cascade-aware consumers.
+        # The priors / freeze adapters re-derive their own copies
+        # internally (cheap; centralises raise paths there); this one is
+        # the canonical handle threaded through the inference dispatcher.
+        from ...laplace.priors import _check_gene_identity as _cgi
+        try:
+            _, _, _cascade_subset_info = _cgi(
+                results=informative_priors_from,
+                target_n_genes=int(ctx.n_genes),
+                target_gene_names=target_gene_names,
+                target_gene_mask=getattr(
+                    ctx, "_gene_coverage_mask", None
+                ),
+            )
+        except Exception:
+            # If subset detection itself fails (e.g. var-name shape
+            # mismatch raised by ``_check_gene_identity``), let the
+            # downstream priors / freeze call surface the same error
+            # with full context.  Leave ``_cascade_subset_info`` as
+            # ``None`` so the inference dispatcher behaves as today.
+            _cascade_subset_info = None
 
         # --- Build prior bundle (dispatch on base_model) ---------------
         if base_model in ("twostate_ln_rate", "twostate_ln_logit"):
@@ -391,6 +423,7 @@ def dispatch_inference(ctx: FitContext) -> None:
         freeze_params=freeze_params,
         cascade_source=cascade_source,
         cascade_source_counts=cascade_source_counts,
+        cascade_subset_info=_cascade_subset_info,
         w_prior=w_prior,
     )
     ctx.results = results

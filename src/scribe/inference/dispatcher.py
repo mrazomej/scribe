@@ -189,6 +189,7 @@ def _laplace_handler(
     freeze_params: tuple = (),
     cascade_source: Optional[Any] = None,
     cascade_source_counts: Optional[jnp.ndarray] = None,
+    cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[dict] = None,
 ) -> Any:
     """Handler for Laplace-mode inference.
@@ -226,6 +227,7 @@ def _laplace_handler(
         freeze_params=freeze_params,
         cascade_source=cascade_source,
         cascade_source_counts=cascade_source_counts,
+        cascade_subset_info=cascade_subset_info,
         w_prior=w_prior,
     )
 
@@ -263,6 +265,7 @@ def _run_inference(
     freeze_params: tuple = (),
     cascade_source: Optional[Any] = None,
     cascade_source_counts: Optional[jnp.ndarray] = None,
+    cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[dict] = None,
 ) -> Any:
     """Route inference execution to the appropriate handler.
@@ -386,6 +389,7 @@ def _run_inference(
         handler_kwargs["freeze_params"] = freeze_params
         handler_kwargs["cascade_source"] = cascade_source
         handler_kwargs["cascade_source_counts"] = cascade_source_counts
+        handler_kwargs["cascade_subset_info"] = cascade_subset_info
         handler_kwargs["w_prior"] = w_prior
 
     if enable_x64:

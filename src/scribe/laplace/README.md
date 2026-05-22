@@ -667,6 +667,64 @@ non-eta SVI source still gets their explicit capture anchor.
   value. The SVI prior pins `r` and unlocks stable optimization of
   `(W, d)`.
 
+### Subset-aware cascade across heterogeneous `gene_coverage` settings
+
+When the upstream SVI fit and the downstream Laplace fit use
+**different** `gene_coverage` thresholds, the cascade must reconcile
+the two gene panels. Higher `gene_coverage` keeps more genes, so a
+typical broad-to-narrow workflow has
+
+```text
+SVI gene_coverage  >=  Laplace gene_coverage
+```
+
+and the Laplace panel is a strict subset of the SVI panel. The
+cascade adapter auto-detects this and pools the SVI's per-gene
+posteriors on the SVI-kept-but-Laplace-dropped genes (plus the SVI's
+own `_other` posterior if present) into the Laplace target's pooled
+`_other` column via per-sample NB **moment matching**:
+
+```text
+μ_other^(s) = μ_svi_other^(s) + Σ_{g ∈ dropped} μ_g^(s)
+r_other^(s) = (μ_other^(s))² / [(μ_svi_other^(s))²/r_svi_other^(s)
+                                + Σ_{g ∈ dropped} μ_g^(s)²/r_g^(s)]
+```
+
+aggregated per posterior sample, then moment-matched to a Gaussian
+prior in the NBLN target coordinate exactly as for the other per-gene
+slots. See [`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+section `sec-nbln-cascade-aggregation` for the full derivation.
+
+**Behavior matrix.**
+
+| Relationship between SVI and Laplace gene panels | Behavior |
+|---|---|
+| SVI panel == Laplace panel | Pass-through (bit-equal to legacy). |
+| SVI panel ⊃ Laplace panel | Auto-on aggregation; emits explicit `INFO` log line. |
+| SVI panel ⊉ Laplace panel | `ValueError` listing first 10 missing genes. |
+| SVI is amortized-capture **and** panels differ | `NotImplementedError`. |
+| TSLN-Logit cascade with panels differ | `NotImplementedError`. |
+
+**Important caveats.**
+
+- The pooled `_other` prior is exact in the **first two moments**
+  under the upstream's conditional-independence assumption. It is
+  *not* distributionally exact: a sum of independent NBs with
+  gene-specific `p_g` is not itself NB except in the shared-`p` NBDM
+  limit. The pooled prior is the closest-NB approximation of the
+  aggregate's mean and variance, sufficient for anchor-prior use.
+- TSLN-Rate uses an analogous but **approximate** aggregator: μ is
+  additive (exact), while `burst_size` and `k_off` inherit the SVI's
+  `_other` column when present, falling back to per-sample medians.
+  The two-state telegraph parameters do not close under summation.
+- TSLN-Logit subset cascades raise `NotImplementedError`; the
+  `(rate, kappa, eta_anchor)` reparameterization is even less
+  tractable. Use TSLN-Rate for broad-to-narrow cascades.
+- Post-fit PPC on the `_other` column draws from the
+  moment-matched aggregate (re-aggregated at sample time in
+  `_resolve_nbln_ppc_arrays`), not from the SVI guide's own `_other`
+  column directly — the two represent different aggregates.
+
 ### Phase-2: Cascade-parameter freeze
 
 The soft cascade above injects Gaussian priors with finite scale; on

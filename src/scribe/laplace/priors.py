@@ -47,6 +47,7 @@ Two layers:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 import jax.numpy as jnp
@@ -55,6 +56,13 @@ import numpy as np
 from ._global_uncertainty import _JAX_POSITIVE_FNS
 
 logger = logging.getLogger(__name__)
+
+
+# Sentinel string for the trailing aggregated low-coverage column emitted
+# by ``scribe.core.gene_coverage.aggregate_counts_by_mask``.  Centralized
+# here so the subset-detection logic and the aggregators agree on the
+# exact label the gene-coverage stage attaches to ``var_names``.
+_OTHER_NAME = "_other"
 
 
 # =====================================================================
@@ -152,15 +160,79 @@ def _try_results_gene_names(results: Any) -> Optional[np.ndarray]:
     return None
 
 
-def _try_results_gene_mask(results: Any) -> Optional[np.ndarray]:
-    """Defensive attribute chain for source gene mask / subset index."""
+def _try_results_gene_mask_bool(results: Any) -> Optional[np.ndarray]:
+    """Defensive attribute chain for a boolean gene-coverage mask.
+
+    Returns a boolean mask in the **original** (pre-filter) gene-axis
+    coordinate frame, or ``None`` when the source does not expose one.
+    Strictly distinguished from an integer subset index — the latter
+    lives in a different coordinate system and is handled by
+    :func:`_try_results_gene_subset_index`.
+    """
     mask = getattr(results, "_gene_coverage_mask", None)
-    if mask is not None:
-        return np.asarray(mask)
+    if mask is None:
+        return None
+    mask_arr = np.asarray(mask)
+    if mask_arr.dtype != bool:
+        return None
+    return mask_arr
+
+
+def _try_results_gene_subset_index(results: Any) -> Optional[np.ndarray]:
+    """Defensive attribute chain for an integer gene-subset index.
+
+    Returns the integer index array used by sliced result objects, or
+    ``None`` when the source does not expose one.  This is NOT a boolean
+    coverage mask — see :func:`_try_results_gene_mask_bool`.
+    """
     idx = getattr(results, "_subset_gene_index", None)
-    if idx is not None:
-        return np.asarray(idx)
-    return None
+    if idx is None:
+        return None
+    return np.asarray(idx)
+
+
+@dataclass(frozen=True)
+class SubsetInfo:
+    """Metadata describing the relationship between SVI source and Laplace target panels.
+
+    Populated by :func:`_check_gene_identity` and consumed by the
+    subset-aware aggregation helpers and PPC routing.  Use ``is_equal``
+    to short-circuit to today's pass-through path and ``is_subset``
+    (without ``is_equal``) to trigger aggregation.
+
+    Attributes
+    ----------
+    is_equal : bool
+        Panels match exactly (var_names or masks element-wise equal).
+        Pass-through branch.
+    is_subset : bool
+        Target ⊆ source (``True`` even when ``is_equal`` is ``True``).
+        Aggregation branch runs only when ``is_subset and not is_equal``.
+    kept_idx_in_source : np.ndarray, optional
+        Source-axis positions for the target's non-``_other`` genes, in
+        target-axis order.  ``None`` for the equal-panel or count-only paths.
+    dropped_idx_in_source : np.ndarray, optional
+        Source-axis positions for genes the SVI kept individually but the
+        Laplace target drops (i.e., the aggregator's contributing set).
+        ``None`` for the equal-panel or count-only paths.
+    source_has_other : bool
+        Whether the source's last gene is the literal ``"_other"`` sentinel.
+    target_has_other : bool
+        Whether the target's last gene is the literal ``"_other"`` sentinel.
+    source_other_index_in_source : int, optional
+        Source-axis position of ``"_other"`` (``G_src - 1`` when present).
+    target_other_index_in_target : int, optional
+        Target-axis position of ``"_other"`` (``G_tgt - 1`` when present).
+    """
+
+    is_equal: bool
+    is_subset: bool
+    kept_idx_in_source: Optional[np.ndarray] = None
+    dropped_idx_in_source: Optional[np.ndarray] = None
+    source_has_other: bool = False
+    target_has_other: bool = False
+    source_other_index_in_source: Optional[int] = None
+    target_other_index_in_target: Optional[int] = None
 
 
 def _check_gene_identity(
@@ -168,56 +240,432 @@ def _check_gene_identity(
     target_n_genes: int,
     target_gene_names: Optional[np.ndarray],
     target_gene_mask: Optional[np.ndarray],
-) -> Tuple[bool, str]:
-    """Verify source and target gene panels match.
+) -> Tuple[bool, str, SubsetInfo]:
+    """Verify source and target gene panels match, or detect subset.
 
-    Priority: var-names > mask > count-only-with-warning.
+    Priority: var-names > boolean coverage mask > count-only-with-warning.
 
-    Returns ``(strict_var_name_verified, identity_method)`` where
-    ``identity_method`` is one of ``"var_names"``, ``"mask"``,
-    ``"count_only"``. Raises ``ValueError`` on a positive mismatch
-    that we *can* verify.
+    Equal-panel detection short-circuits and returns
+    ``is_equal=True, is_subset=True``.  Proper-subset detection populates
+    ``kept_idx_in_source`` and ``dropped_idx_in_source`` so the aggregator
+    can pool the SVI-only-kept genes into the Laplace target's ``"_other"``
+    column.  Non-subset relationships raise ``ValueError``.
+
+    Returns
+    -------
+    strict_var_name_verified : bool
+        ``True`` when var-names matched element-wise.  Used by the
+        amortized-capture safeguard to allow ``source_counts`` to feed
+        the SVI encoder safely.
+    identity_method : str
+        One of ``"var_names"``, ``"mask"``, ``"count_only"``.
+    subset_info : SubsetInfo
+        Panel-relationship metadata.  ``is_equal=True`` for the
+        pass-through path; ``is_subset=True, is_equal=False`` activates
+        aggregation; non-subset relationships raise before returning.
+
+    Raises
+    ------
+    ValueError
+        On a verifiable non-subset relationship (target panel contains
+        genes the source does not have, or target lacks an ``"_other"``
+        column to receive the pooled signal).
     """
     source_n_genes = getattr(results, "n_genes", None)
+
+    source_gene_names = _try_results_gene_names(results)
+    if source_gene_names is not None and target_gene_names is not None:
+        src_names = np.asarray(source_gene_names)
+        tgt_names = np.asarray(target_gene_names)
+
+        # Equal-panel short-circuit.  ``np.array_equal`` requires shape
+        # equality, so this also handles the same-length case correctly.
+        if np.array_equal(src_names, tgt_names):
+            tgt_has_other = (
+                tgt_names.size > 0 and str(tgt_names[-1]) == _OTHER_NAME
+            )
+            return True, "var_names", SubsetInfo(
+                is_equal=True,
+                is_subset=True,
+                source_has_other=tgt_has_other,
+                target_has_other=tgt_has_other,
+                source_other_index_in_source=(
+                    int(src_names.size - 1) if tgt_has_other else None
+                ),
+                target_other_index_in_target=(
+                    int(tgt_names.size - 1) if tgt_has_other else None
+                ),
+            )
+
+        # Proper-subset detection.  Distinguish the literal ``"_other"``
+        # sentinel from real gene names on both sides — it labels a
+        # pooled aggregate, not a real gene, and the two panels' ``"_other"``
+        # columns mean DIFFERENT aggregates when the kept sets differ.
+        src_has_other = (
+            src_names.size > 0 and str(src_names[-1]) == _OTHER_NAME
+        )
+        tgt_has_other = (
+            tgt_names.size > 0 and str(tgt_names[-1]) == _OTHER_NAME
+        )
+        src_real_names = src_names[:-1] if src_has_other else src_names
+        tgt_real_names = tgt_names[:-1] if tgt_has_other else tgt_names
+
+        src_set = set(map(str, src_real_names.tolist()))
+        tgt_set = set(map(str, tgt_real_names.tolist()))
+
+        missing = tgt_set - src_set
+        if missing:
+            preview = sorted(missing)[:10]
+            raise ValueError(
+                f"Laplace target gene panel is NOT a subset of the SVI "
+                f"source's panel. Found {len(missing)} target genes "
+                f"missing from source: {preview}. The cascade requires "
+                "SVI_kept ⊇ Laplace_kept; re-fit SVI with a broader "
+                "`gene_coverage` (`SVI gene_coverage >= Laplace "
+                "gene_coverage`) or align the panels."
+            )
+
+        dropped = src_set - tgt_set
+        if dropped and not tgt_has_other:
+            preview = sorted(dropped)[:10]
+            raise ValueError(
+                f"SVI source has {len(dropped)} genes the Laplace target "
+                f"drops (preview: {preview}), but the target has no "
+                "trailing '_other' column to receive the pooled signal. "
+                "Set `gene_coverage < 1.0` on the Laplace target so the "
+                "coverage stage emits an '_other' aggregate column."
+            )
+        # Even with no extra dropped genes, the SVI's own '_other'
+        # column needs a target slot to receive the aggregate.  When
+        # the SVI has '_other' but the target does not, the aggregator
+        # would silently produce wrong-shape arrays downstream.
+        if src_has_other and not tgt_has_other:
+            raise ValueError(
+                "SVI source has an '_other' aggregate column but the "
+                "Laplace target does not. The source's pooled aggregate "
+                "has nowhere to go on the target gene axis. Set "
+                "`gene_coverage < 1.0` on the Laplace target so the "
+                "coverage stage emits an '_other' column."
+            )
+
+        # Build target-aligned kept/dropped source indices.
+        src_pos_by_name = {
+            str(n): int(i) for i, n in enumerate(src_real_names)
+        }
+        kept_idx = np.array(
+            [src_pos_by_name[str(n)] for n in tgt_real_names],
+            dtype=np.int64,
+        )
+        # ``dropped`` is unordered (set); take source-axis order for a
+        # deterministic, reproducible aggregation.
+        dropped_idx = np.array(
+            [
+                int(i)
+                for i, n in enumerate(src_real_names)
+                if str(n) not in tgt_set
+            ],
+            dtype=np.int64,
+        )
+
+        return True, "var_names", SubsetInfo(
+            is_equal=False,
+            is_subset=True,
+            kept_idx_in_source=kept_idx,
+            dropped_idx_in_source=dropped_idx,
+            source_has_other=src_has_other,
+            target_has_other=tgt_has_other,
+            source_other_index_in_source=(
+                int(src_names.size - 1) if src_has_other else None
+            ),
+            target_other_index_in_target=(
+                int(tgt_names.size - 1) if tgt_has_other else None
+            ),
+        )
+
+    # Boolean-mask path — requires BOTH sides to expose a boolean mask
+    # in the SAME original-axis coordinate frame.  Integer
+    # ``_subset_gene_index`` arrays are excluded here because they
+    # cannot be interpreted as coverage masks without their reference
+    # axis.
+    source_mask = _try_results_gene_mask_bool(results)
+    if source_mask is not None and target_gene_mask is not None:
+        tgt_mask_arr = np.asarray(target_gene_mask)
+        if tgt_mask_arr.dtype != bool or tgt_mask_arr.shape != source_mask.shape:
+            # Cannot reliably compare — fall back to count check.
+            pass
+        elif np.array_equal(source_mask, tgt_mask_arr):
+            return False, "mask", SubsetInfo(
+                is_equal=True,
+                is_subset=True,
+                # Mask path does not know whether the trailing column
+                # is ``"_other"``; the equal-panel branch never triggers
+                # aggregation anyway, so leave the ``_other`` slots None.
+            )
+        elif np.all(tgt_mask_arr <= source_mask):
+            # target_mask is True only where source_mask is True ⇒ subset.
+            # The aggregator does not run on the mask-only path because
+            # the kept/dropped source-axis indices depend on var-names
+            # to disambiguate gene identity across the two panels.
+            raise ValueError(
+                "Subset-aware cascade via boolean coverage masks alone "
+                "is not supported. Pass `target_gene_names` and ensure "
+                "the SVI source exposes `var_names` so the aggregator "
+                "can identify which SVI-kept genes are dropped by the "
+                "Laplace target."
+            )
+        else:
+            raise ValueError(
+                "Source SVI fit and Laplace target disagree on the gene "
+                "coverage mask, and the target is NOT a subset of the "
+                "source. Re-fit SVI with a broader `gene_coverage` or "
+                "align the panels."
+            )
+
+    # Count-only fallback path: refuse subset semantics outright; require
+    # strict count equality (today's behavior preserved).
     if source_n_genes is None:
-        source_n_genes = target_n_genes  # cannot verify count either
+        logger.warning(
+            "Could not verify gene identity beyond count — gene names "
+            "and masks are unavailable on the source SVI results. "
+            "Proceeding assuming the same gene panel was used in both fits."
+        )
+        return False, "count_only", SubsetInfo(
+            is_equal=True, is_subset=True
+        )
     if int(source_n_genes) != int(target_n_genes):
         raise ValueError(
             f"Source SVI fit and Laplace target disagree on genes "
             f"(n_src={int(source_n_genes)}, n_tgt={int(target_n_genes)}). "
-            f"Did `gene_coverage` change between fits?"
+            f"Did `gene_coverage` change between fits? Subset-aware "
+            "cascading requires var-names on both sides; the count-only "
+            "path can only verify equality."
         )
-
-    source_gene_names = _try_results_gene_names(results)
-    if source_gene_names is not None and target_gene_names is not None:
-        if not np.array_equal(
-            np.asarray(source_gene_names), np.asarray(target_gene_names)
-        ):
-            raise ValueError(
-                "Source SVI fit and Laplace target disagree on gene "
-                "var_names (counts match but identities differ). Refit "
-                "both models on the same gene panel or pass matching "
-                "AnnData objects."
-            )
-        return True, "var_names"
-
-    source_mask = _try_results_gene_mask(results)
-    if source_mask is not None and target_gene_mask is not None:
-        if not np.array_equal(
-            np.asarray(source_mask), np.asarray(target_gene_mask)
-        ):
-            raise ValueError(
-                "Source SVI fit and Laplace target disagree on the gene "
-                "coverage mask (counts match but masks differ)."
-            )
-        return False, "mask"
-
     logger.warning(
         "Could not verify gene identity beyond count — gene names and "
         "masks are unavailable on the source SVI results. Proceeding "
         "assuming the same gene panel was used in both fits."
     )
-    return False, "count_only"
+    return False, "count_only", SubsetInfo(
+        is_equal=True, is_subset=True
+    )
+
+
+# =====================================================================
+# Subset-aware aggregation helpers
+# =====================================================================
+#
+# When the Laplace target's gene panel is a STRICT subset of the SVI
+# source's panel (``SubsetInfo.is_subset and not is_equal``), the
+# cascade must reconstruct a prior for the target's ``"_other"`` column
+# by pooling the SVI's per-gene posteriors on the dropped genes (plus
+# the SVI's own ``"_other"`` posterior if present).
+#
+# The math (per posterior sample s):
+#
+#     μ_other⁽ˢ⁾ = μ_svi_other⁽ˢ⁾ + Σ_{g ∈ dropped} μ_g⁽ˢ⁾
+#
+#     r_other⁽ˢ⁾ = (μ_other⁽ˢ⁾)² /
+#                  [ (μ_svi_other⁽ˢ⁾)² / r_svi_other⁽ˢ⁾
+#                    + Σ_{g ∈ dropped} (μ_g⁽ˢ⁾)² / r_g⁽ˢ⁾ ]
+#
+# This is moment matching: exact in the first two moments of the sum
+# of independent NB variables (under the upstream's conditional
+# independence assumption), but NOT distributionally exact — a sum of
+# NBs with gene-specific p_g is not itself NB except in the shared-p
+# (NBDM) limit.  Sufficient for anchor-prior purposes; documented as
+# approximate in ``paper/_nb_lognormal.qmd`` §sec-nbln-cascade-aggregation.
+
+
+def _assemble_per_gene_subset_samples(
+    samples_source: jnp.ndarray,
+    kept_idx_in_source: np.ndarray,
+) -> jnp.ndarray:
+    """Index source samples down to the target's kept (non-``_other``) axis.
+
+    Parameters
+    ----------
+    samples_source : jnp.ndarray
+        SVI posterior samples in constrained space, shape ``(S, G_src)``.
+    kept_idx_in_source : np.ndarray
+        Source-axis positions for the target's non-``_other`` genes, in
+        target-axis order.  From :class:`SubsetInfo`.
+
+    Returns
+    -------
+    jnp.ndarray
+        Reordered subset samples, shape ``(S, len(kept_idx_in_source))``.
+    """
+    return samples_source[:, jnp.asarray(kept_idx_in_source)]
+
+
+def _aggregate_other_nb(
+    r_samples: jnp.ndarray,
+    mu_samples: jnp.ndarray,
+    dropped_idx_in_source: np.ndarray,
+    source_other_index_in_source: Optional[int],
+    *,
+    eps_r: float = 1e-8,
+    eps_mu: float = 1e-12,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-sample NB moment-match the pooled ``_other`` (r, μ) for NBLN.
+
+    Returns ``(r_other_samples, mu_other_samples)``, each shape ``(S,)``,
+    in **constrained** (positive) space.  The caller applies the
+    coordinate conversion to NBLN's unconstrained target coordinate.
+
+    This is MOMENT MATCHING: exact in the first two moments of the sum
+    of independent NB variables under the upstream model's
+    conditional-independence assumption.  It is NOT distributionally
+    exact — a sum of independent NBs with gene-specific ``p_g`` is not
+    itself NB except in the shared-``p`` NBDM limit.  Sufficient for
+    anchor-prior purposes; see ``paper/_nb_lognormal.qmd``
+    §sec-nbln-cascade-aggregation for the derivation and caveats.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray
+        Source posterior samples of NB shape ``r``, constrained
+        (positive), shape ``(S, G_src)``.
+    mu_samples : jnp.ndarray
+        Source posterior samples of NB mean ``μ``, constrained
+        (positive), shape ``(S, G_src)``.
+    dropped_idx_in_source : np.ndarray
+        Source positions of SVI-kept genes the Laplace target drops.
+        These contribute to the pooled aggregate.  Length 0 is allowed
+        only when ``source_other_index_in_source`` is not ``None``.
+    source_other_index_in_source : int, optional
+        Position of the SVI's ``"_other"`` column on the source axis,
+        or ``None`` when the SVI fit used ``gene_coverage == 1.0`` (no
+        upstream pooling).
+    eps_r, eps_mu : float
+        Numerical floors before division/log; avoid degenerate samples
+        from blowing up the aggregator.
+
+    Returns
+    -------
+    r_other_samples, mu_other_samples : Tuple[jnp.ndarray, jnp.ndarray]
+        Each shape ``(S,)``, both positive (constrained NB coordinate).
+    """
+    dropped_idx = jnp.asarray(dropped_idx_in_source, dtype=jnp.int32)
+    has_drops = int(dropped_idx.size) > 0
+    has_svi_other = source_other_index_in_source is not None
+
+    if not has_drops and not has_svi_other:
+        raise ValueError(
+            "_aggregate_other_nb invoked with no contributing terms "
+            "(neither dropped genes nor a SVI '_other' column). This is "
+            "a programming error; the caller should have routed through "
+            "the equal-panel pass-through path."
+        )
+
+    # Floor both ⟨r⟩ and ⟨μ⟩ so log/divide are safe even for degenerate
+    # samples.  The floor is the same value used in the existing
+    # per-gene coordinate conversion paths.
+    r_safe = jnp.maximum(r_samples, eps_r)
+    mu_safe = jnp.maximum(mu_samples, eps_mu)
+
+    # Initialize per-sample accumulators with zeros, then add the SVI
+    # '_other' contribution (if present) and the dropped-gene
+    # contributions.  Working in constrained (positive) space.
+    n_samples = int(r_safe.shape[0])
+    mu_other = jnp.zeros((n_samples,), dtype=mu_safe.dtype)
+    var_extra = jnp.zeros((n_samples,), dtype=mu_safe.dtype)
+
+    if has_svi_other:
+        # SVI's own '_other' column contributes one NB term per sample.
+        # ⟨μ_other⟩ += ⟨μ_svi_other⟩ ;  Σ μ²/r += μ_svi_other² / r_svi_other.
+        i_other = int(source_other_index_in_source)
+        mu_other_svi = mu_safe[:, i_other]
+        r_other_svi = r_safe[:, i_other]
+        mu_other = mu_other + mu_other_svi
+        var_extra = var_extra + (mu_other_svi ** 2) / r_other_svi
+
+    if has_drops:
+        # Per-sample sums over dropped genes, all kept in JAX-vectorized
+        # form so this is a single matmul-like reduction per posterior
+        # sample regardless of how many genes are pooled.
+        mu_dropped = mu_safe[:, dropped_idx]  # (S, G_drop)
+        r_dropped = r_safe[:, dropped_idx]    # (S, G_drop)
+        mu_other = mu_other + jnp.sum(mu_dropped, axis=1)
+        var_extra = var_extra + jnp.sum(
+            (mu_dropped ** 2) / r_dropped, axis=1
+        )
+
+    # Recover r_other from the moment-matched variance excess.  Floor
+    # ⟨μ_other⟩ to avoid 0/0 when every contributing μ is degenerate.
+    mu_other_safe = jnp.maximum(mu_other, eps_mu)
+    var_extra_safe = jnp.maximum(var_extra, eps_mu)
+    r_other = (mu_other_safe ** 2) / var_extra_safe
+
+    return r_other, mu_other
+
+
+def _aggregate_other_tsln_rate(
+    mu_samples: jnp.ndarray,
+    burst_size_samples: jnp.ndarray,
+    k_off_samples: jnp.ndarray,
+    dropped_idx_in_source: np.ndarray,
+    source_other_index_in_source: Optional[int],
+    *,
+    eps: float = 1e-8,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Per-sample pooled ``_other`` for TSLN-rate.  Pragmatic, approximate.
+
+    The two-state telegraph distribution does NOT close under
+    summation: the sum of independent Poisson-Beta marginals is not
+    Poisson-Beta.  So we cannot derive ``(burst_size_other, k_off_other)``
+    from first principles.
+
+    The compromise:
+    • ``μ_other⁽ˢ⁾`` is the additive sum over the pooled set (exact).
+    • ``burst_size_other⁽ˢ⁾`` and ``k_off_other⁽ˢ⁾`` inherit the SVI's
+      ``"_other"`` posterior when one is present; otherwise we fall
+      back to the per-sample median across the dropped genes — a vague
+      default that does not pretend to be the closed-form aggregate.
+
+    Documented in ``paper/_nb_lognormal.qmd`` as a known approximation.
+
+    Returns
+    -------
+    (mu_other_samples, burst_size_other_samples, k_off_other_samples)
+        Each shape ``(S,)``, all positive (constrained).
+    """
+    dropped_idx = jnp.asarray(dropped_idx_in_source, dtype=jnp.int32)
+    has_drops = int(dropped_idx.size) > 0
+    has_svi_other = source_other_index_in_source is not None
+
+    if not has_drops and not has_svi_other:
+        raise ValueError(
+            "_aggregate_other_tsln_rate invoked with no contributing "
+            "terms. The caller should have routed through the "
+            "equal-panel pass-through path."
+        )
+
+    mu_safe = jnp.maximum(mu_samples, eps)
+    bs_safe = jnp.maximum(burst_size_samples, eps)
+    ko_safe = jnp.maximum(k_off_samples, eps)
+
+    n_samples = int(mu_safe.shape[0])
+    mu_other = jnp.zeros((n_samples,), dtype=mu_safe.dtype)
+
+    if has_svi_other:
+        i_other = int(source_other_index_in_source)
+        mu_other = mu_other + mu_safe[:, i_other]
+        bs_other = bs_safe[:, i_other]
+        ko_other = ko_safe[:, i_other]
+        if has_drops:
+            mu_other = mu_other + jnp.sum(
+                mu_safe[:, dropped_idx], axis=1
+            )
+    else:
+        # No SVI '_other' to inherit from — use per-sample median across
+        # the dropped genes as a vague default for the shape parameters,
+        # and additive sum for the mean.
+        mu_other = mu_other + jnp.sum(mu_safe[:, dropped_idx], axis=1)
+        bs_other = jnp.median(bs_safe[:, dropped_idx], axis=1)
+        ko_other = jnp.median(ko_safe[:, dropped_idx], axis=1)
+
+    return mu_other, bs_other, ko_other
 
 
 def _detect_capture_mode(samples: Dict[str, jnp.ndarray]) -> str:
@@ -392,13 +840,42 @@ def priors_from_results(
 
     # --- Gene-identity safeguard --------------------------------------
     _say("Verifying gene identity against target...")
-    strict_var_name_verified, identity_method = _check_gene_identity(
-        results=results,
-        target_n_genes=int(target_n_genes),
-        target_gene_names=target_gene_names,
-        target_gene_mask=target_gene_mask,
+    strict_var_name_verified, identity_method, subset_info = (
+        _check_gene_identity(
+            results=results,
+            target_n_genes=int(target_n_genes),
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+        )
     )
     _say(f"  Gene identity verified via {identity_method!r}.")
+
+    # Subset-aware path detection.  When the target's panel is a STRICT
+    # subset of the source's, the cascade reconstructs the target's
+    # ``"_other"`` prior by per-sample NB moment-matching over the
+    # SVI's dropped per-gene posteriors (and the SVI's own ``"_other"``
+    # if present).  See paper section ``sec-nbln-cascade-aggregation``.
+    _subset_active = (
+        subset_info.is_subset and not subset_info.is_equal
+    )
+    if _subset_active and _is_amortized_capture(results):
+        raise NotImplementedError(
+            "Subset-aware cascade (SVI panel ⊃ Laplace panel) is not "
+            "supported with amortized-capture SVI sources. The encoder "
+            "needs source-shape counts and cannot be safely evaluated "
+            "on the target's smaller panel. Workarounds: refit SVI with "
+            "non-amortized capture; or align the gene panels."
+        )
+    if _subset_active:
+        _dropped_n = int(
+            0 if subset_info.dropped_idx_in_source is None else subset_info.dropped_idx_in_source.size
+        )
+        _say(
+            f"Subset-aware cascade active: NBLN '_other' prior "
+            f"moment-matched across {_dropped_n} SVI per-gene "
+            f"posteriors ({'+' if subset_info.source_has_other else 'no'} "
+            "SVI '_other')."
+        )
 
     # --- Draw samples (with amortized-capture handling) ---------------
     if _is_amortized_capture(results):
@@ -435,6 +912,20 @@ def priors_from_results(
 
     _say("Fitting empirical Gaussian priors to posterior samples...")
 
+    # When the subset path is active we need BOTH ``r`` and ``mu``
+    # samples to evaluate the moment-matching formula
+    # ``r_other = μ_other² / Σ μ_g² / r_g``.  The aggregator cannot run
+    # without both, so we require both keys here even though the
+    # equal-panel path treats them independently.
+    if _subset_active:
+        if "r" not in samples or "mu" not in samples:
+            raise ValueError(
+                "Subset-aware cascade requires the SVI source to expose "
+                "both 'r' and 'mu' per-sample. The moment-matching "
+                "formula for the pooled '_other' column uses ⟨μ²/r⟩ "
+                "per posterior sample."
+            )
+
     # --- r prior: positive → target unconstrained ---------------------
     if "r" in samples:
         r_samples = jnp.asarray(samples["r"])
@@ -444,20 +935,47 @@ def priors_from_results(
                 f"Expected r samples to have shape (S, G); got "
                 f"{r_samples.shape}."
             )
-        if r_samples.shape[1] != int(target_n_genes):
-            raise ValueError(
-                f"Source r samples have {r_samples.shape[1]} genes; "
-                f"target expects {int(target_n_genes)}."
+        if _subset_active:
+            # Source has G_src columns; the aggregator pools the
+            # SVI-only-kept genes into a single trailing column aligned
+            # to the target's ``"_other"`` slot.
+            mu_samples_for_agg = jnp.asarray(samples["mu"])
+            r_kept = _assemble_per_gene_subset_samples(
+                r_samples, subset_info.kept_idx_in_source
             )
+            r_other_s, _mu_other_s = _aggregate_other_nb(
+                r_samples,
+                mu_samples_for_agg,
+                subset_info.dropped_idx_in_source,
+                subset_info.source_other_index_in_source,
+            )
+            r_full = jnp.concatenate(
+                [r_kept, r_other_s[:, None]], axis=1
+            )
+            if r_full.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"Subset aggregation produced r samples of shape "
+                    f"{r_full.shape}; target expects "
+                    f"(S, {int(target_n_genes)})."
+                )
+            r_samples_for_fit = r_full
+        else:
+            if r_samples.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"Source r samples have {r_samples.shape[1]} genes; "
+                    f"target expects {int(target_n_genes)}."
+                )
+            r_samples_for_fit = r_samples
         # Floor at small positive value to avoid log(0) / inv_softplus(0).
-        r_pos = jnp.maximum(r_samples, 1e-8)
+        r_pos = jnp.maximum(r_samples_for_fit, 1e-8)
         r_unconstrained = pos_inverse(r_pos)
         prior_bundle["r"] = fit_empirical_gaussian(
             r_unconstrained, tau=float(tau)
         )
         _say(
-            f"  Fitted r prior (G={int(r_samples.shape[1])}, "
-            f"transform={target_positive_transform!r} inverse)."
+            f"  Fitted r prior (G={int(r_samples_for_fit.shape[1])}, "
+            f"transform={target_positive_transform!r} inverse"
+            f"{', subset-aware aggregation' if _subset_active else ''})."
         )
 
     # --- mu prior: positive NB mean → log-rate (real-valued) ----------
@@ -468,21 +986,45 @@ def priors_from_results(
                 f"Expected mu samples to have shape (S, G); got "
                 f"{mu_samples.shape}."
             )
-        if mu_samples.shape[1] != int(target_n_genes):
-            raise ValueError(
-                f"Source mu samples have {mu_samples.shape[1]} genes; "
-                f"target expects {int(target_n_genes)}."
+        if _subset_active:
+            r_samples_for_agg = jnp.asarray(samples["r"])
+            mu_kept = _assemble_per_gene_subset_samples(
+                mu_samples, subset_info.kept_idx_in_source
             )
+            _r_other_s, mu_other_s = _aggregate_other_nb(
+                r_samples_for_agg,
+                mu_samples,
+                subset_info.dropped_idx_in_source,
+                subset_info.source_other_index_in_source,
+            )
+            mu_full = jnp.concatenate(
+                [mu_kept, mu_other_s[:, None]], axis=1
+            )
+            if mu_full.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"Subset aggregation produced mu samples of shape "
+                    f"{mu_full.shape}; target expects "
+                    f"(S, {int(target_n_genes)})."
+                )
+            mu_samples_for_fit = mu_full
+        else:
+            if mu_samples.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"Source mu samples have {mu_samples.shape[1]} genes; "
+                    f"target expects {int(target_n_genes)}."
+                )
+            mu_samples_for_fit = mu_samples
         # IMPORTANT: NBLN-Laplace `params["mu"]` is the prior mean of an
         # unconstrained real-valued log-rate latent — not a positive
         # parameter. So the coordinate conversion is plain log(mu), NOT
         # pos_inverse(mu), regardless of model_config.positive_transform.
-        mu_pos = jnp.maximum(mu_samples, 1e-8)
+        mu_pos = jnp.maximum(mu_samples_for_fit, 1e-8)
         mu_log = jnp.log(mu_pos)
         prior_bundle["mu"] = fit_empirical_gaussian(mu_log, tau=float(tau))
         _say(
-            f"  Fitted mu prior (G={int(mu_samples.shape[1])}, "
-            "transform='log' — NBLN mu is real-valued log-rate)."
+            f"  Fitted mu prior (G={int(mu_samples_for_fit.shape[1])}, "
+            f"transform='log' — NBLN mu is real-valued log-rate"
+            f"{', subset-aware aggregation' if _subset_active else ''})."
         )
 
     # --- eta prior: identity (already in target's [0, ∞) space) -------
@@ -557,6 +1099,11 @@ __all__ = [
     "freeze_values_from_results",
     "priors_from_twostate_results",
     "freeze_values_from_twostate_results",
+    "SubsetInfo",
+    "_check_gene_identity",
+    "_aggregate_other_nb",
+    "_aggregate_other_tsln_rate",
+    "_assemble_per_gene_subset_samples",
 ]
 
 
@@ -655,13 +1202,34 @@ def freeze_values_from_results(
     )
 
     # --- Gene-identity safeguard (reuses the priors_from_results helper) ---
-    strict_var_name_verified, identity_method = _check_gene_identity(
-        results=results,
-        target_n_genes=int(target_n_genes),
-        target_gene_names=target_gene_names,
-        target_gene_mask=target_gene_mask,
+    strict_var_name_verified, identity_method, subset_info = (
+        _check_gene_identity(
+            results=results,
+            target_n_genes=int(target_n_genes),
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+        )
     )
     _say(f"  Gene identity verified via {identity_method!r}.")
+
+    _subset_active = (
+        subset_info.is_subset and not subset_info.is_equal
+    )
+    if _subset_active and _is_amortized_capture(results):
+        raise NotImplementedError(
+            "Subset-aware freeze cascade (SVI panel ⊃ Laplace panel) "
+            "is not supported with amortized-capture SVI sources."
+        )
+    if _subset_active:
+        _dropped_n = int(
+            0 if subset_info.dropped_idx_in_source is None else subset_info.dropped_idx_in_source.size
+        )
+        _say(
+            f"Subset-aware freeze cascade active: aggregating "
+            f"{_dropped_n} SVI per-gene MAPs into the target '_other' "
+            f"slot ({'+' if subset_info.source_has_other else 'no'} "
+            "SVI '_other')."
+        )
 
     # --- Amortized-capture-aware get_map() call ---
     # Same defensive hierarchy as priors_from_results._draw_samples:
@@ -707,6 +1275,38 @@ def freeze_values_from_results(
     pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
     freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
 
+    # Subset-aware freeze needs both ``r`` and ``mu`` MAPs together
+    # (the moment-match formula couples them).  Require both keys
+    # explicitly when the subset path is active.
+    if _subset_active and (
+        ("r" in freeze_params and "r" not in map_dict)
+        or ("mu" in freeze_params and "mu" not in map_dict)
+    ):
+        raise ValueError(
+            "Subset-aware freeze cascade requires both 'r' and 'mu' "
+            "MAPs from the SVI source; the moment-matching formula "
+            "couples them. Available MAP keys: "
+            f"{sorted(map_dict.keys())}."
+        )
+
+    def _aggregate_other_nb_map(
+        r_map: jnp.ndarray, mu_map: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """MAP-only NB aggregation (single sample wrapper).
+
+        Wraps the per-sample helper by injecting a singleton sample
+        axis, calling :func:`_aggregate_other_nb`, and squeezing the
+        sample axis back out.  Returns scalar arrays for ⟨r_other⟩
+        and ⟨μ_other⟩ in constrained (positive) space.
+        """
+        r_other_s, mu_other_s = _aggregate_other_nb(
+            r_map[None, :],
+            mu_map[None, :],
+            subset_info.dropped_idx_in_source,
+            subset_info.source_other_index_in_source,
+        )
+        return r_other_s[0], mu_other_s[0]
+
     # --- r: positive → NBLN unconstrained (via pos_inverse) ---
     if "r" in freeze_params:
         if "r" not in map_dict:
@@ -716,16 +1316,42 @@ def freeze_values_from_results(
                 f"Available keys: {sorted(map_dict.keys())}."
             )
         r_pos = jnp.asarray(map_dict["r"])
-        if r_pos.ndim != 1 or r_pos.shape[0] != int(target_n_genes):
-            raise ValueError(
-                f"SVI 'r' MAP has shape {r_pos.shape}; expected "
-                f"({int(target_n_genes)},)."
+        if _subset_active:
+            # Per-MAP aggregation; subset and append moment-matched
+            # ``_other`` entry at the target's trailing slot.
+            mu_map_for_agg = jnp.asarray(map_dict["mu"])
+            if r_pos.ndim != 1 or r_pos.shape[0] == 0:
+                raise ValueError(
+                    f"SVI 'r' MAP has shape {r_pos.shape}; expected "
+                    "1-D source-axis array for subset-aware aggregation."
+                )
+            r_kept = r_pos[jnp.asarray(subset_info.kept_idx_in_source)]
+            r_other, _mu_other = _aggregate_other_nb_map(
+                r_pos, mu_map_for_agg
             )
-        r_uncon = pos_inverse(jnp.maximum(r_pos, 1e-8))
+            r_full = jnp.concatenate(
+                [r_kept, r_other[None]], axis=0
+            )
+            if r_full.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"Subset aggregation produced r MAP of shape "
+                    f"{r_full.shape}; target expects "
+                    f"({int(target_n_genes)},)."
+                )
+            r_for_freeze = r_full
+        else:
+            if r_pos.ndim != 1 or r_pos.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"SVI 'r' MAP has shape {r_pos.shape}; expected "
+                    f"({int(target_n_genes)},)."
+                )
+            r_for_freeze = r_pos
+        r_uncon = pos_inverse(jnp.maximum(r_for_freeze, 1e-8))
         freeze_values["r"] = {"loc": r_uncon}
         _say(
             f"  Extracted r freeze value (G={target_n_genes}, "
-            f"transform={target_positive_transform!r} inverse)."
+            f"transform={target_positive_transform!r} inverse"
+            f"{', subset-aware aggregation' if _subset_active else ''})."
         )
 
     # --- mu: positive NB mean → NBLN log-rate (via jnp.log) ---
@@ -737,16 +1363,40 @@ def freeze_values_from_results(
                 f"Available keys: {sorted(map_dict.keys())}."
             )
         mu_pos = jnp.asarray(map_dict["mu"])
-        if mu_pos.ndim != 1 or mu_pos.shape[0] != int(target_n_genes):
-            raise ValueError(
-                f"SVI 'mu' MAP has shape {mu_pos.shape}; expected "
-                f"({int(target_n_genes)},)."
+        if _subset_active:
+            r_map_for_agg = jnp.asarray(map_dict["r"])
+            if mu_pos.ndim != 1 or mu_pos.shape[0] == 0:
+                raise ValueError(
+                    f"SVI 'mu' MAP has shape {mu_pos.shape}; expected "
+                    "1-D source-axis array for subset-aware aggregation."
+                )
+            mu_kept = mu_pos[jnp.asarray(subset_info.kept_idx_in_source)]
+            _r_other, mu_other = _aggregate_other_nb_map(
+                r_map_for_agg, mu_pos
             )
-        mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
+            mu_full = jnp.concatenate(
+                [mu_kept, mu_other[None]], axis=0
+            )
+            if mu_full.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"Subset aggregation produced mu MAP of shape "
+                    f"{mu_full.shape}; target expects "
+                    f"({int(target_n_genes)},)."
+                )
+            mu_for_freeze = mu_full
+        else:
+            if mu_pos.ndim != 1 or mu_pos.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"SVI 'mu' MAP has shape {mu_pos.shape}; expected "
+                    f"({int(target_n_genes)},)."
+                )
+            mu_for_freeze = mu_pos
+        mu_log = jnp.log(jnp.maximum(mu_for_freeze, 1e-8))
         freeze_values["mu"] = {"loc": mu_log}
         _say(
             f"  Extracted mu freeze value (G={target_n_genes}, "
-            "transform='log' — NBLN mu is real-valued log-rate)."
+            f"transform='log' — NBLN mu is real-valued log-rate"
+            f"{', subset-aware aggregation' if _subset_active else ''})."
         )
 
     # --- eta: constrained [0, ∞) → identity (NBLN's coord is the same) ---
@@ -938,13 +1588,50 @@ def priors_from_twostate_results(
     )
 
     # Gene identity (reuse NBLN-side helper — generic across SVI sources)
-    strict_var_name_verified, identity_method = _check_gene_identity(
-        results=results,
-        target_n_genes=int(target_n_genes),
-        target_gene_names=target_gene_names,
-        target_gene_mask=target_gene_mask,
+    strict_var_name_verified, identity_method, subset_info = (
+        _check_gene_identity(
+            results=results,
+            target_n_genes=int(target_n_genes),
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+        )
     )
     _say(f"  Gene identity verified via {identity_method!r}.")
+
+    _subset_active = (
+        subset_info.is_subset and not subset_info.is_equal
+    )
+    # TSLN-logit subset cascade is intentionally unsupported: the
+    # (rate, kappa, eta_anchor) reparameterization is even less
+    # tractable under summation than the rate variant.  See
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-cascade-aggregation, TSLN
+    # caveat.  TODO(follow-up): design an aggregator for the
+    # effective-deterministic representation if a use case appears.
+    if _subset_active and target_variant == "logit":
+        raise NotImplementedError(
+            "Subset-aware cascade (SVI panel ⊃ Laplace panel) is not "
+            "supported for the TSLN-Logit target variant in this "
+            "release. The (rate, kappa, eta_anchor) reparameterization "
+            "does not admit a clean per-sample aggregator. Workarounds: "
+            "use TSLN-Rate as the target variant; or align the gene "
+            "panels."
+        )
+    if _subset_active and _is_amortized_capture(results):
+        raise NotImplementedError(
+            "Subset-aware cascade is not supported with amortized-"
+            "capture TSLN SVI sources."
+        )
+    if _subset_active:
+        _dropped_n = int(
+            0 if subset_info.dropped_idx_in_source is None else subset_info.dropped_idx_in_source.size
+        )
+        _say(
+            f"Subset-aware cascade active (TSLN-rate): "
+            f"aggregating {_dropped_n} SVI per-gene posteriors into the "
+            f"target '_other' slot "
+            f"({'+' if subset_info.source_has_other else 'no'} "
+            "SVI '_other')."
+        )
 
     # Sample SVI posterior (with amortized-capture safeguards).
     if _is_amortized_capture(results):
@@ -1080,11 +1767,9 @@ def priors_from_twostate_results(
         # All three positive globals pass through their own configured
         # pos_inverse — so ``positive_transform={"mu": "exp",
         # "burst_size": "softplus", ...}`` is honored per-parameter.
-        for src_key, tgt_key in (
-            ("mu", "mu"),
-            ("burst_size", "burst_size"),
-            ("k_off", "k_off"),
-        ):
+        # Pre-check all three keys are present so the subset-aware
+        # aggregator (which couples them) can run safely below.
+        for src_key in ("mu", "burst_size", "k_off"):
             if src_key not in samples:
                 raise ValueError(
                     f"SVI source missing required key {src_key!r}. "
@@ -1093,7 +1778,49 @@ def priors_from_twostate_results(
                     "parameterization (mu, burst_size, k_off) on the "
                     "source."
                 )
-            s = jnp.asarray(samples[src_key])
+
+        if _subset_active:
+            # Pre-aggregate all three positive parameters in one pass:
+            # μ is additive, (burst_size, k_off) inherit SVI '_other'
+            # or fall back to per-sample medians.  See
+            # _aggregate_other_tsln_rate for the math and caveats.
+            mu_src = jnp.asarray(samples["mu"])
+            bs_src = jnp.asarray(samples["burst_size"])
+            ko_src = jnp.asarray(samples["k_off"])
+            mu_other_s, bs_other_s, ko_other_s = (
+                _aggregate_other_tsln_rate(
+                    mu_src,
+                    bs_src,
+                    ko_src,
+                    subset_info.dropped_idx_in_source,
+                    subset_info.source_other_index_in_source,
+                )
+            )
+            kept_idx = subset_info.kept_idx_in_source
+            mu_kept = _assemble_per_gene_subset_samples(mu_src, kept_idx)
+            bs_kept = _assemble_per_gene_subset_samples(bs_src, kept_idx)
+            ko_kept = _assemble_per_gene_subset_samples(ko_src, kept_idx)
+            subset_assembled = {
+                "mu": jnp.concatenate([mu_kept, mu_other_s[:, None]], axis=1),
+                "burst_size": jnp.concatenate(
+                    [bs_kept, bs_other_s[:, None]], axis=1
+                ),
+                "k_off": jnp.concatenate(
+                    [ko_kept, ko_other_s[:, None]], axis=1
+                ),
+            }
+        else:
+            subset_assembled = None
+
+        for src_key, tgt_key in (
+            ("mu", "mu"),
+            ("burst_size", "burst_size"),
+            ("k_off", "k_off"),
+        ):
+            if subset_assembled is not None:
+                s = subset_assembled[src_key]
+            else:
+                s = jnp.asarray(samples[src_key])
             if s.ndim < 2 or s.shape[1] != int(target_n_genes):
                 raise ValueError(
                     f"SVI {src_key!r} samples have shape {s.shape}; "
@@ -1106,7 +1833,8 @@ def priors_from_twostate_results(
                 s_uncon, tau=float(tau)
             )
             _say(
-                f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])})."
+                f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])}"
+                f"{', subset-aware aggregation' if _subset_active else ''})."
             )
 
     # --- eta (per-cell capture) -----------------------------------------
@@ -1289,13 +2017,30 @@ def freeze_values_from_twostate_results(
         f"(freeze_params={list(freeze_params)})"
     )
 
-    strict_var_name_verified, identity_method = _check_gene_identity(
-        results=results,
-        target_n_genes=int(target_n_genes),
-        target_gene_names=target_gene_names,
-        target_gene_mask=target_gene_mask,
+    strict_var_name_verified, identity_method, subset_info = (
+        _check_gene_identity(
+            results=results,
+            target_n_genes=int(target_n_genes),
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+        )
     )
     _say(f"  Gene identity verified via {identity_method!r}.")
+
+    _subset_active = (
+        subset_info.is_subset and not subset_info.is_equal
+    )
+    if _subset_active and target_variant == "logit":
+        raise NotImplementedError(
+            "Subset-aware freeze cascade is not supported for the "
+            "TSLN-Logit target variant. See "
+            "priors_from_twostate_results for the same caveat."
+        )
+    if _subset_active and _is_amortized_capture(results):
+        raise NotImplementedError(
+            "Subset-aware freeze cascade is not supported with "
+            "amortized-capture TSLN SVI sources."
+        )
 
     # Amortized-capture-aware get_map()
     if _is_amortized_capture(results):
@@ -1502,7 +2247,56 @@ def freeze_values_from_twostate_results(
                 f"{source_path} (G={target_n_genes})."
             )
     else:
-        # ---- TSLN-Rate gene-level extraction (existing) --------------
+        # ---- TSLN-Rate gene-level extraction -------------------------
+        # Under subset cascade, pre-aggregate (mu, burst_size, k_off)
+        # so the per-key loop below picks up target-shaped MAPs.  We
+        # wrap the per-sample helper with a singleton sample axis to
+        # reuse the same math at MAP-only granularity.
+        if _subset_active:
+            for src_key in ("mu", "burst_size", "k_off"):
+                if src_key not in map_dict:
+                    raise ValueError(
+                        f"Subset-aware TSLN-rate freeze cascade requires "
+                        f"the source MAP to expose {src_key!r}; available "
+                        f"keys: {sorted(map_dict.keys())}."
+                    )
+            mu_src = jnp.asarray(map_dict["mu"])
+            bs_src = jnp.asarray(map_dict["burst_size"])
+            ko_src = jnp.asarray(map_dict["k_off"])
+            for arr, name in (
+                (mu_src, "mu"), (bs_src, "burst_size"), (ko_src, "k_off"),
+            ):
+                if arr.ndim != 1 or arr.shape[0] == 0:
+                    raise ValueError(
+                        f"SVI {name!r} MAP has shape {arr.shape}; "
+                        "expected 1-D source-axis array for "
+                        "subset-aware aggregation."
+                    )
+            mu_other_s, bs_other_s, ko_other_s = (
+                _aggregate_other_tsln_rate(
+                    mu_src[None, :],
+                    bs_src[None, :],
+                    ko_src[None, :],
+                    subset_info.dropped_idx_in_source,
+                    subset_info.source_other_index_in_source,
+                )
+            )
+            kept_idx_jnp = jnp.asarray(subset_info.kept_idx_in_source)
+            mu_kept = mu_src[kept_idx_jnp]
+            bs_kept = bs_src[kept_idx_jnp]
+            ko_kept = ko_src[kept_idx_jnp]
+            subset_assembled_map = {
+                "mu": jnp.concatenate([mu_kept, mu_other_s[0:1]], axis=0),
+                "burst_size": jnp.concatenate(
+                    [bs_kept, bs_other_s[0:1]], axis=0
+                ),
+                "k_off": jnp.concatenate(
+                    [ko_kept, ko_other_s[0:1]], axis=0
+                ),
+            }
+        else:
+            subset_assembled_map = None
+
         for src_key, tgt_key in (
             ("mu", "mu"),
             ("burst_size", "burst_size"),
@@ -1510,13 +2304,16 @@ def freeze_values_from_twostate_results(
         ):
             if tgt_key not in freeze_params:
                 continue
-            if src_key not in map_dict:
-                raise ValueError(
-                    f"freeze_params requests {tgt_key!r} but SVI MAP "
-                    f"has no {src_key!r} key. Available: "
-                    f"{sorted(map_dict.keys())}."
-                )
-            s = jnp.asarray(map_dict[src_key])
+            if subset_assembled_map is not None:
+                s = subset_assembled_map[src_key]
+            else:
+                if src_key not in map_dict:
+                    raise ValueError(
+                        f"freeze_params requests {tgt_key!r} but SVI MAP "
+                        f"has no {src_key!r} key. Available: "
+                        f"{sorted(map_dict.keys())}."
+                    )
+                s = jnp.asarray(map_dict[src_key])
             if s.ndim != 1 or s.shape[0] != int(target_n_genes):
                 raise ValueError(
                     f"SVI {src_key!r} MAP has shape {s.shape}; expected "
@@ -1526,7 +2323,8 @@ def freeze_values_from_twostate_results(
             s_uncon = _pos_inv_for(tgt_key)(jnp.maximum(s, 1e-8))
             freeze_values[tgt_key] = {"loc": s_uncon}
             _say(
-                f"  Extracted {tgt_key!r} freeze value (G={target_n_genes})."
+                f"  Extracted {tgt_key!r} freeze value (G={target_n_genes}"
+                f"{', subset-aware aggregation' if _subset_active else ''})."
             )
 
     if "eta" in freeze_params:

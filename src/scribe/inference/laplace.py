@@ -38,6 +38,7 @@ def _run_laplace_inference(
     freeze_params: tuple = (),
     cascade_source: Optional[Any] = None,
     cascade_source_counts: Optional[jnp.ndarray] = None,
+    cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[Dict[str, Any]] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
@@ -238,6 +239,7 @@ def _run_laplace_inference(
                     r_scale_fallback=r_scale_val,
                     mu_loc_fallback=mu_loc_val,
                     mu_scale_fallback=mu_scale_val,
+                    cascade_subset_info=cascade_subset_info,
                 )
             )
 
@@ -260,6 +262,7 @@ def _run_laplace_inference(
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
         )
 
     if base_model == "twostate_ln_logit":
@@ -309,6 +312,7 @@ def _run_laplace_inference(
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
         )
 
     if base_model == "twostate_ln_rate":
@@ -364,6 +368,7 @@ def _run_laplace_inference(
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it
@@ -423,6 +428,7 @@ def _moment_match_frozen_for_nbln(
     r_scale_fallback: Optional[jnp.ndarray],
     mu_loc_fallback: Optional[jnp.ndarray],
     mu_scale_fallback: Optional[jnp.ndarray],
+    cascade_subset_info: Optional[Any] = None,
 ) -> tuple:
     """Moment-match SVI samples into NBLN target coord for r and mu.
 
@@ -437,8 +443,22 @@ def _moment_match_frozen_for_nbln(
     ``ScribeLaplaceResults.cascade_source.get_distributions()`` /
     ``.get_posterior_samples()``.  This helper provides the simpler
     Gaussian summary the existing PPC paths expect.
+
+    Parameters
+    ----------
+    cascade_subset_info : SubsetInfo, optional
+        Populated by the cascade adapter when the Laplace target's gene
+        panel is a STRICT subset of the SVI source's panel.  Triggers
+        per-sample NB moment-matching aggregation that pools the SVI's
+        dropped per-gene posteriors (and the SVI's own ``"_other"`` if
+        present) into the Laplace target's trailing ``"_other"`` slot.
+        ``None`` for equal-panel cascades (today's behavior).
     """
     from scribe.laplace._global_uncertainty import resolve_positive_fns
+    from scribe.laplace.priors import (
+        _aggregate_other_nb,
+        _assemble_per_gene_subset_samples,
+    )
 
     _pos_fwd, pos_inv = resolve_positive_fns(model_config)
 
@@ -455,13 +475,68 @@ def _moment_match_frozen_for_nbln(
     mu_loc = mu_loc_fallback
     mu_scale = mu_scale_fallback
 
+    _subset_active = (
+        cascade_subset_info is not None
+        and cascade_subset_info.is_subset
+        and not cascade_subset_info.is_equal
+    )
+
+    # Pre-aggregate per-sample r/mu to target shape when subset is
+    # active; the moment-match formula couples r and mu, so we do both
+    # together to ensure the trailing ``_other`` entry is built
+    # consistently across the two parameter blocks below.
+    if _subset_active:
+        # In subset mode the aggregator couples r and mu.  Silently
+        # falling back to source-shaped raw samples would produce
+        # wrong-shape result fields; raise immediately instead so the
+        # bug surfaces at the cascade-binding site rather than as a
+        # mysterious shape error in PPC or get_distributions later.
+        if (("r" in frozen_params or "mu" in frozen_params)
+                and ("r" not in svi_samples or "mu" not in svi_samples)):
+            raise ValueError(
+                "Subset-aware frozen-result moment-match requires the "
+                "SVI source to expose both 'r' and 'mu' per sample; "
+                f"got keys {sorted(svi_samples.keys())}."
+            )
+        r_src = jnp.asarray(svi_samples["r"])
+        mu_src = jnp.asarray(svi_samples["mu"])
+        r_kept = _assemble_per_gene_subset_samples(
+            r_src, cascade_subset_info.kept_idx_in_source
+        )
+        mu_kept = _assemble_per_gene_subset_samples(
+            mu_src, cascade_subset_info.kept_idx_in_source
+        )
+        r_other_s, mu_other_s = _aggregate_other_nb(
+            r_src,
+            mu_src,
+            cascade_subset_info.dropped_idx_in_source,
+            cascade_subset_info.source_other_index_in_source,
+        )
+        r_subset_pos = jnp.concatenate(
+            [r_kept, r_other_s[:, None]], axis=1
+        )
+        mu_subset_pos = jnp.concatenate(
+            [mu_kept, mu_other_s[:, None]], axis=1
+        )
+    else:
+        r_subset_pos = None
+        mu_subset_pos = None
+
     if "r" in frozen_params and "r" in svi_samples:
-        r_pos = jnp.asarray(svi_samples["r"])  # (S, G)
+        r_pos = (
+            r_subset_pos
+            if r_subset_pos is not None
+            else jnp.asarray(svi_samples["r"])
+        )  # (S, G_target)
         r_uncon = pos_inv(jnp.maximum(r_pos, 1e-8))
         r_scale = jnp.std(r_uncon, axis=0, ddof=1).astype(jnp.float32)
 
     if "mu" in frozen_params and "mu" in svi_samples:
-        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G)
+        mu_pos = (
+            mu_subset_pos
+            if mu_subset_pos is not None
+            else jnp.asarray(svi_samples["mu"])
+        )  # (S, G_target)
         mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
         mu_loc = jnp.mean(mu_log, axis=0).astype(jnp.float32)
         mu_scale = jnp.std(mu_log, axis=0, ddof=1).astype(jnp.float32)

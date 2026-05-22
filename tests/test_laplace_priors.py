@@ -370,11 +370,16 @@ def test_capture_mode_none_warns_and_omits_eta(scribe_caplog):
 
 
 def test_gene_identity_var_names_mismatch_raises():
+    # When the target's gene panel is not a subset of the source's
+    # (entirely different names), the subset-aware cascade adapter now
+    # raises with a "NOT a subset" message that lists the missing
+    # target genes — strictly more informative than the legacy
+    # "var_names" mismatch message.
     G, N = 5, 4
     source_names = np.array([f"g{i}" for i in range(G)])
     target_names = np.array([f"x{i}" for i in range(G)])  # different names!
     results = _make_basic_results(G=G, N=N, var_names=source_names)
-    with pytest.raises(ValueError, match="var_names"):
+    with pytest.raises(ValueError, match="NOT a subset"):
         priors_from_results(
             results, target_positive_transform="exp",
             target_n_genes=G, target_n_cells=N,

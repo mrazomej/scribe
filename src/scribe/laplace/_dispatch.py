@@ -221,8 +221,61 @@ def _nbln_frozen_distributions(
 
     out: Dict[str, Any] = {}
 
+    # Subset-aware routing.  When the Laplace target's gene panel is a
+    # STRICT subset of the SVI source's panel, the cascade samples live
+    # on the source's larger gene axis and the source's ``"_other"``
+    # column represents a DIFFERENT aggregate from the Laplace target's
+    # ``"_other"``.  Apply the same per-sample NB moment-matching
+    # aggregator used by ``priors_from_results`` so the moment-matched
+    # ``Normal(loc, scale)`` distribution is in the target gene axis.
+    # See ``paper/_nb_lognormal.qmd`` §sec-nbln-cascade-aggregation.
+    _cascade_subset_info = getattr(result, "_cascade_subset_info", None)
+    _subset_active = (
+        _cascade_subset_info is not None
+        and _cascade_subset_info.is_subset
+        and not _cascade_subset_info.is_equal
+    )
+    if _subset_active:
+        # In subset mode the aggregator couples r and mu, so we require
+        # both keys whenever either is frozen.  Silently falling back
+        # to source-shaped samples would produce wrong-shape result
+        # distributions; raise immediately instead.
+        if (("r" in frozen or "mu" in frozen)
+                and ("r" not in svi_samples or "mu" not in svi_samples)):
+            raise ValueError(
+                "Subset-aware frozen-distribution moment-match requires "
+                "the SVI source to expose both 'r' and 'mu' per sample; "
+                f"got keys {sorted(svi_samples.keys())}."
+            )
+        from .priors import (
+            _aggregate_other_nb,
+            _assemble_per_gene_subset_samples,
+        )
+        _r_src = jnp.asarray(svi_samples["r"])
+        _mu_src = jnp.asarray(svi_samples["mu"])
+        _r_kept = _assemble_per_gene_subset_samples(
+            _r_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _mu_kept = _assemble_per_gene_subset_samples(
+            _mu_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _r_other_s, _mu_other_s = _aggregate_other_nb(
+            _r_src,
+            _mu_src,
+            _cascade_subset_info.dropped_idx_in_source,
+            _cascade_subset_info.source_other_index_in_source,
+        )
+        # Splice into target-axis arrays the rest of the function consumes.
+        svi_samples = dict(svi_samples)
+        svi_samples["r"] = jnp.concatenate(
+            [_r_kept, _r_other_s[:, None]], axis=1
+        )
+        svi_samples["mu"] = jnp.concatenate(
+            [_mu_kept, _mu_other_s[:, None]], axis=1
+        )
+
     if "r" in frozen and "r" in svi_samples:
-        r_pos = jnp.asarray(svi_samples["r"])  # (S, G)
+        r_pos = jnp.asarray(svi_samples["r"])  # (S, G_target)
         r_uncon = pos_inv(jnp.maximum(r_pos, 1e-8))
         r_loc_mm = jnp.mean(r_uncon, axis=0)
         r_scale_mm = jnp.std(r_uncon, axis=0, ddof=1)
@@ -235,7 +288,7 @@ def _nbln_frozen_distributions(
         )
 
     if "mu" in frozen and "mu" in svi_samples:
-        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G)
+        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G_target)
         mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
         mu_loc_mm = jnp.mean(mu_log, axis=0)
         mu_scale_mm = jnp.std(mu_log, axis=0, ddof=1)

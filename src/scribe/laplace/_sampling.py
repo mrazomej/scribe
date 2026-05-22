@@ -177,6 +177,60 @@ def _resolve_nbln_ppc_arrays(
             cascade, cascade_counts, n_samples, k_cascade,
         )
 
+    # Subset-aware cascade routing.  When the Laplace fit's gene panel
+    # is a STRICT subset of the SVI source's, the cascade samples live
+    # on the source's larger gene axis and the source's ``"_other"``
+    # column means a DIFFERENT aggregate from the Laplace target's
+    # ``"_other"``.  Re-aggregate the SVI samples onto the target axis
+    # via per-sample NB moment matching before any downstream slicing
+    # or PPC sampling sees them.  See ``paper/_nb_lognormal.qmd``
+    # §sec-nbln-cascade-aggregation for the math.
+    _cascade_subset_info = getattr(result, "_cascade_subset_info", None)
+    _subset_active = (
+        cascade_samples is not None
+        and _cascade_subset_info is not None
+        and _cascade_subset_info.is_subset
+        and not _cascade_subset_info.is_equal
+    )
+    if _subset_active and (
+        "r" not in cascade_samples or "mu" not in cascade_samples
+    ):
+        # Subset aggregation couples r and mu; bypassing it would
+        # feed source-shape arrays to ``_gene_slice`` and either
+        # crash or use the wrong ``_other`` aggregate.  Raise so the
+        # bug surfaces clearly at PPC time.
+        raise ValueError(
+            "Subset-aware cascade PPC requires the SVI source to expose "
+            "both 'r' and 'mu' per sample; got keys "
+            f"{sorted(cascade_samples.keys())}."
+        )
+    if _subset_active:
+        from .priors import (
+            _aggregate_other_nb,
+            _assemble_per_gene_subset_samples,
+        )
+        _r_src = jnp.asarray(cascade_samples["r"])
+        _mu_src = jnp.asarray(cascade_samples["mu"])
+        _r_kept = _assemble_per_gene_subset_samples(
+            _r_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _mu_kept = _assemble_per_gene_subset_samples(
+            _mu_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _r_other_s, _mu_other_s = _aggregate_other_nb(
+            _r_src,
+            _mu_src,
+            _cascade_subset_info.dropped_idx_in_source,
+            _cascade_subset_info.source_other_index_in_source,
+        )
+        cascade_samples = dict(cascade_samples)
+        cascade_samples["r"] = jnp.concatenate(
+            [_r_kept, _r_other_s[:, None]], axis=1
+        )
+        cascade_samples["mu"] = jnp.concatenate(
+            [_mu_kept, _mu_other_s[:, None]], axis=1
+        )
+
     def _gene_slice(arr: jnp.ndarray) -> jnp.ndarray:
         """Slice a (S, G_full) array onto the gene subset, if any."""
         if gene_idx_jnp is None:

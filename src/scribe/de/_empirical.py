@@ -119,6 +119,24 @@ def _aggregate_genes(
     preserves the total Dirichlet concentration exactly so that the
     simplex constraint is maintained downstream.
 
+    .. note::
+       This aggregation uses a naive sum-of-rates formula
+       (``r_other = sum(r_g)``) that is only exact for Dirichlet
+       concentrations on a shared-``p`` NBDM (where the marginals
+       close under summation).  The principled NB moment-matching
+       aggregator used by the SVI-to-Laplace prior cascade lives in
+       :func:`scribe.laplace.priors._aggregate_other_nb` and applies
+       a different formula:
+
+       .. code-block:: text
+
+           r_other = (μ_other)² / Σ_g μ_g² / r_g
+
+       TODO(follow-up): audit whether the DE-side aggregation should
+       switch to the moment-matched formula for consistency with the
+       prior cascade, or whether the Dirichlet-simplex constraint
+       genuinely requires the additive form.
+
     Parameters
     ----------
     r_A : numpy.ndarray or jax.Array, shape ``(N, D)``

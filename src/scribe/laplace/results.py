@@ -335,6 +335,17 @@ class ScribeLaplaceResults(
     # reads ``cascade_source._original_counts`` directly.  Storing here
     # avoids mutating the user's SVI result.
     cascade_source_counts: Optional[jnp.ndarray] = None
+    #
+    # ``_cascade_subset_info`` carries the panel-relationship metadata
+    # from ``scribe.laplace.priors._check_gene_identity`` when the
+    # Laplace target's gene panel is a STRICT subset of the SVI
+    # source's.  Read by PPC (``_resolve_nbln_ppc_arrays``) and other
+    # cascade-aware consumers to apply per-sample NB moment-matching
+    # aggregation when slicing SVI samples onto the target gene axis.
+    # ``None`` when panels match exactly (today's pass-through path).
+    # The typed ``SubsetInfo`` lives in ``scribe.laplace.priors``; this
+    # field is ``Optional[Any]`` to avoid a circular import.
+    _cascade_subset_info: Optional[Any] = None
 
     # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
     # model's ``pack_result`` when a W-prior strategy is configured
