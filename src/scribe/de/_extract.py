@@ -148,7 +148,9 @@ def is_lnm_or_pln_results(obj) -> bool:
     rather than posterior samples, and these can be extracted
     directly from any LNM- or PLN-family result regardless of
     inference path.  This predicate gates the auto-conversion in
-    :func:`scribe.de.compare`.
+    :func:`scribe.de.compare` for the **parametric** branch only.
+    See :func:`has_compositional_marginal` for the broader predicate
+    used by the empirical marginal-driven path.
     """
     cfg = getattr(obj, "model_config", None)
     if cfg is None:
@@ -156,6 +158,61 @@ def is_lnm_or_pln_results(obj) -> bool:
     bm = getattr(cfg, "base_model", None)
     bm_str = str(getattr(bm, "value", bm) or "").lower()
     return bm_str in ("lnm", "lnmvcp", "pln")
+
+
+def has_compositional_marginal(obj) -> bool:
+    """Whether ``obj`` exposes a generative-marginal compositional sampler.
+
+    True for any result object whose fitted globals (μ, 𝑊, 𝑑) define
+    a marginal compositional distribution sampled via
+    ``softmax_full(𝒩(μ, 𝑊𝑊ᵗ + diag(𝑑)))``.  Currently includes:
+
+    * **LNM** / **LNMVCP** — latent in (G−1)-dim ALR coordinates.
+    * **PLN** — latent in G-dim log-rate space.
+    * **NBLN** — same generative marginal as PLN with an added per-gene
+      Negative Binomial dispersion at the observation step.  The
+      composition distribution is identical to PLN's (softmax of
+      log-rates) because the NB layer is observation noise that
+      averages out under softmax.
+    * **TSLN-Rate** / **TSLN-Logit** — log-rate marginal identical to
+      NBLN under the two-state observation noise.
+
+    The empirical DE path in :func:`scribe.de.compare` uses this
+    predicate (rather than :func:`is_lnm_or_pln_results`) to short-
+    circuit to :func:`_compare_empirical_from_marginal`, which calls
+    ``results.get_compositional_samples()`` and feeds the resulting
+    simplex draws through the standard CLR-difference machinery.
+
+    The presence of an ``_other`` pooled column from
+    ``gene_coverage < 1.0`` is handled by ``compare()``'s auto-mask
+    logic: when both results have ``_gene_coverage_mask`` set, the
+    trailing column is treated as the ``other`` pseudo-gene and
+    dropped from the returned CLR differences.
+
+    Parameters
+    ----------
+    obj
+        Candidate results object.
+
+    Returns
+    -------
+    bool
+    """
+    if not hasattr(obj, "get_compositional_samples"):
+        return False
+    cfg = getattr(obj, "model_config", None)
+    if cfg is None:
+        return False
+    bm = getattr(cfg, "base_model", None)
+    bm_str = str(getattr(bm, "value", bm) or "").lower()
+    return bm_str in (
+        "lnm",
+        "lnmvcp",
+        "pln",
+        "nbln",
+        "twostate_ln_rate",
+        "twostate_ln_logit",
+    )
 
 
 def lnm_or_pln_results_to_parametric_dict(
