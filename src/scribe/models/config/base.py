@@ -449,6 +449,40 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Whether the trailing aggregated '_other' column (emitted by the
+    # gene-coverage stage when gene_coverage < 1.0) participates in the
+    # latent low-rank gene-gene covariance ``Σ = W Wᵀ + diag(d)``.
+    #
+    # Applies to PLN / NBLN / TSLN-Rate / TSLN-Logit.  ``False`` (the
+    # default) excludes ``_other`` from Σ: W has shape ``(G_kept, K)``
+    # and d has shape ``(G_kept,)`` where ``G_kept = G_obs − 1``; the
+    # ``_other`` column gets a plain observation likelihood with no
+    # latent z-modulation.  ``True`` recovers the legacy behaviour
+    # where ``_other`` participates in Σ as a regular gene.
+    #
+    # For LNM / LNMVCP this flag is **informational only** — LNM
+    # already excludes the trailing column from Σ when the ALR
+    # reference is set to the last gene (the default convention with
+    # ``_other``).  When the user explicitly sets a non-default
+    # ``alr_reference_idx`` AND has an ``_other`` column, the cascade
+    # adapter will warn if the two are inconsistent.
+    #
+    # Rationale: ``_other`` is a pooled-counts aggregate, not a real
+    # gene, so its row in the regulatory covariance has no biophysical
+    # meaning.  Excluding it from Σ removes capacity wasted on spurious
+    # off-diagonal entries and keeps the W loadings interpretable.
+    # See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other.
+    correlate_other_column: bool = Field(
+        False,
+        description=(
+            "Whether the trailing '_other' pooled column participates in "
+            "the latent low-rank covariance Σ = W Wᵀ + diag(d).  False "
+            "(default) excludes it; True recovers legacy behaviour. "
+            "Applies to PLN/NBLN/TSLN-Rate/TSLN-Logit; informational "
+            "only for LNM (the ALR reference handles this implicitly)."
+        ),
+    )
+
     # Gene-specific overdispersion beyond the NB family.
     overdispersion: OverdispersionType = Field(
         OverdispersionType.NONE,
