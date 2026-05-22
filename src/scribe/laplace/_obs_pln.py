@@ -119,6 +119,8 @@ class PLNObservationModel(LaplaceObservationModel):
         capture_anchor: Optional[Tuple[float, float]] = None,
         model_config: Optional[ModelConfig] = None,
         w_prior_strategy: Optional["WPriorStrategy"] = None,
+        gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ):
         if capture_anchor is None:
             self._capture_anchor = None
@@ -142,6 +144,22 @@ class PLNObservationModel(LaplaceObservationModel):
             w_prior_strategy if w_prior_strategy is not None else NoneWPrior()
         )
 
+        # Harmonic-hare Commit 5: stash signals for AxisLayout
+        # construction in ``init_state``.  PLN is the simplest of
+        # the four affected models — observation is plain Poisson
+        # so there's no per-gene NB dispersion ``r`` or two-state
+        # parameter on the observation-layer axis.  Under decoupled,
+        # only ``W`` and ``d`` shrink to G_kept; ``mu`` stays on
+        # G_obs as today.  Mirrors NBLN / TSLN-Rate / TSLN-Logit
+        # scaffolding (Commits 2 / 3 / 4); see
+        # ``scribe.laplace._axis_layout`` for the shape contract.
+        self._gene_names = gene_names
+        self._has_pooled_other = has_pooled_other
+        self._correlate_other_column = bool(
+            getattr(model_config, "correlate_other_column", True)
+        )
+        self._axis_layout = None
+
     @property
     def name(self) -> str:
         return "pln"
@@ -161,6 +179,37 @@ class PLNObservationModel(LaplaceObservationModel):
         seed: int,
     ) -> InitState:
         counts_np = np.asarray(count_data)
+
+        # Build the AxisLayout (harmonic-hare Commit 5 scaffolding).
+        from ._axis_layout import build_axis_layout
+        self._axis_layout = build_axis_layout(
+            n_genes=int(n_genes),
+            correlate_other_column=self._correlate_other_column,
+            gene_names=self._gene_names,
+            has_pooled_other=self._has_pooled_other,
+        )
+        _layout = self._axis_layout
+
+        # Early fail-fast guard (auditor rev-6 #3) for the decoupled
+        # path.  PLN's deviation-parameterised math lands in a
+        # subsequent commit; until then raise here BEFORE any of the
+        # W/d/latent allocations so the user gets the clearest
+        # possible signal.  Legacy fits with a trivial layout
+        # proceed unchanged.
+        if _layout.decoupled:
+            raise NotImplementedError(
+                "PLN decoupled deviation-parameterisation math "
+                "(loss_fn / final_sweep / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 5 of the harmonic-hare "
+                "plan landed only the PLN scaffolding; the math lands "
+                "in a subsequent commit.  Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         mu_init = jnp.asarray(
             empirical_log_mean_from_counts(counts_np), dtype=jnp.float32
         )
@@ -217,6 +266,19 @@ class PLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+        # Defensive decoupled-layout guard.  ``init_state`` raises
+        # earlier when ``layout.decoupled``, so this is reached only
+        # via direct construction.  Mirrors NBLN / TSLN-Rate /
+        # TSLN-Logit defensive guards.
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "PLN decoupled loss_fn is not yet implemented — "
+                "see the init_state guard for the remediation."
+            )
+
         del aux_batch  # PLN has no auxiliary data
 
         mu = params["mu"]
@@ -356,6 +418,16 @@ class PLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> FinalSweepResult:
+        # Defensive decoupled-layout guard (mirrors loss_fn).
+        if (
+            self._axis_layout is not None
+            and self._axis_layout.decoupled
+        ):
+            raise NotImplementedError(
+                "PLN decoupled final_sweep is not yet implemented — "
+                "see the init_state guard."
+            )
+
         del aux_data
         mu = jax.lax.stop_gradient(params["mu"])
         W = jax.lax.stop_gradient(params["W"])
@@ -438,4 +510,11 @@ class PLNObservationModel(LaplaceObservationModel):
             divergence_aborted=divergence_aborted,
             global_uncertainty=global_uncertainty or {},
             w_prior_diagnostics=w_prior_diagnostics,
+            # Persist the axis layout (built in init_state) so the
+            # bridge in ``inference/laplace.py`` can attach it to
+            # ``ScribeLaplaceResults.axis_layout``.  Trivial layout
+            # for legacy / no-_other; the decoupled init_state
+            # guard raises before reaching here — this is mainly
+            # future-proofing for PLN's math commit (5b).
+            axis_layout=self._axis_layout,
         )

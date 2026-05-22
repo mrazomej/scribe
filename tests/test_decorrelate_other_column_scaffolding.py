@@ -300,30 +300,85 @@ class TestNblnDecoupledRaises:
         assert "correlate_other_column=True" in msg
 
 
-class TestEnginePlnTslnEarlyFail:
-    """PLN raises on decoupled BEFORE obs-model construction.
+class TestPlnScaffolding:
+    """PLN scaffolding mirror of NBLN / TSLN-Rate / TSLN-Logit
+    (harmonic-hare Commit 5).
 
-    As of Commit 4 of the harmonic-hare plan, NBLN, TSLN-Rate, AND
-    TSLN-Logit have AxisLayout-aware obs models and raise from
-    inside ``init_state`` (see :class:`TestTslnRateScaffolding` and
-    :class:`TestTslnLogitScaffolding` below).  Only PLN remains on
-    the engine early-fail path (Commit 5).
+    PLN is the simplest of the four affected models: observation
+    is plain Poisson so there's no per-gene NB dispersion or
+    two-state parameter on the observation-layer axis.  Under
+    decoupled, only ``W`` and ``d`` shrink to ``G_kept``; ``mu``
+    stays on ``G_obs`` as the per-gene log-rate prior centre.
+
+    As of Commit 5, the engine early-fail block has been retired
+    entirely — every affected model owns its own decoupled
+    detection via the obs-model's ``init_state``.
     """
 
-    def test_pln_decoupled_raises_at_engine(self):
+    def test_legacy_no_coverage_works(self):
+        """Plain PLN fit (no coverage, no _other) trivial layout."""
         import scribe
 
-        adata = _make_adata(30, 12, seed=0)
+        adata = _make_adata(20, 6, seed=0)
+        res = scribe.fit(
+            adata,
+            model="pln",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == 6
+        assert res.G_kept == 6
+        # W / d / mu all (G_obs,) — unchanged from today.
+        assert res.W.shape == (6, 2)
+        assert res.d.shape == (6,)
+        assert res.mu.shape == (6,)
+
+    def test_legacy_default_with_gene_coverage(self):
+        """Default `correlate_other_column=True` keeps legacy behaviour
+        under `gene_coverage < 1.0`."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
+        res = scribe.fit(
+            adata,
+            model="pln",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=5,
+            seed=0,
+            gene_coverage=0.85,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == res.G_kept
+
+    def test_decoupled_raises_from_obs_model(self):
+        """Explicit `correlate_other_column=False` with a pooled
+        `_other` column triggers PLN's obs-model NotImplementedError
+        (no engine early-fail anymore — Commit 5 retires it entirely)."""
+        import scribe
+
+        adata = _make_adata(20, 8, seed=0)
         with pytest.raises(NotImplementedError) as excinfo:
             scribe.fit(
-                adata, model="pln", inference_method="laplace", latent_dim=2,
-                n_steps=5, seed=0,
+                adata,
+                model="pln",
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=5,
+                seed=0,
                 gene_coverage=0.85,
                 correlate_other_column=False,
             )
         msg = str(excinfo.value)
-        assert "pln" in msg.lower() or "PLN" in msg
-        assert "Commit" in msg
+        # Message now identifies PLN by name and points at the
+        # remediation; previously the engine early-fail would say
+        # the model name lower-cased.
+        assert "PLN" in msg
         assert "correlate_other_column=True" in msg
 
 
@@ -443,30 +498,10 @@ class TestTslnLogitScaffolding:
         assert "TSLN-Logit" in msg
         assert "correlate_other_column=True" in msg
 
-    def test_engine_early_fail_now_only_pln(self):
-        """As of Commit 4 the engine early-fail set has narrowed to
-        PLN only (NBLN / TSLN-Rate / TSLN-Logit all have AxisLayout-
-        aware obs models).  Confirm PLN still raises the engine
-        message (pointing at Commit 5)."""
-        import scribe
-
-        adata = _make_adata(20, 8, seed=0)
-        with pytest.raises(NotImplementedError) as excinfo:
-            scribe.fit(
-                adata,
-                model="pln",
-                inference_method="laplace",
-                latent_dim=2,
-                n_steps=5,
-                seed=0,
-                gene_coverage=0.85,
-                correlate_other_column=False,
-            )
-        msg = str(excinfo.value)
-        # PLN engine guard points at Commit 5 now (not the old
-        # "Commits 3 / 4 / 5" string from earlier engine guards).
-        assert "Commit 5" in msg
-        assert "pln" in msg.lower() or "PLN" in msg
+    # Obsolete after Commit 5: PLN now owns its own decoupled
+    # detection in the obs model, so the engine-level early-fail
+    # set is empty.  See ``TestPlnScaffolding`` for the
+    # obs-model-driven test on PLN decoupled.
 
 
 # =====================================================================

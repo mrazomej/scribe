@@ -216,6 +216,9 @@ def _run_laplace_inference(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
+            # Axis layout from the obs model (`correlate_other_column`
+            # plumbing).  Harmonic-hare Commit 5 scaffolding.
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     if base_model == "nbln":

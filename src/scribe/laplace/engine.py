@@ -131,46 +131,14 @@ class LaplaceInferenceEngine:
         # semantics that need a separate design pass.
         w_prior_strategy = build_w_prior_strategy(w_prior)
 
-        # Early-fail check for `correlate_other_column=False` on the
-        # decoupled-math models that haven't yet been wired.  As of
-        # Commit 4 of the harmonic-hare plan, NBLN, TSLN-Rate, AND
-        # TSLN-Logit all have AxisLayout-aware obs models (their
-        # NotImplementedError guards fire from inside ``init_state``
-        # / ``loss_fn`` etc.), so only PLN needs the engine-level
-        # early-fail.  When PLN receives its own AxisLayout wiring
-        # (Commit 5), this guard can be retired entirely.
-        #
-        # Detection matches ``build_axis_layout``'s priority chain
-        # (has_pooled_other > gene_names[-1] == "_other"; auditor
-        # finding rev-5 #1) — using only ``has_pooled_other`` would
-        # silently miss manually-pre-filtered AnnData whose tail is
-        # literally ``"_other"`` (no ``gene_coverage`` stage ran).
-        _ccc = bool(
-            getattr(model_config, "correlate_other_column", True)
-        )
-        if (
-            (not _ccc)
-            and bm in ("pln",)
-        ):
-            from ._axis_layout import build_axis_layout as _build_layout
-            _probe_layout = _build_layout(
-                n_genes=int(n_genes),
-                correlate_other_column=False,
-                gene_names=filtered_gene_names,
-                has_pooled_other=has_pooled_other,
-            )
-            if _probe_layout.decoupled:
-                raise NotImplementedError(
-                    f"`{bm}` Laplace fit with "
-                    "`correlate_other_column=False` and a pooled "
-                    "'_other' column is not yet implemented — "
-                    "Commit 5 (PLN) of the harmonic-hare plan "
-                    "lands the obs-model wiring.  Until then, "
-                    "pass `correlate_other_column=True` (the "
-                    "current default) to use the legacy path with "
-                    "`_other` in Σ, or fit without `gene_coverage` "
-                    "filtering."
-                )
+        # As of Commit 5 of the harmonic-hare plan, ALL four affected
+        # models (NBLN, TSLN-Rate, TSLN-Logit, PLN) have AxisLayout-
+        # aware obs models that detect the decoupled layout and raise
+        # ``NotImplementedError`` from inside their own ``init_state``.
+        # The engine early-fail block that previously bridged the gap
+        # for not-yet-wired models has been retired entirely.  See
+        # ``_axis_layout.build_axis_layout`` for the unified detection
+        # contract each obs model uses.
 
         if bm == "pln":
             from ._obs_pln import PLNObservationModel
@@ -179,6 +147,8 @@ class LaplaceInferenceEngine:
                 capture_anchor=capture_anchor,
                 model_config=model_config,
                 w_prior_strategy=w_prior_strategy,
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm == "nbln":
             from ._obs_nbln import NBLNObservationModel
