@@ -505,6 +505,106 @@ class TestTslnLogitScaffolding:
 
 
 # =====================================================================
+# Manually-named `_other` end-to-end coverage for all four models
+# =====================================================================
+#
+# The shared ``AxisLayout`` factory tests cover names-only detection
+# (no ``gene_coverage`` stage running, AnnData `var_names[-1] ==
+# "_other"`), but the per-model fit tests above all rely on the
+# ``gene_coverage`` stage to emit the pooled column.  This class
+# closes the per-model coverage gap (auditor rev-8 Low #2): the
+# names fallback path is verified end-to-end for NBLN / TSLN-Rate /
+# TSLN-Logit / PLN by hand-naming the AnnData `var_names[-1] =
+# "_other"` and fitting WITHOUT `gene_coverage`.  Under explicit
+# `correlate_other_column=False`, each model must raise its
+# AxisLayout-aware NotImplementedError; under the legacy default
+# (`True`), the contradictory-signal check is skipped (rev-5 #2)
+# so the fit succeeds with the trivial layout.
+
+
+class TestManuallyNamedOtherEndToEnd:
+    """End-to-end coverage for the AnnData `var_names` fallback path
+    on all four affected models.  Closes auditor rev-8 Low #2.
+    """
+
+    @staticmethod
+    def _make_adata_with_manual_other(n_cells=20, n_genes=6, seed=0):
+        rng = np.random.default_rng(seed)
+        counts = rng.negative_binomial(
+            5, 0.5, size=(n_cells, n_genes)
+        ).astype(np.float32)
+        ad_obj = _make_adata(n_cells, n_genes, seed=seed)
+        # Override the auto-generated var_names so the tail is the
+        # `_OTHER_NAME` sentinel — simulating a manually pre-filtered
+        # AnnData where the user collapsed low-coverage genes upstream
+        # WITHOUT calling the gene_coverage stage.
+        names = [f"g{i}" for i in range(n_genes - 1)] + [_OTHER_NAME]
+        ad_obj.var_names = names
+        return ad_obj
+
+    @pytest.mark.parametrize(
+        "model,expected_str",
+        [
+            ("nbln", "NBLN"),
+            ("twostate_ln_rate", "TSLN-Rate"),
+            ("twostate_ln_logit", "TSLN-Logit"),
+            ("pln", "PLN"),
+        ],
+    )
+    def test_manually_named_other_decoupled_raises(
+        self, model, expected_str
+    ):
+        """With `var_names[-1] == "_other"` AND no `gene_coverage` AND
+        explicit `correlate_other_column=False`, each model's obs
+        model `init_state` raises ``NotImplementedError`` via the
+        names-fallback detection path in `build_axis_layout`."""
+        import scribe
+
+        adata = self._make_adata_with_manual_other(seed=0)
+        with pytest.raises(NotImplementedError) as excinfo:
+            scribe.fit(
+                adata,
+                model=model,
+                inference_method="laplace",
+                latent_dim=2,
+                n_steps=3,
+                seed=0,
+                correlate_other_column=False,
+            )
+        msg = str(excinfo.value)
+        # Each model's guard names itself in the error message.
+        assert expected_str in msg
+        assert "correlate_other_column=True" in msg
+
+    @pytest.mark.parametrize(
+        "model",
+        ["nbln", "twostate_ln_rate", "twostate_ln_logit", "pln"],
+    )
+    def test_manually_named_other_legacy_default_is_silent(self, model):
+        """Under the current legacy default (`correlate_other_column=
+        True`), a manually-named `_other` tail with no
+        `gene_coverage` must NOT raise — the contradictory-signal
+        check is skipped under legacy so the fit proceeds with the
+        trivial layout (rev-5 #2 contract)."""
+        import scribe
+
+        adata = self._make_adata_with_manual_other(seed=0)
+        # Default is True — this should silently fit with trivial layout.
+        res = scribe.fit(
+            adata,
+            model=model,
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=3,
+            seed=0,
+        )
+        # Trivial layout under legacy.
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is False
+        assert res.G_obs == res.G_kept
+
+
+# =====================================================================
 # ScribeLaplaceResults shape contract
 # =====================================================================
 
