@@ -320,6 +320,31 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
+        # Early guard for the decoupled path (auditor rev-6 #3): the
+        # decoupled-math kernels in ``loss_fn`` / ``final_sweep`` /
+        # ``compute_global_uncertainty`` raise NotImplementedError,
+        # but ``init_state`` itself still allocates W/d/latent_loc
+        # at the kept-gene shapes.  On tiny / degenerate data those
+        # allocations could fail (e.g. PCA on too few cells) and
+        # surface a confusing shape error before the user sees the
+        # intended NotImplementedError.  Fail fast here so the user
+        # gets the clearest possible signal.  Legacy (trivial)
+        # layouts skip this — init runs unchanged from today.
+        if _layout.decoupled:
+            raise NotImplementedError(
+                "NBLN decoupled deviation-parameterisation math "
+                "(loss_fn / Newton / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 2 of the harmonic-hare "
+                "plan landed the scaffolding (AxisLayout, init shapes, "
+                "compositional sampler, pack_result); Commit 2b lands "
+                "the math. Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         # --- mu init: frozen overrides prior overrides data-driven ---
         # `mu` lives in the OBSERVATION-layer axis (G_obs,) under BOTH
         # layouts — it is the prior centre / baseline per-gene log-mean

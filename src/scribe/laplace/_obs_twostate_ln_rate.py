@@ -434,6 +434,28 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
+        # Early guard for the decoupled path (auditor rev-6 #3): the
+        # decoupled-math kernels in ``loss_fn`` etc. raise
+        # NotImplementedError, but ``init_state`` itself still
+        # allocates W/d/latent_loc at the kept-gene shapes.  On tiny
+        # / degenerate data those allocations could fail before the
+        # user sees the intended NotImplementedError.  Fail fast here
+        # for the clearest possible signal.
+        if _layout.decoupled:
+            raise NotImplementedError(
+                "TSLN-Rate decoupled deviation-parameterisation math "
+                "(loss_fn / final_sweep / global_uncertainty under "
+                "`correlate_other_column=False` with a pooled '_other') "
+                "is not yet implemented — Commit 3 of the harmonic-hare "
+                "plan landed the TSLN-Rate scaffolding (AxisLayout, "
+                "init shapes, pack_result); the math lands in a "
+                "subsequent commit.  Until then, either pass "
+                "`correlate_other_column=True` to recover legacy "
+                "behaviour (with `_other` in Σ) or fit on data without "
+                "a trailing '_other' column (gene_coverage == 1.0 or "
+                "no gene_coverage filter)."
+            )
+
         # Per-parameter (forward, inverse).  Supports the dict form
         # ``positive_transform={"mu": "exp", ...}`` so different
         # gene-globals can use different positive maps.
