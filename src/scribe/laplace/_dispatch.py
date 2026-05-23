@@ -541,6 +541,28 @@ class DispatchResultsMixin:
             # distribution accessors) get the latent log-rate; biology-
             # side consumers (cascade-MAP comparison, plotting) get the
             # positive gene mean.
+            #
+            # Commit 3b: under decoupled TSLN-Rate, ``self.x_loc`` is
+            # ``x_dev`` on G_kept.  Reconstruct full G_obs per-cell
+            # log-rate as ``μ + x_dev`` (kept) / ``μ`` (other) for
+            # the ``y_log_rate`` field — mirrors the NBLN fix in
+            # rev-11.
+            _layout = getattr(self, "axis_layout", None)
+            _is_decoupled_ts = (
+                _layout is not None and _layout.decoupled
+            )
+            if _is_decoupled_ts and self.x_loc is not None:
+                _kept_idx = jnp.asarray(_layout.kept_idx)
+                _n_cells = int(self.x_loc.shape[0])
+                _G_obs = int(self.mu.shape[0])
+                _y_log_rate_full = jnp.broadcast_to(
+                    self.mu[None, :], (_n_cells, _G_obs)
+                )
+                _y_log_rate_full = _y_log_rate_full.at[:, _kept_idx].add(
+                    self.x_loc
+                )
+            else:
+                _y_log_rate_full = self.x_loc
             out = {
                 # ``mu`` here is the LATENT log-rate prior center
                 # (= log(r_hat)) to match NBLN/PLN convention.  This
@@ -548,7 +570,7 @@ class DispatchResultsMixin:
                 "mu": self.mu,
                 "W": self.W,
                 "d_tsln": self.d,
-                "y_log_rate": self.x_loc,
+                "y_log_rate": _y_log_rate_full,
             }
             # Correct each positive parent from its (_loc, _scale) pair.
             # IMPORTANT: gene_mean is the positive form of the "mu"
@@ -1043,9 +1065,39 @@ class DispatchResultsMixin:
                 self.model_config, "burst_size"
             )
             tfm_ko = resolve_numpyro_transform(self.model_config, "k_off")
+            # Commit 3b: under decoupled TSLN-Rate, ``W`` / ``d`` live
+            # on G_kept while ``self.mu`` lives on G_obs.  Pad ``W``
+            # with zero rows at ``other_idx`` and ``d`` with ``1e-12``
+            # at ``other_idx`` so the LowRankMultivariateNormal has the
+            # correct G_obs event shape and ``_other`` has effectively-
+            # zero variance (deterministic at ``μ_other``).  Mirrors
+            # the NBLN/PLN pattern in this same dispatch.
+            _layout_ts = getattr(self, "axis_layout", None)
+            _is_decoupled_ts_dist = (
+                _layout_ts is not None and _layout_ts.decoupled
+            )
+            if _is_decoupled_ts_dist:
+                _G_obs_ts = int(self.mu.shape[0])
+                _K_ts = int(self.W.shape[1])
+                _kept_idx_ts = jnp.asarray(_layout_ts.kept_idx)
+                _W_padded_ts = jnp.zeros(
+                    (_G_obs_ts, _K_ts), dtype=self.W.dtype
+                )
+                _W_padded_ts = _W_padded_ts.at[_kept_idx_ts].set(self.W)
+                _d_padded_ts = jnp.full(
+                    (_G_obs_ts,), 1e-12, dtype=self.d.dtype
+                )
+                _d_padded_ts = _d_padded_ts.at[_kept_idx_ts].set(self.d)
+                _W_for_dist_ts = _W_padded_ts
+                _d_for_dist_ts = _d_padded_ts
+            else:
+                _W_for_dist_ts = self.W
+                _d_for_dist_ts = self.d
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                    loc=self.mu,
+                    cov_factor=_W_for_dist_ts,
+                    cov_diag=_d_for_dist_ts,
                 ),
             }
             frozen = getattr(self, "frozen_params", frozenset())

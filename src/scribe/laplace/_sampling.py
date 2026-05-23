@@ -519,6 +519,12 @@ class SamplingResultsMixin:
                     "TSLN-Rate PPC requires the derived 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_rate_marginal(
                 rng_key,
                 n_samples,
@@ -528,6 +534,7 @@ class SamplingResultsMixin:
                 self.alpha,
                 self.beta,
                 eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "twostate_ln_logit":
             if (
@@ -680,6 +687,12 @@ class SamplingResultsMixin:
                     "TSLN-Rate per-cell PPC requires 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_rate_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -689,6 +702,8 @@ class SamplingResultsMixin:
                 self.d,
                 self.alpha,
                 self.beta,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "twostate_ln_logit":
             if (
@@ -799,6 +814,12 @@ class SamplingResultsMixin:
                     "TSLN-Rate map PPC requires 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_rate_per_cell(
                 rng_key,
                 n_samples,
@@ -806,6 +827,8 @@ class SamplingResultsMixin:
                 self.eta_loc,
                 self.alpha,
                 self.beta,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "twostate_ln_logit":
             if (

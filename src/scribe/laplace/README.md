@@ -738,14 +738,14 @@ Theorem 2). The `correlate_other_column: bool` flag on `ModelConfig`
 controls whether the trailing `_other` row participates in Σ.
 
 **Current default in this release: `True`** (legacy — `_other`
-participates in Σ, identical to pre-flag behaviour). NBLN's
-decoupled-math path landed in Commit 2b; TSLN-Rate / TSLN-Logit /
-PLN are still scaffolding-only and raise `NotImplementedError`
-under `False` until their math commits (3b / 4b / 5b) land. The
-default stays at `True` until all four math commits ship, at which
-point it flips to `False` (the biologically cleaner setting) and
-`True` becomes the explicit legacy opt-in. Under `False`, the
-layout has:
+participates in Σ, identical to pre-flag behaviour). NBLN
+(Commit 2b) and TSLN-Rate (Commit 3b) have their decoupled-math
+paths live; TSLN-Logit and PLN are still scaffolding-only and
+raise `NotImplementedError` under `False` until their math commits
+(4b / 5b) land. The default stays at `True` until those two
+commits ship, at which point it flips to `False` (the biologically
+cleaner setting) and `True` becomes the explicit legacy opt-in.
+Under `False`, the layout has:
 
 ```text
 W shape: (G_kept, K)        # latent-covariance axis (no _other row)
@@ -778,7 +778,7 @@ by routing through the three count models without math yet.  Once
 3b / 4b / 5b ship, the default flips to `False` and `True` becomes
 the explicit legacy opt-in.
 
-Behaviour matrix (current state — NBLN math live, TSLN-Rate /
+Behaviour matrix (current state — NBLN and TSLN-Rate math live,
 TSLN-Logit / PLN pending):
 
 | Configuration | Behaviour |
@@ -786,7 +786,7 @@ TSLN-Logit / PLN pending):
 | No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
 | `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | **Decoupled math live (Commit 2b).** `x_dev ~ N(0, Σ_kept)` per cell; μ moves into NB likelihood; `_other`'s log-rate is deterministic (`μ_other − η`); compositional sampler scatters kept x_dev onto full G_obs simplex. |
-| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | Scaffolded as of Commit 3: AxisLayout + init-shape slicing + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError` pointing at TSLN-Rate's math commit (3b). |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | **Decoupled math live (Commit 3b).** Same deviation-form pattern as NBLN; Poisson-Beta data quadrature evaluates at the full G_obs log-rate, Woodbury solves on the kept axis, `a_min` floor applies to the kept slice.  PPC, `get_map`, and `get_distributions` all honour the kept-vs-obs split. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Logit | Scaffolded as of Commit 4: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. Per-gene `rate` / `kappa` / `eta_anchor` stay on G_obs under decoupled — only `W` / `d` / per-cell `z` shrink to `G_kept`. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN | Scaffolded as of Commit 5: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. As of Commit 5 the engine early-fail block has been **retired entirely** — every affected model owns its own decoupled detection via its obs-model `init_state`. |
 | Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |

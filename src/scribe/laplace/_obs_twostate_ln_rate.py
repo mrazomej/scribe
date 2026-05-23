@@ -69,14 +69,23 @@ from ._newton_twostate_ln_rate import (
     _DEFAULT_K,
     _twostate_ln_rate_factors,
     laplace_log_det_neg_H_batch,
+    laplace_log_det_neg_H_batch_decoupled,
     laplace_log_det_neg_H_batch_x_only,
+    laplace_log_det_neg_H_batch_x_only_decoupled,
     laplace_log_det_neg_H_batch_x_only_offset,
+    laplace_log_det_neg_H_batch_x_only_offset_decoupled,
     laplace_newton_batch,
+    laplace_newton_batch_decoupled,
     laplace_newton_batch_x_only,
+    laplace_newton_batch_x_only_decoupled,
     laplace_newton_batch_x_only_offset,
+    laplace_newton_batch_x_only_offset_decoupled,
     twostate_ln_rate_grad_split_batch,
+    twostate_ln_rate_grad_split_batch_decoupled,
     twostate_ln_rate_grad_x_only_norm_batch,
+    twostate_ln_rate_grad_x_only_norm_batch_decoupled,
     twostate_ln_rate_grad_x_only_offset_norm_batch,
+    twostate_ln_rate_grad_x_only_offset_norm_batch_decoupled,
 )
 
 
@@ -434,27 +443,12 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
-        # Early guard for the decoupled path (auditor rev-6 #3): the
-        # decoupled-math kernels in ``loss_fn`` etc. raise
-        # NotImplementedError, but ``init_state`` itself still
-        # allocates W/d/latent_loc at the kept-gene shapes.  On tiny
-        # / degenerate data those allocations could fail before the
-        # user sees the intended NotImplementedError.  Fail fast here
-        # for the clearest possible signal.
-        if _layout.decoupled:
-            raise NotImplementedError(
-                "TSLN-Rate decoupled deviation-parameterisation math "
-                "(loss_fn / final_sweep / global_uncertainty under "
-                "`correlate_other_column=False` with a pooled '_other') "
-                "is not yet implemented — Commit 3 of the harmonic-hare "
-                "plan landed the TSLN-Rate scaffolding (AxisLayout, "
-                "init shapes, pack_result); the math lands in a "
-                "subsequent commit.  Until then, either pass "
-                "`correlate_other_column=True` to recover legacy "
-                "behaviour (with `_other` in Σ) or fit on data without "
-                "a trailing '_other' column (gene_coverage == 1.0 or "
-                "no gene_coverage filter)."
-            )
+        # Commit 3b: the decoupled deviation-form math is now wired.
+        # No early guard here — init proceeds for both layouts.  The
+        # decoupled branches in ``loss_fn`` / ``final_sweep`` /
+        # ``compute_global_uncertainty`` consume ``self._axis_layout``
+        # directly and drive the deviation-form Newton kernels in
+        # ``_newton_twostate_ln_rate`` (the ``*_decoupled`` family).
 
         # Per-parameter (forward, inverse).  Supports the dict form
         # ``positive_transform={"mu": "exp", ...}`` so different
@@ -628,31 +622,16 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         gradients on globals flow only through the live ELBO terms
         recomputed at the stop-gradient'd Newton MAP.
         """
-        # Decoupled-layout guard.  When the AxisLayout marks `_other`
-        # as excluded from Σ (``layout.decoupled == True``), the full
-        # deviation-parameterised loss (with the kept-gene MVN prior
-        # on ``x_dev``, the deterministic ``_other`` log-rate, and the
-        # Newton / global-uncertainty re-derivations) is tracked in
-        # the harmonic-hare plan as Commit 3b.  Until that math
-        # lands, fail loudly with a clear remediation message.  The
-        # legacy (``layout.decoupled is False``) path runs unchanged.
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "TSLN-Rate decoupled deviation-parameterisation math "
-                "(loss_fn / final_sweep / global_uncertainty under "
-                "`correlate_other_column=False` with a pooled '_other') "
-                "is not yet implemented — Commit 3 of the harmonic-hare "
-                "plan landed the TSLN-Rate scaffolding (AxisLayout, "
-                "init shapes, pack_result); the math lands in a "
-                "subsequent commit.  Until then, either pass "
-                "`correlate_other_column=True` to recover legacy "
-                "behaviour (with `_other` in Σ) or fit on data without "
-                "a trailing '_other' column (gene_coverage == 1.0 or "
-                "no gene_coverage filter)."
-            )
+        # Commit 3b: TSLN-Rate decoupled deviation-form math is live.
+        # The decoupled branches below run when ``layout.decoupled`` is
+        # True; legacy code is unchanged otherwise.  Resolve kept_idx
+        # once for the JIT-traced Newton kernels.
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
+        if _is_decoupled:
+            _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+        else:
+            _kept_idx_j = None
 
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, rate = self._reparam_from_params(params_full)
@@ -679,67 +658,130 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         alpha_sg = jax.lax.stop_gradient(alpha)
         beta_sg = jax.lax.stop_gradient(beta)
 
+        # Commit 3b: each Newton dispatch branch has a decoupled twin
+        # gated by ``_is_decoupled``.  Under decoupling, ``latent_init``
+        # carries ``x_dev`` on G_kept; the decoupled kernels scatter
+        # ``μ + x_dev`` onto G_obs internally to compute Poisson-Beta
+        # factors at the full G_obs log-rate, then slice ``a_full[
+        # kept_idx]`` for the Woodbury solve on the kept axis.
         if not self.uses_capture:
-            x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
-                laplace_newton_batch_x_only(
-                    latent_init_sg,
-                    counts_batch,
-                    mu_x_sg,
-                    W_sg,
-                    d_sg,
-                    alpha_sg,
-                    beta_sg,
-                    n_newton,
-                    damping,
-                    max_step,
-                    n_quad_nodes,
+            if _is_decoupled:
+                x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                    laplace_newton_batch_x_only_decoupled(
+                        latent_init_sg,
+                        counts_batch,
+                        mu_x_sg,
+                        W_sg,
+                        d_sg,
+                        alpha_sg,
+                        beta_sg,
+                        _kept_idx_j,
+                        n_newton,
+                        damping,
+                        max_step,
+                        n_quad_nodes,
+                    )
                 )
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = None
-            # Live-globals log det per cell.
-            log_det = laplace_log_det_neg_H_batch_x_only(
-                x_new, None, counts_batch, alpha, beta, W, d,
-                self._sigma_M, n_quad_nodes,
-            )
-            # log_rate at the stop-grad'd MAP (no capture: log_rate = x).
-            log_rate_for_lp = x_new
-            gn_x = twostate_ln_rate_grad_x_only_norm_batch(
-                x_new, counts_batch, mu_x_sg, W_sg, d_sg,
-                alpha_sg, beta_sg, n_quad_nodes,
-            )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = None
+                log_det = laplace_log_det_neg_H_batch_x_only_decoupled(
+                    x_new, None, counts_batch, alpha, beta, W, d, mu_x,
+                    _kept_idx_j, self._sigma_M, n_quad_nodes,
+                )
+                gn_x = twostate_ln_rate_grad_x_only_norm_batch_decoupled(
+                    x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                    alpha_sg, beta_sg, _kept_idx_j, n_quad_nodes,
+                )
+            else:
+                x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                    laplace_newton_batch_x_only(
+                        latent_init_sg,
+                        counts_batch,
+                        mu_x_sg,
+                        W_sg,
+                        d_sg,
+                        alpha_sg,
+                        beta_sg,
+                        n_newton,
+                        damping,
+                        max_step,
+                        n_quad_nodes,
+                    )
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = None
+                log_det = laplace_log_det_neg_H_batch_x_only(
+                    x_new, None, counts_batch, alpha, beta, W, d,
+                    self._sigma_M, n_quad_nodes,
+                )
+                gn_x = twostate_ln_rate_grad_x_only_norm_batch(
+                    x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                    alpha_sg, beta_sg, n_quad_nodes,
+                )
             gn_blocks = {"x": gn_x}
 
         elif self.freezes_eta:
             eta_offset = jax.lax.stop_gradient(eta_init_sg)
-            x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
-                laplace_newton_batch_x_only_offset(
-                    latent_init_sg,
-                    counts_batch,
-                    mu_x_sg,
-                    W_sg,
-                    d_sg,
-                    alpha_sg,
-                    beta_sg,
-                    eta_offset,
-                    n_newton,
-                    damping,
-                    max_step,
+            if _is_decoupled:
+                x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                    laplace_newton_batch_x_only_offset_decoupled(
+                        latent_init_sg,
+                        counts_batch,
+                        mu_x_sg,
+                        W_sg,
+                        d_sg,
+                        alpha_sg,
+                        beta_sg,
+                        eta_offset,
+                        _kept_idx_j,
+                        n_newton,
+                        damping,
+                        max_step,
+                        n_quad_nodes,
+                    )
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_offset
+                log_det = (
+                    laplace_log_det_neg_H_batch_x_only_offset_decoupled(
+                        x_new, eta_offset, counts_batch, alpha, beta,
+                        W, d, mu_x, _kept_idx_j, n_quad_nodes,
+                    )
+                )
+                gn_x = (
+                    twostate_ln_rate_grad_x_only_offset_norm_batch_decoupled(
+                        x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                        alpha_sg, beta_sg, eta_offset, _kept_idx_j,
+                        n_quad_nodes,
+                    )
+                )
+            else:
+                x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                    laplace_newton_batch_x_only_offset(
+                        latent_init_sg,
+                        counts_batch,
+                        mu_x_sg,
+                        W_sg,
+                        d_sg,
+                        alpha_sg,
+                        beta_sg,
+                        eta_offset,
+                        n_newton,
+                        damping,
+                        max_step,
+                        n_quad_nodes,
+                    )
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = eta_offset
+                log_det = laplace_log_det_neg_H_batch_x_only_offset(
+                    x_new, eta_offset, counts_batch, alpha, beta, W, d,
                     n_quad_nodes,
                 )
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = eta_offset
-            log_det = laplace_log_det_neg_H_batch_x_only_offset(
-                x_new, eta_offset, counts_batch, alpha, beta, W, d,
-                n_quad_nodes,
-            )
-            # eta_offset is per-cell ``(C,)``; broadcast to ``(C, G)``.
-            log_rate_for_lp = x_new - eta_offset[:, None]
-            gn_x = twostate_ln_rate_grad_x_only_offset_norm_batch(
-                x_new, counts_batch, mu_x_sg, W_sg, d_sg,
-                alpha_sg, beta_sg, eta_offset, n_quad_nodes,
-            )
+                gn_x = twostate_ln_rate_grad_x_only_offset_norm_batch(
+                    x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                    alpha_sg, beta_sg, eta_offset, n_quad_nodes,
+                )
             gn_blocks = {"x": gn_x}
 
         else:
@@ -756,43 +798,95 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 )
             sigma_M_per_cell_sg = jax.lax.stop_gradient(sigma_M_per_cell)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
-            (
-                x_new, eta_new, final_grad, _ldet_dead, _lm_dead, _a_dead,
-            ) = laplace_newton_batch(
-                latent_init_sg,
-                eta_init_sg,
-                counts_batch,
-                mu_x_sg,
-                W_sg,
-                d_sg,
-                alpha_sg,
-                beta_sg,
-                eta_anchor_sg,
-                sigma_M_per_cell_sg,
-                n_newton,
-                damping,
-                max_step,
-                n_quad_nodes,
-            )
-            x_new = jax.lax.stop_gradient(x_new)
-            eta_new = jax.lax.stop_gradient(eta_new)
-            # Joint log_det_neg_H_batch is vmapped over
-            # ``(x_map, eta_map, u, alpha, beta, W, d, sigma_M,
-            # n_quad_nodes)`` with ``sigma_M`` axis 7 = per-cell.
-            # Pass ``sigma_M_per_cell`` directly (NOT both scalar
-            # and per-cell — that was the audit's argument-mismatch
-            # finding).
-            log_det = laplace_log_det_neg_H_batch(
-                x_new, eta_new, counts_batch, alpha, beta, W, d,
-                sigma_M_per_cell, n_quad_nodes,
-            )
-            log_rate_for_lp = x_new - eta_new[:, None]
-            gn_x, gn_eta = twostate_ln_rate_grad_split_batch(
-                x_new, eta_new, counts_batch, mu_x_sg, W_sg, d_sg,
-                alpha_sg, beta_sg, eta_anchor_sg, sigma_M_per_cell_sg,
-                n_quad_nodes,
-            )
+            if _is_decoupled:
+                (
+                    x_new, eta_new, final_grad,
+                    _ldet_dead, _lm_dead, _a_dead,
+                ) = laplace_newton_batch_decoupled(
+                    latent_init_sg,
+                    eta_init_sg,
+                    counts_batch,
+                    mu_x_sg,
+                    W_sg,
+                    d_sg,
+                    alpha_sg,
+                    beta_sg,
+                    _kept_idx_j,
+                    eta_anchor_sg,
+                    sigma_M_per_cell_sg,
+                    n_newton,
+                    damping,
+                    max_step,
+                    n_quad_nodes,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = jax.lax.stop_gradient(eta_new)
+                log_det = laplace_log_det_neg_H_batch_decoupled(
+                    x_new, eta_new, counts_batch, alpha, beta, W, d,
+                    mu_x, _kept_idx_j, sigma_M_per_cell, n_quad_nodes,
+                )
+                gn_x, gn_eta = (
+                    twostate_ln_rate_grad_split_batch_decoupled(
+                        x_new, eta_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                        alpha_sg, beta_sg, _kept_idx_j,
+                        eta_anchor_sg, sigma_M_per_cell_sg, n_quad_nodes,
+                    )
+                )
+            else:
+                (
+                    x_new, eta_new, final_grad,
+                    _ldet_dead, _lm_dead, _a_dead,
+                ) = laplace_newton_batch(
+                    latent_init_sg,
+                    eta_init_sg,
+                    counts_batch,
+                    mu_x_sg,
+                    W_sg,
+                    d_sg,
+                    alpha_sg,
+                    beta_sg,
+                    eta_anchor_sg,
+                    sigma_M_per_cell_sg,
+                    n_newton,
+                    damping,
+                    max_step,
+                    n_quad_nodes,
+                )
+                x_new = jax.lax.stop_gradient(x_new)
+                eta_new = jax.lax.stop_gradient(eta_new)
+                log_det = laplace_log_det_neg_H_batch(
+                    x_new, eta_new, counts_batch, alpha, beta, W, d,
+                    sigma_M_per_cell, n_quad_nodes,
+                )
+                gn_x, gn_eta = twostate_ln_rate_grad_split_batch(
+                    x_new, eta_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                    alpha_sg, beta_sg, eta_anchor_sg, sigma_M_per_cell_sg,
+                    n_quad_nodes,
+                )
             gn_blocks = {"x": gn_x, "η": gn_eta}
+
+        # Build the per-cell, per-gene ``log_rate_for_lp`` of shape
+        # ``(C, G_obs)`` for the live-globals Poisson-Beta quadrature.
+        # Under decoupling, ``x_new`` carries ``x_dev`` on G_kept; the
+        # full log-rate is reconstructed by scattering ``μ + x_dev`` at
+        # kept positions and using ``μ`` at ``_other`` (deterministic),
+        # then subtracting η when capture is active.
+        if _is_decoupled:
+            if eta_new is not None:
+                _eta_sub = eta_new[:, None]
+                _base = mu_x[None, :] - _eta_sub
+            else:
+                _base = jnp.broadcast_to(
+                    mu_x[None, :], (x_new.shape[0], mu_x.shape[0])
+                )
+            log_rate_for_lp = _base.at[:, _kept_idx_j].add(x_new)
+        else:
+            if not self.uses_capture:
+                log_rate_for_lp = x_new
+            elif self.freezes_eta:
+                log_rate_for_lp = x_new - eta_offset[:, None]
+            else:
+                log_rate_for_lp = x_new - eta_new[:, None]
 
         # Per-cell data log-prob via live-globals quadrature at the
         # stop-grad'd MAP.  Each entry of log_marginal_live is the
@@ -802,11 +896,20 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         )
         data_lp_per_cell = log_marginal_live_per_gene.sum(axis=-1)  # (C,)
 
-        # MVN prior on x via inner Woodbury — per-cell.
-        diff = x_new - mu_x[None, :]
+        # MVN prior on the per-cell latent.  Under legacy,
+        # ``x ~ N(μ, Σ)`` on G_obs and ``diff = x − μ``.  Under
+        # decoupling, ``x_dev ~ N(0, Σ_kept)`` on G_kept and
+        # ``diff = x_dev`` (zero-centred — μ moved into the Poisson-Beta
+        # likelihood via the scatter above).  The Woodbury helpers are
+        # shape-agnostic.
+        if _is_decoupled:
+            diff = x_new  # x_dev, already zero-centred
+            n_genes = int(_layout.G_kept)
+        else:
+            diff = x_new - mu_x[None, :]
+            n_genes = mu_x.shape[0]
         quad_form = _woodbury_quadform(W, d, diff)  # (C,)
         log_det_sigma = _woodbury_logdet_sigma(W, d)
-        n_genes = mu_x.shape[0]
         mvn_lp_per_cell = (
             -0.5 * quad_form
             - 0.5 * log_det_sigma
@@ -888,20 +991,6 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         damping: float,
     ) -> FinalSweepResult:
         """Full-population Newton sweep with ``2 × n_newton`` iterations."""
-        # Decoupled-layout guard (mirrors ``loss_fn``).  The
-        # deviation-parameterised final sweep is part of TSLN-Rate's
-        # math commit (Commit 3b in the harmonic-hare plan).
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "TSLN-Rate decoupled final_sweep is not yet implemented — "
-                "see the loss_fn guard for the remediation. Pass "
-                "`correlate_other_column=True` or omit the "
-                "gene_coverage filter to use the legacy path."
-            )
-
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, _rate = self._reparam_from_params(params_full)
         W = params_full["W"]
@@ -910,47 +999,66 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         n_q = self._n_quad_nodes
         ms = self._max_step
 
+        # Commit 3b: decoupled final sweep mirrors loss_fn's dispatch.
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
+        if _is_decoupled:
+            _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+
         if not self.uses_capture:
-            x_new, final_grad, _ldet, _lm, _a_raw = laplace_newton_batch_x_only(
-                latent_loc,
-                count_data,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                n_iters,
-                damping,
-                ms,
-                n_q,
-            )
+            if _is_decoupled:
+                x_new, final_grad, _ldet, _lm, _a_raw = (
+                    laplace_newton_batch_x_only_decoupled(
+                        latent_loc, count_data, mu_x, W, d, alpha, beta,
+                        _kept_idx_j, n_iters, damping, ms, n_q,
+                    )
+                )
+            else:
+                x_new, final_grad, _ldet, _lm, _a_raw = laplace_newton_batch_x_only(
+                    latent_loc,
+                    count_data,
+                    mu_x,
+                    W,
+                    d,
+                    alpha,
+                    beta,
+                    n_iters,
+                    damping,
+                    ms,
+                    n_q,
+                )
             final_eta_loc = None
-            log_rate_for_diag = x_new
         elif self.freezes_eta:
             eta_offset = jnp.asarray(self._freeze_values["eta"]["loc"])
-            (
-                x_new,
-                final_grad,
-                _ldet,
-                _lm,
-                _a_raw,
-            ) = laplace_newton_batch_x_only_offset(
-                latent_loc,
-                count_data,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_offset,
-                n_iters,
-                damping,
-                ms,
-                n_q,
-            )
+            if _is_decoupled:
+                x_new, final_grad, _ldet, _lm, _a_raw = (
+                    laplace_newton_batch_x_only_offset_decoupled(
+                        latent_loc, count_data, mu_x, W, d, alpha, beta,
+                        eta_offset, _kept_idx_j, n_iters, damping, ms, n_q,
+                    )
+                )
+            else:
+                (
+                    x_new,
+                    final_grad,
+                    _ldet,
+                    _lm,
+                    _a_raw,
+                ) = laplace_newton_batch_x_only_offset(
+                    latent_loc,
+                    count_data,
+                    mu_x,
+                    W,
+                    d,
+                    alpha,
+                    beta,
+                    eta_offset,
+                    n_iters,
+                    damping,
+                    ms,
+                    n_q,
+                )
             final_eta_loc = eta_offset
-            # eta_offset is per-cell ``(C,)``; broadcast to ``(C, G)``.
-            log_rate_for_diag = x_new - eta_offset[:, None]
         else:
             if self._prior_eta is not None:
                 sigma_M_per_cell = jnp.asarray(self._prior_eta["scale"])
@@ -960,31 +1068,56 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                     self._sigma_M,
                     dtype=jnp.float32,
                 )
-            (
-                x_new,
-                eta_new,
-                final_grad,
-                _ldet,
-                _lm,
-                _a_raw,
-            ) = laplace_newton_batch(
-                latent_loc,
-                eta_loc,
-                count_data,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_anchor,
-                sigma_M_per_cell,
-                n_iters,
-                damping,
-                ms,
-                n_q,
-            )
+            if _is_decoupled:
+                (
+                    x_new, eta_new, final_grad, _ldet, _lm, _a_raw,
+                ) = laplace_newton_batch_decoupled(
+                    latent_loc, eta_loc, count_data, mu_x, W, d,
+                    alpha, beta, _kept_idx_j, eta_anchor,
+                    sigma_M_per_cell, n_iters, damping, ms, n_q,
+                )
+            else:
+                (
+                    x_new,
+                    eta_new,
+                    final_grad,
+                    _ldet,
+                    _lm,
+                    _a_raw,
+                ) = laplace_newton_batch(
+                    latent_loc,
+                    eta_loc,
+                    count_data,
+                    mu_x,
+                    W,
+                    d,
+                    alpha,
+                    beta,
+                    eta_anchor,
+                    sigma_M_per_cell,
+                    n_iters,
+                    damping,
+                    ms,
+                    n_q,
+                )
             final_eta_loc = eta_new
-            log_rate_for_diag = x_new - eta_new[:, None]
+
+        # Build per-cell, per-gene ``log_rate_for_diag`` of shape
+        # ``(C, G_obs)`` for the clamp diagnostics.  Under decoupling
+        # ``x_new`` is ``x_dev`` on G_kept; scatter to G_obs.
+        if _is_decoupled:
+            if final_eta_loc is not None:
+                _base = mu_x[None, :] - final_eta_loc[:, None]
+            else:
+                _base = jnp.broadcast_to(
+                    mu_x[None, :], (x_new.shape[0], mu_x.shape[0])
+                )
+            log_rate_for_diag = _base.at[:, _kept_idx_j].add(x_new)
+        else:
+            if final_eta_loc is None:
+                log_rate_for_diag = x_new
+            else:
+                log_rate_for_diag = x_new - final_eta_loc[:, None]
 
         # Compute clamp diagnostics at the final MAP (count_data is on
         # hand here; not the case in pack_result). Stashed on self so
@@ -1081,18 +1214,11 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             from ``curvature_to_scale`` are also surfaced for
             inspection.
         """
-        # Decoupled-layout guard (mirrors ``loss_fn``).
-        if (
-            self._axis_layout is not None
-            and self._axis_layout.decoupled
-        ):
-            raise NotImplementedError(
-                "TSLN-Rate decoupled compute_global_uncertainty is not "
-                "yet implemented — the deviation-parameterised Schur "
-                "re-derivation by capture mode lands in TSLN-Rate's "
-                "math commit.  Pass `correlate_other_column=True` or "
-                "omit the gene_coverage filter to use the legacy path."
-            )
+        # Commit 3b: decoupled compute_global_uncertainty is wired below
+        # at the (log r) curvature block — see the ``_is_decoupled``
+        # branches after the data-side (α, β) Hessian is computed.
+        _layout = self._axis_layout
+        _is_decoupled = _layout is not None and _layout.decoupled
 
         from ._global_uncertainty import curvature_to_scale
 
@@ -1105,12 +1231,26 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         n_cells = counts.shape[0]
         n_quad_nodes = self._n_quad_nodes
 
-        # log_rate at the MAP given the eta path.
+        # log_rate at the MAP on the full G_obs axis.  Under legacy,
+        # ``x_map_sg`` already lives on G_obs and the subtraction gives
+        # the conventional ``x − η``.  Under decoupling, ``x_map_sg`` is
+        # ``x_dev`` on G_kept; we scatter onto G_obs (μ_x + x_dev at
+        # kept positions, μ_x at ``_other``) so the data-side
+        # quadrature consumes a proper per-gene log-rate.  Note this
+        # uses the MAP value of μ_x via the live-globals reparam path
+        # below (``log_rate_at_map`` is rebuilt after ``log_rate_at_map_live``).
         if eta_map_sg is None:
-            log_rate_at_map = x_map_sg
+            if _is_decoupled:
+                # Will rebuild below after we resolve the live mu_x.
+                log_rate_at_map = None
+            else:
+                log_rate_at_map = x_map_sg
         else:
-            # eta_map is (C,); broadcast to (C, G).
-            log_rate_at_map = x_map_sg - eta_map_sg[:, None]
+            if _is_decoupled:
+                log_rate_at_map = None
+            else:
+                # eta_map is (C,); broadcast to (C, G).
+                log_rate_at_map = x_map_sg - eta_map_sg[:, None]
 
         W_sg = jax.lax.stop_gradient(params_full["W"])
         d_sg = jax.lax.stop_gradient(self._d_fwd(params_full["d_loc"]))
@@ -1213,18 +1353,44 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         alpha_at_map, beta_at_map, rate_at_map, _ = _twostate_reparam(
             mu_at_map, bs_at_map, ko_at_map,
         )
-        log_rate_at_map = jnp.log(jnp.maximum(rate_at_map, 1e-30))
+        log_rate_at_map_globals = jnp.log(jnp.maximum(rate_at_map, 1e-30))
 
-        # eta_cap for the data-side helper (zeros under no-capture).
-        if eta_map_sg is None:
+        # Build the full G_obs per-cell log-rate ``log_rate_full``
+        # ``(C, G_obs)`` for the data-side quadrature.  Under legacy,
+        # this is ``x_map_sg - η`` (or ``x_map_sg`` under no-capture).
+        # Under decoupling, ``x_map_sg`` is ``x_dev`` on G_kept; we
+        # build ``log_rate[c, g] = μ_x[g] + x_dev[c, k_g] − η_c`` for
+        # kept genes and ``log_rate[c, g] = μ_x[g] − η_c`` for ``_other``.
+        if _is_decoupled:
+            kept_idx_glob = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
+            if eta_map_sg is not None:
+                _base_lr = (
+                    log_rate_at_map_globals[None, :] - eta_map_sg[:, None]
+                )
+            else:
+                _base_lr = jnp.broadcast_to(
+                    log_rate_at_map_globals[None, :],
+                    (n_cells, log_rate_at_map_globals.shape[0]),
+                )
+            log_rate_full = _base_lr.at[:, kept_idx_glob].add(x_map_sg)
             eta_cap_for_curv = jnp.zeros(
-                (n_cells,), dtype=mu_at_map.dtype,
+                (n_cells,), dtype=log_rate_full.dtype,
             )
+            # Feed the full G_obs log_rate as ``x_map`` so the
+            # downstream helper's ``log_rate = x_map − eta_cap``
+            # reproduces ``log_rate_full`` (eta_cap == 0 here).
+            x_map_for_curv = log_rate_full
         else:
-            eta_cap_for_curv = eta_map_sg
+            x_map_for_curv = x_map_sg
+            if eta_map_sg is None:
+                eta_cap_for_curv = jnp.zeros(
+                    (n_cells,), dtype=mu_at_map.dtype,
+                )
+            else:
+                eta_cap_for_curv = eta_map_sg
 
         curv = global_curvature_rate_summed(
-            x_map=x_map_sg,
+            x_map=x_map_for_curv,
             counts=counts,
             alpha=alpha_at_map,
             beta=beta_at_map,
@@ -1232,21 +1398,62 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             n_quad_nodes=n_quad_nodes,
         )
 
-        # MVN prior contribution in the (log r) axis:
-        #   mvn_lp = -1/2 Σ_c (x_c - mu_x)^T Σ^{-1} (x_c - mu_x), mu_x = log r
-        #   ∂(-mvn_lp)/∂log r_g  = -Σ_c [Σ^{-1}(x_c - log r)]_g
-        #                        = -[Σ^{-1} (Σ_c x_c - C·log r)]_g
-        #   ∂²(-mvn_lp)/∂log r_g²= +C (Σ^{-1})_{gg}
-        sigma_inv_diag = woodbury_inv_diag(W_sg, d_sg)            # (G,)
-        H_logr_logr_mvn = float(n_cells) * sigma_inv_diag         # (G,)
-        sum_diff = jnp.sum(x_map_sg, axis=0) - float(n_cells) * log_rate_at_map
-        g_logr_mvn = -woodbury_apply_inv(W_sg, d_sg, sum_diff)    # (G,)
+        if _is_decoupled:
+            # Decoupled (log r) contribution: under the deviation
+            # reparameterisation, the MVN prior is ``x_dev ~ N(0,
+            # Σ_kept)`` which does NOT depend on ``log r = μ_x``; instead
+            # ``μ_x`` enters the data-side log-rate via the scatter.  So
+            # the (log r) entries come from the Poisson-Beta data
+            # gradient/Hessian directly, summed over cells:
+            #   ∂(-data_lp)/∂(log r_g) = -Σ_c g_data_{c,g}    (NLP sign)
+            #   ∂²(-data_lp)/∂(log r_g)² = +Σ_c a_{c,g}       (NLP sign)
+            #
+            # Cross terms H_α(log r), H_β(log r) within a gene are set
+            # to zero — diagonal-φ approximation (consistent with the
+            # function-level docstring noting that cross-parameter
+            # blocks like ``∂²L/∂mu_g ∂burst_size_g`` are ignored).
+            from ._newton_twostate_ln_rate import _twostate_ln_rate_factors
+
+            def _factors_per_cell(lr_c, u_c):
+                return _twostate_ln_rate_factors(
+                    lr_c, u_c, alpha_at_map, beta_at_map, n_quad_nodes,
+                )
+
+            _factors_per_cell_batch = jax.vmap(
+                _factors_per_cell, in_axes=(0, 0),
+            )
+            fac_all = _factors_per_cell_batch(log_rate_full, counts)
+            g_logr_data = -jnp.sum(fac_all["g_data"], axis=0)     # (G,)
+            H_logr_logr_data = jnp.sum(fac_all["a"], axis=0)      # (G,)
+
+            g_logr_for_block = g_logr_data
+            H_logr_logr_for_block = H_logr_logr_data
+        else:
+            # Legacy: MVN prior contribution in the (log r) axis:
+            #   mvn_lp = -1/2 Σ_c (x_c - mu_x)^T Σ^{-1} (x_c - mu_x), mu_x = log r
+            #   ∂(-mvn_lp)/∂log r_g  = -Σ_c [Σ^{-1}(x_c - log r)]_g
+            #                        = -[Σ^{-1} (Σ_c x_c - C·log r)]_g
+            #   ∂²(-mvn_lp)/∂log r_g² = +C (Σ^{-1})_{gg}
+            sigma_inv_diag = woodbury_inv_diag(W_sg, d_sg)        # (G,)
+            H_logr_logr_for_block = float(n_cells) * sigma_inv_diag
+            sum_diff = (
+                jnp.sum(x_map_sg, axis=0)
+                - float(n_cells) * log_rate_at_map_globals
+            )
+            g_logr_for_block = -woodbury_apply_inv(
+                W_sg, d_sg, sum_diff,
+            )
 
         # Stitch per-gene φ-basis gradient and 3×3 Hessian.
         #   φ = (α, β, log r)
-        #   data fills (α, β) block; MVN fills (log r) entry only.
+        # Legacy: data fills (α, β) block; MVN fills (log r) entry only.
+        # Decoupled: data fills the full (α, β, log r) diagonal — MVN
+        # prior is zero-centred under the deviation form and contributes
+        # nothing to ``(mu_loc, bs_loc, ko_loc)``-direction curvature.
+        # Cross terms H_α(log r), H_β(log r) are kept at zero (diagonal-
+        # φ approximation, consistent with the function-level docstring).
         g_phi = jnp.stack(
-            [curv["g_alpha"], curv["g_beta"], g_logr_mvn], axis=-1,
+            [curv["g_alpha"], curv["g_beta"], g_logr_for_block], axis=-1,
         )                                                          # (G, 3)
         # H_phi shape (G, 3, 3) — symmetric.
         zero_g = jnp.zeros_like(curv["g_alpha"])
@@ -1254,13 +1461,13 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             [
                 jnp.stack([curv["H_aa"], curv["H_ab"], zero_g], axis=-1),
                 jnp.stack([curv["H_ab"], curv["H_bb"], zero_g], axis=-1),
-                jnp.stack([zero_g,       zero_g,       H_logr_logr_mvn],
+                jnp.stack([zero_g,       zero_g,       H_logr_logr_for_block],
                           axis=-1),
             ],
             axis=-2,
         )                                                          # (G, 3, 3)
         phi_at_map = jnp.stack(
-            [alpha_at_map, beta_at_map, log_rate_at_map], axis=-1,
+            [alpha_at_map, beta_at_map, log_rate_at_map_globals], axis=-1,
         )                                                          # (G, 3)
 
         # Capture the configured pos_forward closures for the per-gene
