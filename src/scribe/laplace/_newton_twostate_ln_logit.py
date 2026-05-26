@@ -945,3 +945,445 @@ def global_curvature_logit_summed(
         "g_eta_anchor":  per_cell["g_eta_anchor"].sum(axis=0),
         "H_eta_anchor":  per_cell["H_eta_anchor"].sum(axis=0),
     }
+
+
+# =====================================================================
+# Decoupled-layout kernels (`_other` excluded from Σ, Commit 4b)
+# =====================================================================
+#
+# Under ``correlate_other_column=False`` with a pooled trailing
+# ``_other`` column, TSLN-Logit's per-cell latent splits into:
+#
+#   • ``z_kept`` ∈ ℝ^{G_kept} — per-cell latent on the kept axis with
+#     MVN prior ``z_kept ~ 𝒩(0, Σ_kept)`` where ``Σ_kept = W Wᵀ +
+#     diag(d)`` and ``W: (G_kept, k)``, ``d: (G_kept,)``.
+#
+# TSLN-Logit is the simplest of the four count-likelihood models to
+# decouple because:
+#
+#   1. The latent ``z`` is **already zero-centred** in its MVN prior
+#      (no μ centring).  The deviation reparameterisation is a no-op:
+#      ``z_kept`` IS the deviation by construction.
+#
+#   2. Per-gene parameters (``rate``, ``kappa``, ``eta_anchor``) all
+#      stay on G_obs — they are NOT latent and don't scatter.
+#
+#   3. Only two Newton paths exist (``x_only`` and ``x_only_offset``);
+#      TSLN-Logit rejects soft-cascade / capture-anchor by design (no
+#      joint Newton).
+#
+# Effective activation log-odds per gene under decoupling:
+#
+#   kept gene ``g`` at position ``k_g``:   ``θ[g] + z_kept[k_g]``
+#   ``_other`` at ``other_idx``:           ``θ[other_idx]``  (no z modulation)
+#
+# Implementation pattern: build ``x_full`` of shape ``(G_obs,)`` by
+# scattering ``z_kept`` at kept positions with zeros elsewhere; feed
+# ``x_full`` to ``_twostate_ln_logit_factors`` which computes
+# ``η_act = θ + x_full`` — kept genes get ``θ[g] + z_kept[k_g]`` and
+# ``_other`` gets ``θ[other_idx] + 0 = θ[other_idx]`` automatically.
+
+
+def _scatter_z_into_full(
+    z_kept: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    G_obs: int,
+) -> jnp.ndarray:
+    """Build full G_obs ``x`` from kept-axis ``z_kept`` under decoupling.
+
+    Returns ``x_full`` of shape ``(G_obs,)`` with:
+        x_full[g] = z_kept[k]  for g == kept_idx[k]
+        x_full[g] = 0          for g == other_idx
+
+    The zeros at ``_other`` mean ``η_act = θ + x_full`` reduces to
+    ``θ[other_idx]`` at that gene — matching the math contract that
+    ``_other``'s activation log-odds has no z modulation.
+
+    Differs from NBLN/TSLN-Rate's ``_scatter_log_rate_decoupled``:
+    TSLN-Logit has no μ centring, so the base is zeros (not μ).
+    """
+    base = jnp.zeros((G_obs,), dtype=z_kept.dtype)
+    return base.at[kept_idx].add(z_kept)
+
+
+# ---------------------------------------------------------------------
+# x-only Newton (no capture, decoupled)
+# ---------------------------------------------------------------------
+
+
+def newton_step_x_only_decoupled(
+    z_kept: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Single Newton step on ``z_kept`` only (no capture, decoupled).
+
+    Mirrors :func:`newton_step_x_only`; differences:
+
+    * Latent ``z_kept`` lives on G_kept; factors are evaluated at the
+      FULL G_obs ``x = scatter(z_kept, zeros, kept_idx)``.
+    * The MVN-prior gradient is ``Σ_kept⁻¹ z_kept`` (no μ subtraction
+      since TSLN-Logit's z is zero-centred under both layouts).
+    * No η block (x-only path).
+    """
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta, jnp.asarray(0.0, dtype=z_kept.dtype),
+        n_quad_nodes,
+    )
+    a_full = fac["a"]
+    g_data_full = fac["g_data"]
+    a_kept = a_full[kept_idx]
+
+    factors = _woodbury_factors(W, d, a_kept, damping)
+
+    inv_d = 1.0 / d
+    # Σ_kept⁻¹ z_kept — zero-centred, no μ offset.
+    sigma_inv_z = inv_d * z_kept - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * z_kept)
+        )
+    )
+    g_z = g_data_full[kept_idx] - sigma_inv_z
+
+    delta_z = _solve_A(factors, g_z)
+    grad_inf_norm = jnp.max(jnp.abs(g_z))
+    step_norm = jnp.max(jnp.abs(delta_z))
+    scale = jnp.minimum(1.0, max_step / jnp.maximum(step_norm, 1e-12))
+    return z_kept + delta_z * scale, grad_inf_norm
+
+
+def laplace_newton_loop_x_only_decoupled(
+    z_kept_init: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_iters: int,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> Tuple[
+    jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray,
+]:
+    """``n_iters`` Newton steps on ``z_kept`` (no capture, decoupled).
+
+    Returns ``(z_kept_map, final_grad_norm, log_det_neg_H,
+    log_marginal_sum, a_raw_min)``.
+    """
+
+    def step(carry, _):
+        z_, _grad = carry
+        z_new, grad_norm = newton_step_x_only_decoupled(
+            z_, u, W, d, rate, kappa, theta, kept_idx,
+            damping, max_step, n_quad_nodes,
+        )
+        return (z_new, grad_norm), None
+
+    init = (z_kept_init, jnp.asarray(jnp.inf, dtype=z_kept_init.dtype))
+    (z_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    G_obs = int(theta.shape[0])
+    x_full_final = _scatter_z_into_full(z_final, kept_idx, G_obs)
+    fac_final = _twostate_ln_logit_factors(
+        x_full_final, u, rate, kappa, theta,
+        jnp.asarray(0.0, dtype=z_final.dtype), n_quad_nodes,
+    )
+    a_kept_final = fac_final["a"][kept_idx]
+    factors = _woodbury_factors(W, d, a_kept_final, damping)
+    log_det_neg_H = _log_det_A(factors)
+    log_marginal_sum = jnp.sum(fac_final["log_marginal"])
+    a_raw_min = jnp.min(fac_final["a_raw"])
+    return z_final, final_grad, log_det_neg_H, log_marginal_sum, a_raw_min
+
+
+laplace_newton_batch_x_only_decoupled = jax.vmap(
+    laplace_newton_loop_x_only_decoupled,
+    in_axes=(
+        0,     # z_kept_init
+        0,     # u
+        None,  # W
+        None,  # d
+        None,  # rate
+        None,  # kappa
+        None,  # theta
+        None,  # kept_idx
+        None,  # n_iters
+        None,  # damping
+        None,  # max_step
+        None,  # n_quad_nodes
+    ),
+)
+
+
+# ---------------------------------------------------------------------
+# x-only Newton with fixed offset (frozen η, decoupled)
+# ---------------------------------------------------------------------
+
+
+def newton_step_x_only_offset_decoupled(
+    z_kept: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Single Newton step on ``z_kept`` with fixed ``η_offset``."""
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta, eta_offset, n_quad_nodes,
+    )
+    a_full = fac["a"]
+    g_data_full = fac["g_data"]
+    a_kept = a_full[kept_idx]
+
+    factors = _woodbury_factors(W, d, a_kept, damping)
+
+    inv_d = 1.0 / d
+    sigma_inv_z = inv_d * z_kept - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * z_kept)
+        )
+    )
+    g_z = g_data_full[kept_idx] - sigma_inv_z
+
+    delta_z = _solve_A(factors, g_z)
+    grad_inf_norm = jnp.max(jnp.abs(g_z))
+    step_norm = jnp.max(jnp.abs(delta_z))
+    scale = jnp.minimum(1.0, max_step / jnp.maximum(step_norm, 1e-12))
+    return z_kept + delta_z * scale, grad_inf_norm
+
+
+def laplace_newton_loop_x_only_offset_decoupled(
+    z_kept_init: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_iters: int,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> Tuple[
+    jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray,
+]:
+    """``n_iters`` Newton steps on ``z_kept`` with fixed ``η_offset``."""
+
+    def step(carry, _):
+        z_, _grad = carry
+        z_new, grad_norm = newton_step_x_only_offset_decoupled(
+            z_, u, W, d, rate, kappa, theta, eta_offset, kept_idx,
+            damping, max_step, n_quad_nodes,
+        )
+        return (z_new, grad_norm), None
+
+    init = (z_kept_init, jnp.asarray(jnp.inf, dtype=z_kept_init.dtype))
+    (z_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    G_obs = int(theta.shape[0])
+    x_full_final = _scatter_z_into_full(z_final, kept_idx, G_obs)
+    fac_final = _twostate_ln_logit_factors(
+        x_full_final, u, rate, kappa, theta, eta_offset, n_quad_nodes,
+    )
+    a_kept_final = fac_final["a"][kept_idx]
+    factors = _woodbury_factors(W, d, a_kept_final, damping)
+    log_det_neg_H = _log_det_A(factors)
+    log_marginal_sum = jnp.sum(fac_final["log_marginal"])
+    a_raw_min = jnp.min(fac_final["a_raw"])
+    return z_final, final_grad, log_det_neg_H, log_marginal_sum, a_raw_min
+
+
+laplace_newton_batch_x_only_offset_decoupled = jax.vmap(
+    laplace_newton_loop_x_only_offset_decoupled,
+    in_axes=(
+        0,     # z_kept_init
+        0,     # u
+        None,  # W
+        None,  # d
+        None,  # rate
+        None,  # kappa
+        None,  # theta
+        0,     # eta_offset (per-cell)
+        None,  # kept_idx
+        None,  # n_iters
+        None,  # damping
+        None,  # max_step
+        None,  # n_quad_nodes
+    ),
+)
+
+
+# ---------------------------------------------------------------------
+# log det(−H) helpers (decoupled)
+# ---------------------------------------------------------------------
+
+
+def laplace_log_det_neg_H_x_only_decoupled(
+    z_kept_map: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> jnp.ndarray:
+    """``log det(−H_z)`` at decoupled x-only MAP — no η block."""
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept_map, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta,
+        jnp.asarray(0.0, dtype=z_kept_map.dtype), n_quad_nodes,
+    )
+    a_kept = fac["a"][kept_idx]
+    factors = _woodbury_factors(W, d, a_kept, damping=0.0)
+    return _log_det_A(factors)
+
+
+laplace_log_det_neg_H_batch_x_only_decoupled = jax.vmap(
+    laplace_log_det_neg_H_x_only_decoupled,
+    in_axes=(0, 0, None, None, None, None, None, None, None),
+)
+
+
+def laplace_log_det_neg_H_x_only_offset_decoupled(
+    z_kept_map: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> jnp.ndarray:
+    """``log det(−H_z)`` at decoupled x-only-offset MAP."""
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept_map, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta, eta_offset, n_quad_nodes,
+    )
+    a_kept = fac["a"][kept_idx]
+    factors = _woodbury_factors(W, d, a_kept, damping=0.0)
+    return _log_det_A(factors)
+
+
+laplace_log_det_neg_H_batch_x_only_offset_decoupled = jax.vmap(
+    laplace_log_det_neg_H_x_only_offset_decoupled,
+    in_axes=(0, 0, 0, None, None, None, None, None, None, None),
+)
+
+
+# ---------------------------------------------------------------------
+# Per-block gradient-norm diagnostics (decoupled)
+# ---------------------------------------------------------------------
+
+
+def _twostate_ln_logit_grad_x_only_norm_decoupled(
+    z_kept_map: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> jnp.ndarray:
+    """L∞ of ``∇_{z_kept} f`` at decoupled x-only Newton MAP."""
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept_map, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta,
+        jnp.asarray(0.0, dtype=z_kept_map.dtype), n_quad_nodes,
+    )
+    g_data_full = fac["g_data"]
+
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_z = inv_d * z_kept_map - inv_d * (
+        W @ jax.scipy.linalg.cho_solve(
+            (L_K, True), W.T @ (inv_d * z_kept_map)
+        )
+    )
+    g_z = g_data_full[kept_idx] - sigma_inv_z
+    return jnp.max(jnp.abs(g_z))
+
+
+twostate_ln_logit_grad_x_only_norm_batch_decoupled = jax.vmap(
+    _twostate_ln_logit_grad_x_only_norm_decoupled,
+    in_axes=(0, 0, None, None, None, None, None, None, None),
+)
+
+
+def _twostate_ln_logit_grad_x_only_offset_norm_decoupled(
+    z_kept_map: jnp.ndarray,
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    rate: jnp.ndarray,
+    kappa: jnp.ndarray,
+    theta: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_quad_nodes: int = _DEFAULT_K,
+) -> jnp.ndarray:
+    """L∞ of ``∇_{z_kept} f`` at decoupled x-only-offset MAP."""
+    G_obs = int(theta.shape[0])
+    x_full = _scatter_z_into_full(z_kept_map, kept_idx, G_obs)
+    fac = _twostate_ln_logit_factors(
+        x_full, u, rate, kappa, theta, eta_offset, n_quad_nodes,
+    )
+    g_data_full = fac["g_data"]
+
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_z = inv_d * z_kept_map - inv_d * (
+        W @ jax.scipy.linalg.cho_solve(
+            (L_K, True), W.T @ (inv_d * z_kept_map)
+        )
+    )
+    g_z = g_data_full[kept_idx] - sigma_inv_z
+    return jnp.max(jnp.abs(g_z))
+
+
+twostate_ln_logit_grad_x_only_offset_norm_batch_decoupled = jax.vmap(
+    _twostate_ln_logit_grad_x_only_offset_norm_decoupled,
+    in_axes=(0, 0, None, None, None, None, None, 0, None, None),
+)

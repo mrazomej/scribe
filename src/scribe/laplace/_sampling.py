@@ -546,6 +546,12 @@ class SamplingResultsMixin:
                     "TSLN-Logit PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_logit_marginal(
                 rng_key,
                 n_samples,
@@ -556,6 +562,7 @@ class SamplingResultsMixin:
                 self.kappa,
                 self.eta_anchor,
                 eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"marginal PPC not implemented for base_model={bm!r}"
@@ -715,6 +722,12 @@ class SamplingResultsMixin:
                     "TSLN-Logit per-cell PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_logit_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -725,6 +738,7 @@ class SamplingResultsMixin:
                 self.rate,
                 self.kappa,
                 self.eta_anchor,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"get_per_cell_predictive_samples not implemented for base_model={bm!r}"
@@ -840,6 +854,12 @@ class SamplingResultsMixin:
                     "TSLN-Logit map PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_twostate_ln_logit_per_cell(
                 rng_key,
                 n_samples,
@@ -848,6 +868,7 @@ class SamplingResultsMixin:
                 self.rate,
                 self.kappa,
                 self.eta_anchor,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"get_map_ppc_samples not implemented for base_model={bm!r}"

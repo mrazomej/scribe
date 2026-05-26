@@ -836,33 +836,89 @@ class TestTslnLogitScaffolding:
         assert res.G_obs == res.G_kept
         assert res.G_obs >= 2
 
-    def test_decoupled_raises_from_obs_model(self):
-        """Explicit `correlate_other_column=False` with a pooled
-        `_other` column triggers the TSLN-Logit obs-model
-        NotImplementedError (not the engine early-fail, which has
-        retired ``twostate_ln_logit`` as of Commit 4)."""
+    def test_decoupled_fit_produces_kept_axis_shapes(self):
+        """Commit 4b: TSLN-Logit decoupled math is live.  ``W`` and
+        ``d`` live on G_kept; per-gene ``rate`` / ``kappa`` /
+        ``eta_anchor`` stay on G_obs.  Per-cell ``x_loc`` carries
+        ``z_kept`` (zero-centred under both layouts since TSLN-Logit's
+        z has no μ centring)."""
         import scribe
 
-        adata = _make_adata(20, 8, seed=0)
-        with pytest.raises(NotImplementedError) as excinfo:
-            scribe.fit(
-                adata,
-                model="twostate_ln_logit",
-                inference_method="laplace",
-                latent_dim=2,
-                n_steps=5,
-                seed=0,
-                gene_coverage=0.85,
-                correlate_other_column=False,
-            )
-        msg = str(excinfo.value)
-        assert "TSLN-Logit" in msg
-        assert "correlate_other_column=True" in msg
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="twostate_ln_logit", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is True
+        assert res.G_kept == res.G_obs - 1
+        # Per-gene observation parameters stay on G_obs.
+        assert res.rate.shape == (res.G_obs,)
+        assert res.kappa.shape == (res.G_obs,)
+        assert res.eta_anchor.shape == (res.G_obs,)
+        # Latent-covariance parameters live on G_kept.
+        assert res.W.shape == (res.G_kept, 2)
+        assert res.d.shape == (res.G_kept,)
+        assert res.x_loc.shape == (30, res.G_kept)
 
-    # Obsolete after Commit 5: PLN now owns its own decoupled
-    # detection in the obs model, so the engine-level early-fail
-    # set is empty.  See ``TestPlnScaffolding`` for the
-    # obs-model-driven test on PLN decoupled.
+    def test_decoupled_ppc_all_levels_full_g_obs_shape(self):
+        """All three TSLN-Logit PPC pathways emit counts on G_obs
+        under decoupling — mirrors the NBLN/TSLN-Rate fixes."""
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="twostate_ln_logit", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        counts_for_ppc = _np.full(
+            (30, res.G_obs), 1.0, dtype=_np.float32
+        )
+
+        m = res.get_ppc_samples(n_samples=4, level="marginal")
+        assert m.shape == (4, res.G_obs)
+
+        pc = res.get_ppc_samples(
+            n_samples=2, level="per_cell", counts=counts_for_ppc,
+        )
+        assert pc.shape == (2, 30, res.G_obs)
+
+        mp = res.get_map_ppc_samples(n_samples=2)
+        assert mp.shape == (2, 30, res.G_obs)
+
+    def test_decoupled_get_map_and_distributions(self):
+        """``get_map()["y_latent"]`` shape == ``(N, G_obs)``;
+        ``_other`` column == ``0`` (no z modulation under decoupling).
+        ``get_distributions()["y_latent"].event_shape == (G_obs,)``."""
+        import jax
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="twostate_ln_logit", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        m = res.get_map()
+        assert m["y_latent"].shape == (30, res.G_obs)
+        other_idx = res.axis_layout.other_idx
+        # ``_other``'s latent stays at zero (no z modulation).
+        assert _np.allclose(
+            _np.asarray(m["y_latent"])[:, other_idx], 0.0, atol=1e-6,
+        )
+
+        d = res.get_distributions()
+        y = d["y_latent"]
+        assert y.event_shape == (res.G_obs,)
+        s = y.sample(jax.random.PRNGKey(0), sample_shape=(32,))
+        assert s.shape == (32, res.G_obs)
 
 
 # =====================================================================
@@ -945,32 +1001,19 @@ class TestManuallyNamedOtherEndToEnd:
         ad_obj.var_names = names
         return ad_obj
 
-    @pytest.mark.parametrize(
-        "model,expected_str",
-        [
-            # NBLN (Commit 2b) and TSLN-Rate (Commit 3b) have landed —
-            # see the positive tests below.  TSLN-Logit and PLN still
-            # raise because their math commits (4b / 5b) haven't
-            # landed yet.
-            ("twostate_ln_logit", "TSLN-Logit"),
-            ("pln", "PLN"),
-        ],
-    )
-    def test_manually_named_other_decoupled_raises(
-        self, model, expected_str
-    ):
-        """With `var_names[-1] == "_other"` AND no `gene_coverage` AND
-        explicit `correlate_other_column=False`, obs models WITHOUT
-        math yet (TSLN-Logit / PLN) raise ``NotImplementedError`` via
-        the names-fallback detection in ``build_axis_layout``.  See the
-        positive tests below for NBLN and TSLN-Rate."""
+    def test_manually_named_other_decoupled_pln_raises(self):
+        """PLN is the only count model whose math (5b) hasn't landed
+        yet.  With ``var_names[-1] == "_other"`` AND
+        ``correlate_other_column=False``, PLN's obs-model
+        ``init_state`` raises ``NotImplementedError`` via the
+        names-fallback detection in ``build_axis_layout``."""
         import scribe
 
         adata = self._make_adata_with_manual_other(seed=0)
         with pytest.raises(NotImplementedError) as excinfo:
             scribe.fit(
                 adata,
-                model=model,
+                model="pln",
                 inference_method="laplace",
                 latent_dim=2,
                 n_steps=3,
@@ -978,19 +1021,19 @@ class TestManuallyNamedOtherEndToEnd:
                 correlate_other_column=False,
             )
         msg = str(excinfo.value)
-        # Each model's guard names itself in the error message.
-        assert expected_str in msg
+        assert "PLN" in msg
         assert "correlate_other_column=True" in msg
 
     @pytest.mark.parametrize(
-        "model", ["nbln", "twostate_ln_rate"],
+        "model", ["nbln", "twostate_ln_rate", "twostate_ln_logit"],
     )
     def test_manually_named_other_decoupled_with_math_runs(self, model):
         """Models with the decoupled math wired (NBLN: Commit 2b,
-        TSLN-Rate: Commit 3b) support the manually-named ``_other``
-        tail path: ``var_names[-1] == "_other"`` with no
-        ``gene_coverage`` AND explicit ``correlate_other_column=False``
-        fits cleanly and produces ``W`` / ``d`` on the kept axis."""
+        TSLN-Rate: Commit 3b, TSLN-Logit: Commit 4b) support the
+        manually-named ``_other`` tail path: ``var_names[-1] ==
+        "_other"`` with no ``gene_coverage`` AND explicit
+        ``correlate_other_column=False`` fits cleanly and produces
+        ``W`` / ``d`` on the kept axis."""
         import scribe
 
         adata = self._make_adata_with_manual_other(seed=0)

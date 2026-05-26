@@ -718,13 +718,36 @@ class DispatchResultsMixin:
             # z=0).  ``self.mu`` is zeros for TSLN-Logit (the latent
             # prior center); ``self.eta_anchor`` is the per-gene
             # activation log-odds θ_g.
+            #
+            # Commit 4b: under decoupled TSLN-Logit, ``self.x_loc`` is
+            # ``z_kept`` on G_kept.  Reconstruct full G_obs per-cell
+            # latent as ``z_kept`` scattered at kept positions and
+            # ``0`` at ``_other`` — matching the math contract that
+            # ``_other``'s activation log-odds has no z modulation
+            # (``η_act_other = θ_other``).
+            _layout_ts = getattr(self, "axis_layout", None)
+            _is_decoupled_ts = (
+                _layout_ts is not None and _layout_ts.decoupled
+            )
+            if _is_decoupled_ts and self.x_loc is not None:
+                _kept_idx = jnp.asarray(_layout_ts.kept_idx)
+                _n_cells = int(self.x_loc.shape[0])
+                _G_obs = int(self.eta_anchor.shape[0])
+                _y_latent_full = jnp.zeros(
+                    (_n_cells, _G_obs), dtype=self.x_loc.dtype,
+                )
+                _y_latent_full = _y_latent_full.at[:, _kept_idx].add(
+                    self.x_loc
+                )
+            else:
+                _y_latent_full = self.x_loc
             out = {
                 # ``mu`` here is the LATENT prior center (zeros for
                 # TSLN-Logit — the latent z ~ N(0, Σ) prior).
                 "mu": self.mu,
                 "W": self.W,
                 "d_tsln": self.d,
-                "y_latent": self.x_loc,
+                "y_latent": _y_latent_full,
             }
             # Correct the positive parents (rate, kappa). eta_anchor is
             # a real-valued parameter (not positive) so no Jacobian
@@ -1184,9 +1207,40 @@ class DispatchResultsMixin:
             # (identity) and does not need a TransformedDistribution.
             tfm_rate = resolve_numpyro_transform(self.model_config, "rate")
             tfm_kappa = resolve_numpyro_transform(self.model_config, "kappa")
+            # Commit 4b: under decoupled TSLN-Logit, ``W`` / ``d`` live
+            # on G_kept while ``self.mu`` lives on G_obs (zeros).  Pad
+            # ``W`` with zero rows at ``other_idx`` and ``d`` with
+            # ``1e-12`` at ``other_idx`` so the LowRankMultivariateNormal
+            # has the correct G_obs event shape and ``_other`` has
+            # effectively-zero variance.  Same pattern as NBLN/PLN/
+            # TSLN-Rate get_distributions.
+            _layout_ts_dist = getattr(self, "axis_layout", None)
+            _is_decoupled_ts_dist = (
+                _layout_ts_dist is not None
+                and _layout_ts_dist.decoupled
+            )
+            if _is_decoupled_ts_dist:
+                _G_obs_ts = int(self.mu.shape[0])
+                _K_ts = int(self.W.shape[1])
+                _kept_idx_ts = jnp.asarray(_layout_ts_dist.kept_idx)
+                _W_padded_ts = jnp.zeros(
+                    (_G_obs_ts, _K_ts), dtype=self.W.dtype
+                )
+                _W_padded_ts = _W_padded_ts.at[_kept_idx_ts].set(self.W)
+                _d_padded_ts = jnp.full(
+                    (_G_obs_ts,), 1e-12, dtype=self.d.dtype
+                )
+                _d_padded_ts = _d_padded_ts.at[_kept_idx_ts].set(self.d)
+                _W_for_dist_ts = _W_padded_ts
+                _d_for_dist_ts = _d_padded_ts
+            else:
+                _W_for_dist_ts = self.W
+                _d_for_dist_ts = self.d
             out: Dict[str, Any] = {
                 "y_latent": dist.LowRankMultivariateNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                    loc=self.mu,
+                    cov_factor=_W_for_dist_ts,
+                    cov_diag=_d_for_dist_ts,
                 ),
             }
             frozen = getattr(self, "frozen_params", frozenset())

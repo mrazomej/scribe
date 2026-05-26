@@ -466,15 +466,14 @@ class ModelConfig(BaseModel):
     # abstraction (``scribe.laplace._axis_layout``), engine threading
     # of ``gene_names`` + ``has_pooled_other``, per-model fail-fast
     # guards on PLN/NBLN/TSLN-Rate/TSLN-Logit, and LNM real wiring
-    # through ALR-reference pinning.  NBLN (Commit 2b) and TSLN-Rate
-    # (Commit 3b) have their decoupled deviation-form math wired in:
-    # loss / Newton / global_uncertainty / PPC / get_map /
-    # get_distributions all handle the kept-vs-obs axis split.
-    # TSLN-Logit and PLN still raise ``NotImplementedError`` under
-    # decoupling — their math commits (4b / 5b) are pending.  The
-    # default stays ``True`` until those two commits land; at that
-    # point the default flips to ``False`` and ``True`` becomes the
-    # explicit legacy opt-in.
+    # through ALR-reference pinning.  NBLN (Commit 2b), TSLN-Rate
+    # (Commit 3b), and TSLN-Logit (Commit 4b) have their decoupled
+    # deviation-form math wired in: loss / Newton / global_uncertainty
+    # / PPC / get_map / get_distributions all handle the kept-vs-obs
+    # axis split.  PLN still raises ``NotImplementedError`` under
+    # decoupling — its math commit (5b) is pending.  The default
+    # stays ``True`` until 5b lands; at that point the default flips
+    # to ``False`` and ``True`` becomes the explicit legacy opt-in.
     #
     # **LNM / LNMVCP** is the exception: LNM realises the decoupling
     # without the deviation reparameterisation because the ALR
@@ -498,11 +497,11 @@ class ModelConfig(BaseModel):
             "Scaffolding for `False` has landed across "
             "PLN/NBLN/TSLN-Rate/TSLN-Logit, and the deviation-"
             "parameterised math is live for NBLN (Commit 2b), "
-            "TSLN-Rate (Commit 3b), and LNM (via ALR-reference "
-            "auto-pinning, Commit 6).  TSLN-Logit and PLN still raise "
-            "NotImplementedError under `False` until their math "
-            "commits (4b/5b) land.  The default flips to `False` "
-            "once those two commits ship."
+            "TSLN-Rate (Commit 3b), TSLN-Logit (Commit 4b), and LNM "
+            "(via ALR-reference auto-pinning, Commit 6).  PLN still "
+            "raises NotImplementedError under `False` until its math "
+            "commit (5b) lands.  The default flips to `False` once 5b "
+            "ships."
         ),
     )
 

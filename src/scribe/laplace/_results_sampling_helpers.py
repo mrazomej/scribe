@@ -1667,6 +1667,11 @@ def _ppc_twostate_ln_logit_marginal(
     kappa: jnp.ndarray,
     eta_anchor: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray] = None,
+    # Commit 4b: under ``correlate_other_column=False``, ``W`` / ``d``
+    # live on G_kept.  Sample ``z_kept`` on G_kept and scatter onto
+    # G_obs zero-base so ``η_act = θ + x_full`` reduces to ``θ`` at
+    # ``_other`` (no z modulation).
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Fully marginal TSLN-Logit posterior predictive samples.
 
@@ -1691,15 +1696,26 @@ def _ppc_twostate_ln_logit_marginal(
     """
     from ..stats.distributions import PoissonBetaCompound
 
-    g_genes = int(mu.shape[0])
+    g_obs = int(mu.shape[0])
     k_factors = int(W.shape[1])
     k1, k2, k3, k4 = jax.random.split(rng_key, 4)
     z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
-    eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
-    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    if kept_idx is not None:
+        # Decoupled: latent on G_kept; scatter onto G_obs with zeros at
+        # ``_other``.  ``mu`` is zeros for TSLN-Logit so we skip the
+        # ``mu +`` addition entirely.
+        g_kept = int(W.shape[0])
+        eps = jax.random.normal(k2, (n_samples, g_kept), dtype=mu.dtype)
+        z_kept_full = z @ W.T + jnp.sqrt(d)[None, :] * eps  # (S, G_kept)
+        x = jnp.zeros((n_samples, g_obs), dtype=mu.dtype)
+        x = x.at[:, kept_idx].add(z_kept_full)
+    else:
+        eps = jax.random.normal(k2, (n_samples, g_obs), dtype=mu.dtype)
+        x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    g_genes = g_obs  # for downstream broadcast / log_rate construction
 
     # TSLN-Logit Beta shape parameters depend on (theta + x).
-    eta_act = eta_anchor[None, :] + x                    # (S, G)
+    eta_act = eta_anchor[None, :] + x                    # (S, G_obs)
     phi = jax.nn.sigmoid(eta_act)
     alpha = kappa[None, :] * phi                         # (S, G)
     beta = kappa[None, :] * (1.0 - phi)                  # (S, G)
@@ -1733,6 +1749,10 @@ def _ppc_twostate_ln_logit_per_cell(
     rate: jnp.ndarray,
     kappa: jnp.ndarray,
     eta_anchor: jnp.ndarray,
+    # Commit 4b: under decoupling, ``x_loc`` is ``z_kept`` on
+    # ``(N, G_kept)``.  Scatter onto G_obs (zeros at ``_other``)
+    # before forming the activation log-odds ``θ + x_full``.
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Per-cell MAP-only TSLN-Logit predictive samples.
 
@@ -1740,21 +1760,36 @@ def _ppc_twostate_ln_logit_per_cell(
     only observation noise.
 
     Returns shape ``(S, C, G)``.
+
+    When ``kept_idx`` is provided (decoupled layout, Commit 4b),
+    ``x_loc`` carries ``z_kept`` on G_kept; the activation log-odds
+    is reconstructed on G_obs as ``θ + z_kept[k_g]`` for kept genes
+    and ``θ`` for ``_other`` (no z modulation).
     """
     from ..stats.distributions import PoissonBetaCompound
 
-    # Beta shape parameters at the cell-specific MAP.
-    eta_act = eta_anchor[None, :] + x_loc                # (C, G)
-    phi = jax.nn.sigmoid(eta_act)
-    alpha = kappa[None, :] * phi                         # (C, G)
-    beta = kappa[None, :] * (1.0 - phi)                  # (C, G)
+    n_cells = int(x_loc.shape[0])
+    g_obs = int(eta_anchor.shape[0])
 
-    log_rate_g = jnp.log(jnp.maximum(rate, 1e-30))       # (G,)
+    if kept_idx is not None:
+        # Scatter ``z_kept`` onto G_obs zero-base.
+        x_full = jnp.zeros((n_cells, g_obs), dtype=x_loc.dtype)
+        x_full = x_full.at[:, kept_idx].add(x_loc)
+    else:
+        x_full = x_loc
+
+    # Beta shape parameters at the cell-specific activation log-odds.
+    eta_act = eta_anchor[None, :] + x_full               # (C, G_obs)
+    phi = jax.nn.sigmoid(eta_act)
+    alpha = kappa[None, :] * phi                         # (C, G_obs)
+    beta = kappa[None, :] * (1.0 - phi)                  # (C, G_obs)
+
+    log_rate_g = jnp.log(jnp.maximum(rate, 1e-30))       # (G_obs,)
     if eta_loc is not None:
-        log_rate = log_rate_g[None, :] - eta_loc[:, None]  # (C, G)
+        log_rate = log_rate_g[None, :] - eta_loc[:, None]  # (C, G_obs)
     else:
         log_rate = jnp.broadcast_to(
-            log_rate_g[None, :], x_loc.shape
+            log_rate_g[None, :], (n_cells, g_obs)
         )
     log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
 
@@ -1776,6 +1811,11 @@ def _ppc_twostate_ln_logit_per_cell_laplace(
     rate: jnp.ndarray,
     kappa: jnp.ndarray,
     eta_anchor: jnp.ndarray,
+    # Commit 4b: under decoupling, ``x_loc`` is ``z_kept`` on
+    # ``(N, G_kept)`` and W/d are on G_kept too.  The Laplace per-cell
+    # sampler runs on the kept axis; we scatter onto G_obs (zeros at
+    # ``_other``) before building activation log-odds.
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Per-cell Laplace-perturbed TSLN-Logit predictive samples.
 
@@ -1792,32 +1832,45 @@ def _ppc_twostate_ln_logit_per_cell_laplace(
     from ..stats.distributions import PoissonBetaCompound
 
     n_cells = int(x_loc.shape[0])
+    g_obs = int(eta_anchor.shape[0])
     eta_arr = (
         jnp.zeros(n_cells, dtype=x_loc.dtype)
         if eta_loc is None
         else jnp.asarray(eta_loc)
     )
-    log_rate_g = jnp.log(jnp.maximum(rate, 1e-30))       # (G,)
+    log_rate_g = jnp.log(jnp.maximum(rate, 1e-30))       # (G_obs,)
+
+    def _build_eta_act(x_samples: jnp.ndarray) -> jnp.ndarray:
+        """Reduce ``(S, C, G_eff)`` posterior draws → ``(S, C, G_obs)``
+        activation log-odds ``θ + x_full``.
+
+        Under legacy, ``x_samples`` already lives on G_obs.  Under
+        decoupling, ``x_samples`` is ``z_kept`` on G_kept; scatter
+        onto a G_obs zero-base so ``η_act`` at ``_other`` reduces to
+        ``θ_other`` (no z modulation).
+        """
+        if kept_idx is not None:
+            n_s = int(x_samples.shape[0])
+            n_c = int(x_samples.shape[1])
+            base = jnp.zeros((n_s, n_c, g_obs), dtype=x_samples.dtype)
+            x_full = base.at[..., kept_idx].add(x_samples)
+        else:
+            x_full = x_samples
+        return eta_anchor[None, None, :] + x_full
 
     chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
     if chunk_size is None or chunk_size >= n_samples:
         size = int(n_samples)
         k_x, k_p = jax.random.split(rng_key)
         cell_keys = jax.random.split(k_x, n_cells)
-        # Note: ``sample_x_posterior_batch`` uses the PLN log-rate
-        # parameterisation in its internal coupling, but here we
-        # only need it to draw from the latent prior covariance
-        # around the MAP — and Σ is the same across all PLN-family
-        # variants.  Pass eta_arr as the cell offset; the PLN
-        # sampler treats it as a stop_gradient constant.
         x_samples = sample_x_posterior_batch(
             cell_keys, x_loc, eta_arr, W, d, size, 0.0
         )
-        x_samples = jnp.transpose(x_samples, (1, 0, 2))  # (S, C, G)
+        x_samples = jnp.transpose(x_samples, (1, 0, 2))  # (S, C, G_eff)
 
-        eta_act = eta_anchor[None, None, :] + x_samples  # (S, C, G)
+        eta_act = _build_eta_act(x_samples)              # (S, C, G_obs)
         phi = jax.nn.sigmoid(eta_act)
-        alpha = kappa[None, None, :] * phi               # (S, C, G)
+        alpha = kappa[None, None, :] * phi               # (S, C, G_obs)
         beta = kappa[None, None, :] * (1.0 - phi)
         log_rate = jnp.clip(
             log_rate_g[None, None, :] - eta_arr[None, :, None],
@@ -1842,7 +1895,7 @@ def _ppc_twostate_ln_logit_per_cell_laplace(
             cell_keys, x_loc, eta_arr, W, d, size, 0.0
         )
         x_samples = jnp.transpose(x_samples, (1, 0, 2))
-        eta_act = eta_anchor[None, None, :] + x_samples
+        eta_act = _build_eta_act(x_samples)
         phi = jax.nn.sigmoid(eta_act)
         alpha = kappa[None, None, :] * phi
         beta = kappa[None, None, :] * (1.0 - phi)
