@@ -129,6 +129,20 @@ class GeneSubsettingResultsMixin:
         Subsetted uncertainty fields (``r_loc``, ``r_scale``) are
         marginals from the model fitted on the full gene panel, not the
         posterior one would obtain by refitting on only the selected genes.
+
+        When the parent fit used ``correlate_other_column=False`` (the
+        deviation-form decoupled layout), the subset's ``axis_layout``
+        is REBUILT as the trivial layout (``G_kept == G_obs == len(idx)``,
+        no ``_other``).  The parent's kept-axis ``W`` / ``d`` are sliced
+        to ``idx``, and for the per-gene **marginal** NB distribution
+        each gene's prediction depends only on its own
+        ``(μ_g, W_g, d_g, r_g)`` row — so treating the subset as
+        "legacy" mathematically reproduces the same marginal samples
+        the decoupled parent would emit on those genes.  Carrying the
+        parent's ``(G_obs=full, G_kept=full−1)`` axis_layout onto a
+        subset would create a shape inconsistency caught by the PPC
+        dispatch guard in :func:`scribe.laplace._sampling.
+        _resolve_decoupled_kept_idx`.
         """
         idx_jnp = jnp.asarray(idx)
         W_subset = self.W[idx_jnp, :]
@@ -136,12 +150,28 @@ class GeneSubsettingResultsMixin:
         def _slice(arr):
             return arr[idx_jnp] if arr is not None else None
 
+        # Rebuild axis_layout for the subset: trivial layout (no
+        # ``_other`` concept on a subset of kept genes).  See class
+        # docstring above for the marginal-equivalence rationale.
+        new_axis_layout = None
+        if getattr(self, "axis_layout", None) is not None:
+            from ._axis_layout import AxisLayout
+
+            n_new = int(len(idx))
+            new_axis_layout = AxisLayout(
+                G_obs=n_new,
+                G_kept=n_new,
+                kept_idx=np.arange(n_new, dtype=np.int64),
+                other_idx=None,
+            )
+
         return replace(
             self,
             mu=self.mu[idx_jnp],
             W=W_subset,
             d=self.d[idx_jnp],
             x_loc=self.x_loc[:, idx_jnp] if self.x_loc is not None else None,
+            axis_layout=new_axis_layout,
             # NBLN fields.
             r=_slice(self.r),
             r_loc=_slice(self.r_loc),

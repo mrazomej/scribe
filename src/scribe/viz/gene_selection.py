@@ -27,7 +27,26 @@ def _resolve_pooled_other_idx(results) -> Optional[int]:
        last-resort literal-name match.
 
     Returns ``None`` when no pooled ``_other`` column is present.
+
+    LNM exception
+    -------------
+    For LNM / LNMVCP fits, returns ``None`` regardless of the above.
+    LNM treats the trailing column as the ALR reference gene, and the
+    result's ``__getitem__`` subset operation REQUIRES the reference
+    to be included in any subset.  Excluding ``_other`` from gene
+    selection would produce a subset that fails the
+    ``_subset_lnm`` reference-in-subset check.  LNM's predictive
+    distribution for ``_other`` is also well-defined (recovered from
+    the inverse-ALR), so keeping it in the gene-selection candidate
+    pool is harmless.
     """
+    model_config = getattr(results, "model_config", None)
+    base_model = getattr(model_config, "base_model", None)
+    base_model_str = (
+        str(getattr(base_model, "value", base_model) or "").lower()
+    )
+    if base_model_str in ("lnm", "lnmvcp"):
+        return None
     layout = getattr(results, "axis_layout", None)
     if layout is not None and getattr(layout, "other_idx", None) is not None:
         return int(layout.other_idx)
