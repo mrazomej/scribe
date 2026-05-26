@@ -104,15 +104,17 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
 - **`correlate_other_column` flag (`ModelConfig`).** Controls whether
   the trailing pooled `_other` column emitted by `gene_coverage<1.0`
   participates in the latent low-rank covariance Σ used by PLN /
-  NBLN / TSLN-Rate / TSLN-Logit / LNM.  The flag is currently held
-  at the legacy default `True` (pooled `_other` participates in Σ —
-  bit-equal to pre-flag behaviour) while the per-model decoupled
-  math is being rolled out commit-by-commit; the default flips to
-  `False` (the biologically cleaner setting) when the math ships
-  and `True` becomes the explicit legacy opt-in.  LNM realises the
-  decoupling by auto-pinning the ALR reference to `_other`'s
-  position under `False`; explicit conflicting overrides raise.
-  See [`src/scribe/laplace/README.md`](src/scribe/laplace/README.md)
+  NBLN / TSLN-Rate / TSLN-Logit / LNM.  **Default `False`**: the
+  pooled aggregate is excluded from Σ (biologically cleaner —
+  `_other` is a pooled-counts aggregate, not a real gene).  All
+  five obs models support `False`: PLN / NBLN / TSLN-Rate / TSLN-
+  Logit via the deviation reparameterisation (Commits 2b–5b); LNM
+  via ALR-reference pinning (Commit 6).  Pass `True` to recover the
+  legacy behaviour where `_other` participates in Σ — preserved
+  bit-equal for users who relied on it.  LNM auto-pins the ALR
+  reference to `_other`'s position under `False`; explicit
+  conflicting overrides raise.  See
+  [`src/scribe/laplace/README.md`](src/scribe/laplace/README.md)
   *Decorrelating the `_other` aggregate from Σ* for the behaviour
   matrix and [`paper/_nb_lognormal.qmd`](paper/_nb_lognormal.qmd)
   §sec-nbln-decorrelate-other for the math.

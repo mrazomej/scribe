@@ -446,6 +446,12 @@ class SamplingResultsMixin:
             )
 
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_marginal(
                 rng_key,
                 n_samples,
@@ -453,6 +459,7 @@ class SamplingResultsMixin:
                 self.W,
                 self.d,
                 eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:
@@ -622,8 +629,16 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_per_cell_laplace(
-                rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d
+                rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:
@@ -781,8 +796,16 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_per_cell(
-                rng_key, n_samples, self.x_loc, self.eta_loc
+                rng_key, n_samples, self.x_loc, self.eta_loc,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:

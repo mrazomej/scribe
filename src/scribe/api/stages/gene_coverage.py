@@ -205,7 +205,7 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
         # and ``paper/_logistic_normal_multinomial.qmd`` cross-ref for
         # the biophysical rationale.
         _correlate_other_column = bool(
-            kw.get("correlate_other_column", True)
+            kw.get("correlate_other_column", False)
         )
         _other_pos_in_filtered = n_genes - 1  # last position post-filter
 

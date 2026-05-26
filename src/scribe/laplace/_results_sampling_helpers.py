@@ -102,6 +102,11 @@ def _ppc_pln_marginal(
     W: jnp.ndarray,
     d: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray] = None,
+    # Commit 5b: under ``correlate_other_column=False``, ``W`` / ``d``
+    # live on G_kept; the fresh ``x`` is built by sampling ``x_dev`` on
+    # G_kept and scattering ``μ + x_dev`` at kept positions, ``μ`` at
+    # ``_other`` (deterministic).  Same pattern as NBLN's PPC fix.
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Draw fully marginal PLN posterior predictive samples.
 
@@ -137,12 +142,21 @@ def _ppc_pln_marginal(
     and optionally subtracts a bootstrapped capture offset ``η_s`` before
     mapping to Poisson rates ``λ_sg = exp(clip(x_sg - η_s, ...))``.
     """
-    g_genes = int(mu.shape[0])
+    g_obs = int(mu.shape[0])
     k_factors = int(W.shape[1])
     k1, k2, k3, k4 = jax.random.split(rng_key, 4)
     z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
-    eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
-    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    if kept_idx is not None:
+        # Decoupled: latent lives on G_kept; scatter onto G_obs.
+        g_kept = int(W.shape[0])
+        eps = jax.random.normal(k2, (n_samples, g_kept), dtype=mu.dtype)
+        x_dev = z @ W.T + jnp.sqrt(d)[None, :] * eps
+        x = _scatter_x_dev_into_full(
+            mu[None, :], x_dev, kept_idx, (n_samples, g_obs)
+        )
+    else:
+        eps = jax.random.normal(k2, (n_samples, g_obs), dtype=mu.dtype)
+        x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
     if eta_loc is not None:
         eta_loc_arr = jnp.asarray(eta_loc).reshape(-1)
         idx = jax.random.randint(k3, (n_samples,), 0, eta_loc_arr.shape[0])
@@ -274,6 +288,12 @@ def _ppc_pln_per_cell(
     n_samples: int,
     x_loc: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray],
+    # Commit 5b: under decoupled PLN, ``x_loc`` is ``x_dev`` on
+    # ``(N, G_kept)``.  Need ``mu`` + ``kept_idx`` to reconstruct
+    # the full ``(N, G_obs)`` log-rate (``μ + x_dev`` at kept,
+    # ``μ`` at ``_other``).
+    mu: Optional[jnp.ndarray] = None,
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Draw PLN per-cell MAP-only predictive samples.
 
@@ -284,9 +304,14 @@ def _ppc_pln_per_cell(
     n_samples : int
         Number of draws per cell.
     x_loc : jnp.ndarray
-        Per-cell MAP log-rates, shape ``(n_cells, G)``.
+        Per-cell MAP log-rates, shape ``(n_cells, G)``.  Under
+        legacy this is the full G_obs log-rate; under decoupling
+        (``kept_idx is not None``) it is ``x_dev`` on G_kept.
     eta_loc : jnp.ndarray, optional
         Optional per-cell capture offsets, shape ``(n_cells,)``.
+    mu, kept_idx : optional
+        Required together under decoupled PLN to reconstruct the
+        full G_obs log-rate.
 
     Returns
     -------
@@ -302,10 +327,25 @@ def _ppc_pln_per_cell(
 
     It does **not** propagate posterior uncertainty in ``x``.
     """
-    if eta_loc is not None:
-        eff_log_rate = x_loc - eta_loc[:, None]
+    if kept_idx is not None:
+        if mu is None:
+            raise ValueError(
+                "_ppc_pln_per_cell requires ``mu`` when ``kept_idx`` "
+                "is provided (decoupled layout)."
+            )
+        full_log_rate = _reconstruct_full_log_rate_from_kept(
+            x_loc, mu, kept_idx
+        )
+        eff_log_rate = (
+            full_log_rate - eta_loc[:, None]
+            if eta_loc is not None
+            else full_log_rate
+        )
     else:
-        eff_log_rate = x_loc
+        if eta_loc is not None:
+            eff_log_rate = x_loc - eta_loc[:, None]
+        else:
+            eff_log_rate = x_loc
     eff_log_rate = jnp.clip(eff_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
     rate = jnp.exp(eff_log_rate)
 
@@ -325,6 +365,12 @@ def _ppc_pln_per_cell_laplace(
     eta_loc: Optional[jnp.ndarray],
     W: jnp.ndarray,
     d: jnp.ndarray,
+    # Commit 5b: under decoupled PLN, ``x_loc`` is ``x_dev`` on
+    # ``(N, G_kept)``; W/d are on G_kept too.  The per-cell Laplace
+    # sampler runs on G_kept and we scatter ``μ + x_dev_perturbed``
+    # onto the full G_obs axis before computing Poisson rates.
+    mu: Optional[jnp.ndarray] = None,
+    kept_idx: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Draw PLN per-cell predictive samples with Laplace latent uncertainty.
 
@@ -369,6 +415,27 @@ def _ppc_pln_per_cell_laplace(
         else jnp.asarray(eta_loc)
     )
 
+    if kept_idx is not None and mu is None:
+        raise ValueError(
+            "_ppc_pln_per_cell_laplace requires ``mu`` when ``kept_idx`` "
+            "is provided (decoupled layout)."
+        )
+
+    def _build_log_rate(x_samples: jnp.ndarray) -> jnp.ndarray:
+        """Reduce ``(S, C, G_eff)`` posterior draws → ``(S, C, G_obs)``
+        per-cell log-rate (μ + x_dev at kept, μ at ``_other`` under
+        decoupling; ``x_samples − η`` under legacy)."""
+        if kept_idx is not None:
+            n_s = int(x_samples.shape[0])
+            n_c = int(x_samples.shape[1])
+            g_obs = int(mu.shape[0])
+            base = jnp.broadcast_to(
+                mu[None, None, :] - eta_arr[None, :, None],
+                (n_s, n_c, g_obs),
+            )
+            return base.at[..., kept_idx].add(x_samples)
+        return x_samples - eta_arr[None, :, None]
+
     chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
     if chunk_size is None or chunk_size >= n_samples:
         size = int(n_samples)
@@ -379,7 +446,7 @@ def _ppc_pln_per_cell_laplace(
         )
         x_samples = jnp.transpose(x_samples, (1, 0, 2))
         log_rate = jnp.clip(
-            x_samples - eta_arr[None, :, None], _LOG_RATE_MIN, _LOG_RATE_MAX
+            _build_log_rate(x_samples), _LOG_RATE_MIN, _LOG_RATE_MAX,
         )
         return np.asarray(jax.random.poisson(k_p, jnp.exp(log_rate)))
 
@@ -397,7 +464,7 @@ def _ppc_pln_per_cell_laplace(
         )
         x_samples = jnp.transpose(x_samples, (1, 0, 2))
         log_rate = jnp.clip(
-            x_samples - eta_arr[None, :, None], _LOG_RATE_MIN, _LOG_RATE_MAX
+            _build_log_rate(x_samples), _LOG_RATE_MIN, _LOG_RATE_MAX,
         )
         pieces.append(np.asarray(jax.random.poisson(k_p, jnp.exp(log_rate))))
     return np.concatenate(pieces, axis=0)

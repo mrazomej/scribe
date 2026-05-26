@@ -287,13 +287,13 @@ class TestNblnLegacyPaths:
         assert res.mu.shape == (8,)
         assert res.r.shape == (8,)
 
-    def test_gene_coverage_default_is_legacy(self):
-        """Current default `correlate_other_column=True` keeps legacy
-        behaviour even when gene_coverage<1.0 emits an `_other` column.
-        Auditor finding rev-4 #2: default is held at True for Commit 2
-        so existing fits don't break by routing through Commit 2b's
-        not-yet-implemented math.
-        """
+    def test_gene_coverage_default_is_decoupled_after_5b(self):
+        """After Commit 5b flipped the default to ``False``, a
+        ``gene_coverage<1.0`` fit without an explicit
+        ``correlate_other_column`` now routes through the decoupled
+        path.  ``W`` and ``d`` live on G_kept; ``μ`` / ``r`` stay on
+        G_obs.  Explicit ``correlate_other_column=True`` recovers
+        legacy."""
         import scribe
 
         adata = _make_adata(30, 12, seed=0)
@@ -302,19 +302,18 @@ class TestNblnLegacyPaths:
             n_steps=5, seed=0,
             gene_coverage=0.85,
             # No explicit `correlate_other_column` — uses the default
-            # (`True` in this release).
+            # (`False` after Commit 5b).
         )
-        # G_obs includes the _other column; layout is still trivial
-        # because the default opts into legacy.
         assert res.axis_layout is not None
-        assert res.axis_layout.decoupled is False
-        assert res.G_obs == res.G_kept  # legacy
-        # W / d / mu / r all (G_obs,).
-        assert res.W.shape[0] == res.G_obs
-        assert res.d.shape == (res.G_obs,)
+        assert res.axis_layout.decoupled is True
+        # G_kept = G_obs − 1 (one pooled _other).
+        assert res.G_kept == res.G_obs - 1
+        # W / d on G_kept; mu / r on G_obs.
+        assert res.W.shape[0] == res.G_kept
+        assert res.d.shape == (res.G_kept,)
         assert res.mu.shape == (res.G_obs,)
         assert res.r.shape == (res.G_obs,)
-        # And the explicit-True opt-in produces identical structure.
+        # Explicit ``True`` opt-in recovers legacy (trivial layout).
         res_explicit = scribe.fit(
             adata, model="nbln", inference_method="laplace", latent_dim=2,
             n_steps=5, seed=0,
@@ -322,6 +321,7 @@ class TestNblnLegacyPaths:
             correlate_other_column=True,
         )
         assert res_explicit.axis_layout.decoupled is False
+        assert res_explicit.G_obs == res_explicit.G_kept
         assert res_explicit.G_obs == res.G_obs
 
 
@@ -583,9 +583,13 @@ class TestPlnScaffolding:
         assert res.d.shape == (6,)
         assert res.mu.shape == (6,)
 
-    def test_legacy_default_with_gene_coverage(self):
-        """Default `correlate_other_column=True` keeps legacy behaviour
-        under `gene_coverage < 1.0`."""
+    def test_explicit_legacy_with_gene_coverage(self):
+        """Explicit ``correlate_other_column=True`` recovers legacy
+        behaviour under ``gene_coverage < 1.0``: ``_other``
+        participates in Σ; trivial layout.  (The default flipped to
+        ``False`` in Commit 5b — see
+        ``test_decoupled_fit_produces_kept_axis_shapes`` for the new
+        default.)"""
         import scribe
 
         adata = _make_adata(20, 8, seed=0)
@@ -597,35 +601,101 @@ class TestPlnScaffolding:
             n_steps=5,
             seed=0,
             gene_coverage=0.85,
+            correlate_other_column=True,
         )
         assert res.axis_layout is not None
         assert res.axis_layout.decoupled is False
         assert res.G_obs == res.G_kept
 
-    def test_decoupled_raises_from_obs_model(self):
-        """Explicit `correlate_other_column=False` with a pooled
-        `_other` column triggers PLN's obs-model NotImplementedError
-        (no engine early-fail anymore — Commit 5 retires it entirely)."""
+    def test_decoupled_fit_produces_kept_axis_shapes(self):
+        """Commit 5b: PLN decoupled math is live.  ``W`` and ``d``
+        live on G_kept; ``μ`` lives on G_obs.  PLN is the simplest of
+        the four count models — no per-gene NB dispersion, no
+        Two-State Beta parameters, just pure Poisson on the per-gene
+        log-rate."""
         import scribe
 
-        adata = _make_adata(20, 8, seed=0)
-        with pytest.raises(NotImplementedError) as excinfo:
-            scribe.fit(
-                adata,
-                model="pln",
-                inference_method="laplace",
-                latent_dim=2,
-                n_steps=5,
-                seed=0,
-                gene_coverage=0.85,
-                correlate_other_column=False,
-            )
-        msg = str(excinfo.value)
-        # Message now identifies PLN by name and points at the
-        # remediation; previously the engine early-fail would say
-        # the model name lower-cased.
-        assert "PLN" in msg
-        assert "correlate_other_column=True" in msg
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="pln", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        assert res.axis_layout is not None
+        assert res.axis_layout.decoupled is True
+        assert res.G_kept == res.G_obs - 1
+        # ``μ`` lives on G_obs (per-gene prior centre).
+        assert res.mu.shape == (res.G_obs,)
+        # Latent-covariance parameters live on G_kept.
+        assert res.W.shape == (res.G_kept, 2)
+        assert res.d.shape == (res.G_kept,)
+        assert res.x_loc.shape == (30, res.G_kept)
+
+    def test_decoupled_ppc_all_levels_full_g_obs_shape(self):
+        """All four PLN PPC pathways emit counts on G_obs under
+        decoupling.  Same pattern as NBLN/TSLN-Rate/TSLN-Logit
+        positive tests."""
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="pln", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        counts_for_ppc = _np.full(
+            (30, res.G_obs), 1.0, dtype=_np.float32
+        )
+
+        m = res.get_ppc_samples(n_samples=4, level="marginal")
+        assert m.shape == (4, res.G_obs)
+
+        la = res.get_ppc_samples(
+            n_samples=2, level="library_anchored", counts=counts_for_ppc,
+        )
+        assert la.shape == (2, 30, res.G_obs)
+
+        pc = res.get_ppc_samples(
+            n_samples=2, level="per_cell", counts=counts_for_ppc,
+        )
+        assert pc.shape == (2, 30, res.G_obs)
+
+        mp = res.get_map_ppc_samples(n_samples=2)
+        assert mp.shape == (2, 30, res.G_obs)
+
+    def test_decoupled_get_map_and_distributions(self):
+        """``get_map()["y_log_rate"]`` shape == ``(N, G_obs)``;
+        ``_other`` column == ``μ_other`` (deterministic — no z
+        modulation).  ``get_distributions()["y_log_rate"].event_shape
+        == (G_obs,)``."""
+        import jax
+        import numpy as _np
+        import scribe
+
+        adata = _make_adata(30, 12, seed=0)
+        res = scribe.fit(
+            adata, model="pln", inference_method="laplace",
+            latent_dim=2, n_steps=5, seed=0,
+            gene_coverage=0.85,
+            correlate_other_column=False,
+        )
+        m = res.get_map()
+        assert m["y_log_rate"].shape == (30, res.G_obs)
+        other_idx = res.axis_layout.other_idx
+        assert _np.allclose(
+            _np.asarray(m["y_log_rate"])[:, other_idx],
+            float(res.mu[other_idx]),
+            atol=1e-5,
+        )
+
+        d = res.get_distributions()
+        y = d["y_log_rate"]
+        assert y.event_shape == (res.G_obs,)
+        s = y.sample(jax.random.PRNGKey(0), sample_shape=(32,))
+        assert s.shape == (32, res.G_obs)
 
 
 class TestTslnRateScaffolding:
@@ -663,10 +733,11 @@ class TestTslnRateScaffolding:
         if res.d is not None:
             assert res.d.shape == (6,)
 
-    def test_legacy_default_with_gene_coverage(self):
-        """Default `correlate_other_column=True` keeps legacy behaviour
-        under `gene_coverage < 1.0` — `_other` participates in Σ as a
-        regular gene; layout is trivial."""
+    def test_explicit_legacy_with_gene_coverage(self):
+        """Explicit ``correlate_other_column=True`` recovers legacy
+        behaviour under ``gene_coverage < 1.0`` — ``_other``
+        participates in Σ as a regular gene; layout is trivial.  (The
+        default flipped to ``False`` in Commit 5b.)"""
         import scribe
 
         adata = _make_adata(20, 8, seed=0)
@@ -678,6 +749,7 @@ class TestTslnRateScaffolding:
             n_steps=5,
             seed=0,
             gene_coverage=0.85,
+            correlate_other_column=True,
         )
         assert res.axis_layout is not None
         assert res.axis_layout.decoupled is False
@@ -815,10 +887,11 @@ class TestTslnLogitScaffolding:
         if res.d is not None:
             assert res.d.shape == (6,)
 
-    def test_legacy_default_with_gene_coverage(self):
-        """Default `correlate_other_column=True` keeps legacy behaviour
-        under `gene_coverage < 1.0`: `_other` participates in Σ as a
-        regular gene; layout is trivial.  Added in rev-10."""
+    def test_explicit_legacy_with_gene_coverage(self):
+        """Explicit ``correlate_other_column=True`` recovers legacy
+        behaviour under ``gene_coverage < 1.0``: ``_other``
+        participates in Σ as a regular gene; layout is trivial.
+        (The default flipped to ``False`` in Commit 5b.)"""
         import scribe
 
         adata = _make_adata(20, 8, seed=0)
@@ -830,6 +903,7 @@ class TestTslnLogitScaffolding:
             n_steps=5,
             seed=0,
             gene_coverage=0.85,
+            correlate_other_column=True,
         )
         assert res.axis_layout is not None
         assert res.axis_layout.decoupled is False
@@ -1001,39 +1075,17 @@ class TestManuallyNamedOtherEndToEnd:
         ad_obj.var_names = names
         return ad_obj
 
-    def test_manually_named_other_decoupled_pln_raises(self):
-        """PLN is the only count model whose math (5b) hasn't landed
-        yet.  With ``var_names[-1] == "_other"`` AND
-        ``correlate_other_column=False``, PLN's obs-model
-        ``init_state`` raises ``NotImplementedError`` via the
-        names-fallback detection in ``build_axis_layout``."""
-        import scribe
-
-        adata = self._make_adata_with_manual_other(seed=0)
-        with pytest.raises(NotImplementedError) as excinfo:
-            scribe.fit(
-                adata,
-                model="pln",
-                inference_method="laplace",
-                latent_dim=2,
-                n_steps=3,
-                seed=0,
-                correlate_other_column=False,
-            )
-        msg = str(excinfo.value)
-        assert "PLN" in msg
-        assert "correlate_other_column=True" in msg
-
     @pytest.mark.parametrize(
-        "model", ["nbln", "twostate_ln_rate", "twostate_ln_logit"],
+        "model",
+        ["nbln", "twostate_ln_rate", "twostate_ln_logit", "pln"],
     )
     def test_manually_named_other_decoupled_with_math_runs(self, model):
-        """Models with the decoupled math wired (NBLN: Commit 2b,
-        TSLN-Rate: Commit 3b, TSLN-Logit: Commit 4b) support the
-        manually-named ``_other`` tail path: ``var_names[-1] ==
-        "_other"`` with no ``gene_coverage`` AND explicit
-        ``correlate_other_column=False`` fits cleanly and produces
-        ``W`` / ``d`` on the kept axis."""
+        """All four count models now have decoupled math wired (NBLN:
+        Commit 2b, TSLN-Rate: Commit 3b, TSLN-Logit: Commit 4b, PLN:
+        Commit 5b).  With ``var_names[-1] == "_other"`` AND
+        ``correlate_other_column=False``, each fits cleanly via the
+        names-fallback detection in ``build_axis_layout`` and
+        produces ``W`` / ``d`` on the kept axis."""
         import scribe
 
         adata = self._make_adata_with_manual_other(seed=0)
@@ -1051,16 +1103,18 @@ class TestManuallyNamedOtherEndToEnd:
         "model",
         ["nbln", "twostate_ln_rate", "twostate_ln_logit", "pln"],
     )
-    def test_manually_named_other_legacy_default_is_silent(self, model):
-        """Under the current legacy default (`correlate_other_column=
-        True`), a manually-named `_other` tail with no
-        `gene_coverage` must NOT raise — the contradictory-signal
-        check is skipped under legacy so the fit proceeds with the
-        trivial layout (rev-5 #2 contract)."""
+    def test_manually_named_other_explicit_legacy_is_silent(self, model):
+        """Under explicit ``correlate_other_column=True``, a manually-
+        named ``_other`` tail with no ``gene_coverage`` must NOT raise
+        — the contradictory-signal check is skipped under legacy so
+        the fit proceeds with the trivial layout (rev-5 #2 contract).
+        (After Commit 5b's default flip, this test pins the explicit-
+        opt-in path; the default is now ``False`` and routes through
+        decoupled — see ``test_manually_named_other_decoupled_with_
+        math_runs`` above for that path.)"""
         import scribe
 
         adata = self._make_adata_with_manual_other(seed=0)
-        # Default is True — this should silently fit with trivial layout.
         res = scribe.fit(
             adata,
             model=model,
@@ -1068,6 +1122,7 @@ class TestManuallyNamedOtherEndToEnd:
             latent_dim=2,
             n_steps=3,
             seed=0,
+            correlate_other_column=True,
         )
         # Trivial layout under legacy.
         assert res.axis_layout is not None
@@ -1145,22 +1200,31 @@ class TestResultsShapeContract:
 class TestModelConfigFlag:
     """`correlate_other_column` round-trips through ModelConfig and fit."""
 
-    def test_modelconfig_default_true(self):
-        """Current default is True (legacy) — held until Commit 2b
-        lands the decoupled math (auditor finding rev-4 #2)."""
+    def test_modelconfig_default_false_after_5b(self):
+        """Default is now False (biologically cleaner) — flipped in
+        Commit 5b once all four count likelihoods had their
+        deviation-form math wired.  ``True`` is the explicit legacy
+        opt-in."""
         from scribe.models.config import ModelConfig
 
         mc = ModelConfig(base_model="nbln")
-        assert mc.correlate_other_column is True
+        assert mc.correlate_other_column is False
 
-    def test_modelconfig_explicit_false(self):
-        """Users can explicitly opt into the (not-yet-implemented)
-        decoupled layout — useful for testing the NotImplementedError
-        guard and for forward-compatibility when Commit 2b ships."""
+    def test_modelconfig_explicit_true_is_legacy_opt_in(self):
+        """Users can explicitly opt into the legacy layout (where
+        ``_other`` participates in Σ) by passing
+        ``correlate_other_column=True``."""
         from scribe.models.config import ModelConfig
 
-        mc = ModelConfig(base_model="nbln", correlate_other_column=False)
-        assert mc.correlate_other_column is False
+        mc_legacy = ModelConfig(
+            base_model="nbln", correlate_other_column=True,
+        )
+        assert mc_legacy.correlate_other_column is True
+        # Explicit False matches the new default.
+        mc_decoupled = ModelConfig(
+            base_model="nbln", correlate_other_column=False,
+        )
+        assert mc_decoupled.correlate_other_column is False
 
     def test_fit_kwarg_propagates_to_modelconfig(self):
         import scribe

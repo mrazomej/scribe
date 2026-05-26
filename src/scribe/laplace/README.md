@@ -737,15 +737,15 @@ and gauge-invariant diagnostics (see
 Theorem 2). The `correlate_other_column: bool` flag on `ModelConfig`
 controls whether the trailing `_other` row participates in Σ.
 
-**Current default in this release: `True`** (legacy — `_other`
-participates in Σ, identical to pre-flag behaviour). NBLN
-(Commit 2b), TSLN-Rate (Commit 3b), and TSLN-Logit (Commit 4b)
-have their decoupled-math paths live; PLN is still scaffolding-
-only and raises `NotImplementedError` under `False` until its
-math commit (5b) lands. The default stays at `True` until 5b
-ships, at which point it flips to `False` (the biologically
-cleaner setting) and `True` becomes the explicit legacy opt-in.
-Under `False`, the layout has:
+**Default: `False`** (the biologically cleaner setting — `_other`
+is a pooled-counts aggregate, not a real gene; excluding it from Σ
+removes wasted capacity on spurious off-diagonal entries).  All
+five obs models support `False`: NBLN (Commit 2b), TSLN-Rate
+(Commit 3b), TSLN-Logit (Commit 4b), PLN (Commit 5b) via the
+deviation reparameterisation; LNM (Commit 6) via ALR-reference
+pinning.  `True` is the explicit legacy opt-in for users who
+relied on `_other` participating in Σ.  Under `False`, the layout
+has:
 
 ```text
 W shape: (G_kept, K)        # latent-covariance axis (no _other row)
@@ -768,18 +768,16 @@ layout-aware `init_state` (W and d sized to `G_kept`), and
 `pack_result` plumbing.  NBLN's deviation-parameterised math has
 landed (Commit 2b: loss, Newton, profiled-μ Schur,
 `compute_global_uncertainty`, decoupled compositional sampler).
-TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) still raise
-`NotImplementedError` under `correlate_other_column=False` —
-their math commits are pending.  LNM has been correct end-to-end
-since Commit 6 via ALR-reference pinning.
+TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) followed the same
+deviation-form pattern.  LNM has been correct end-to-end since
+Commit 6 via ALR-reference pinning.
 
-**Default stays at `True` (legacy)** so existing fits don't break
-by routing through the three count models without math yet.  Once
-3b / 4b / 5b ship, the default flips to `False` and `True` becomes
-the explicit legacy opt-in.
+**Default flipped to `False` in Commit 5b** (the biologically
+cleaner setting).  `True` is now the explicit legacy opt-in for
+users who relied on `_other` participating in Σ.
 
-Behaviour matrix (current state — NBLN, TSLN-Rate, and TSLN-Logit
-math live, PLN pending):
+Behaviour matrix (all five obs models support decoupling — full
+harmonic-hare ladder landed):
 
 | Configuration | Behaviour |
 |---|---|
@@ -788,7 +786,7 @@ math live, PLN pending):
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | **Decoupled math live (Commit 2b).** `x_dev ~ N(0, Σ_kept)` per cell; μ moves into NB likelihood; `_other`'s log-rate is deterministic (`μ_other − η`); compositional sampler scatters kept x_dev onto full G_obs simplex. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | **Decoupled math live (Commit 3b).** Same deviation-form pattern as NBLN; Poisson-Beta data quadrature evaluates at the full G_obs log-rate, Woodbury solves on the kept axis, `a_min` floor applies to the kept slice.  PPC, `get_map`, and `get_distributions` all honour the kept-vs-obs split. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Logit | **Decoupled math live (Commit 4b).** Per-gene `rate` / `kappa` / `eta_anchor` stay on G_obs — only `W` / `d` / per-cell `z` shrink to G_kept.  Because TSLN-Logit's latent `z` is already zero-centred (no μ in the MVN prior), the deviation reparameterisation is a no-op — only 2 Newton paths (x-only, x-only-offset).  Activation log-odds for `_other` reduces to `θ[other_idx]` (no z modulation). |
-| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — PLN | Scaffolded as of Commit 5: AxisLayout + `pack_result` plumbing are in; the obs model's `init_state` raises `NotImplementedError`. As of Commit 5 the engine early-fail block has been **retired entirely** — every affected model owns its own decoupled detection via its obs-model `init_state`. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` — PLN | **Decoupled math live (Commit 5b).** The simplest of the four count likelihoods — no per-gene NB dispersion, no Two-State Beta parameters, just pure Poisson on `μ + x_dev − η` for kept genes and `μ_other − η` for `_other`.  PPC paths (marginal, library-anchored, per-cell MAP-only, per-cell Laplace) all honour the kept-vs-obs split. |
 | Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |
 | AnnData fit with no gene_coverage but `var_names[-1] == "_other"` (manually-pre-filtered AnnData) | Detected via the AnnData var_names fallback (rev-4 #3); the layout factory honours the literal `_other` sentinel even without the gene_coverage stage running. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` — LNM / LNMVCP | The ALR reference is auto-pinned to the `_other` position by `apply_gene_coverage_and_alr` (the min-variance auto-selection is skipped under this flag).  LNM realises the decoupling through ALR construction; no deviation reparameterisation needed. |

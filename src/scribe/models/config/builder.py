@@ -120,9 +120,11 @@ class ModelConfigBuilder:
         self._alr_reference_idx: int = -1
         # Whether `_other` participates in Σ (PLN/NBLN/TSLN-Rate/-Logit).
         # See ``ModelConfig.correlate_other_column`` docstring.
-        # Default ``True`` (legacy) for the Commit 2 release; flips to
-        # ``False`` when Commit 2b lands the decoupled-math path.
-        self._correlate_other_column: bool = True
+        # Default ``False`` (the biologically cleaner setting) — flipped
+        # in Commit 5b once all four count likelihoods had their
+        # deviation-form math wired.  ``True`` is the explicit legacy
+        # opt-in.
+        self._correlate_other_column: bool = False
         # Positive-parameter transform: ``"softplus"``, ``"exp"``, or
         # a ``Dict[str, str]`` for per-parameter overrides (the dict
         # form is normalized to internal names by ``ModelConfig``'s
@@ -797,14 +799,12 @@ class ModelConfigBuilder:
             vae=vae_config,
             d_mode=self._d_mode,
             alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
-            # Fallback matches ``__init__``'s default (``True`` — the
-            # current runtime legacy default).  Using ``False`` here
-            # would silently flip semantics if the attribute is ever
-            # absent (e.g. a subclass that skips ``__init__``), routing
-            # PLN/NBLN/TSLN-Rate/TSLN-Logit through the not-yet-
-            # implemented decoupled-math path.
+            # Fallback matches ``__init__``'s default (``False`` — the
+            # current runtime default after Commit 5b flipped it).
+            # All four count likelihoods now have the deviation-form
+            # math wired, so ``False`` is safe everywhere.
             correlate_other_column=getattr(
-                self, "_correlate_other_column", True
+                self, "_correlate_other_column", False
             ),
             positive_transform=self._positive_transform,
         )

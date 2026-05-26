@@ -461,19 +461,18 @@ class ModelConfig(BaseModel):
     # recovers the legacy behaviour where ``_other`` participates in Σ
     # as a regular gene.
     #
-    # **Current default: ``True`` (legacy).**  The scaffolding
-    # ladder (harmonic-hare Commits 2-6) has all landed: the axis
-    # abstraction (``scribe.laplace._axis_layout``), engine threading
-    # of ``gene_names`` + ``has_pooled_other``, per-model fail-fast
-    # guards on PLN/NBLN/TSLN-Rate/TSLN-Logit, and LNM real wiring
-    # through ALR-reference pinning.  NBLN (Commit 2b), TSLN-Rate
-    # (Commit 3b), and TSLN-Logit (Commit 4b) have their decoupled
-    # deviation-form math wired in: loss / Newton / global_uncertainty
-    # / PPC / get_map / get_distributions all handle the kept-vs-obs
-    # axis split.  PLN still raises ``NotImplementedError`` under
-    # decoupling — its math commit (5b) is pending.  The default
-    # stays ``True`` until 5b lands; at that point the default flips
-    # to ``False`` and ``True`` becomes the explicit legacy opt-in.
+    # **Default: ``False``** (the biologically cleaner setting).  The
+    # full harmonic-hare ladder is now landed: scaffolding (Commits
+    # 2-6) plus the per-model deviation-form math for NBLN (Commit
+    # 2b), TSLN-Rate (Commit 3b), TSLN-Logit (Commit 4b), and PLN
+    # (Commit 5b).  LNM is end-to-end correct via ALR-reference
+    # pinning (Commit 6).  Under the default ``False``, the pooled
+    # ``_other`` aggregate is excluded from the latent low-rank
+    # covariance Σ: loss / Newton / global_uncertainty / PPC /
+    # get_map / get_distributions across all five obs-model families
+    # handle the kept-vs-obs axis split.  ``True`` is now the explicit
+    # legacy opt-in — preserves the bit-equal contract for users who
+    # relied on ``_other`` participating in Σ.
     #
     # **LNM / LNMVCP** is the exception: LNM realises the decoupling
     # without the deviation reparameterisation because the ALR
@@ -489,19 +488,18 @@ class ModelConfig(BaseModel):
     # off-diagonal entries and keeps the W loadings interpretable.
     # See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other.
     correlate_other_column: bool = Field(
-        True,
+        False,
         description=(
             "Whether the trailing '_other' pooled column participates "
             "in the latent low-rank covariance Σ = W Wᵀ + diag(d).  "
-            "Current default `True` is the LEGACY behaviour.  "
-            "Scaffolding for `False` has landed across "
-            "PLN/NBLN/TSLN-Rate/TSLN-Logit, and the deviation-"
-            "parameterised math is live for NBLN (Commit 2b), "
-            "TSLN-Rate (Commit 3b), TSLN-Logit (Commit 4b), and LNM "
-            "(via ALR-reference auto-pinning, Commit 6).  PLN still "
-            "raises NotImplementedError under `False` until its math "
-            "commit (5b) lands.  The default flips to `False` once 5b "
-            "ships."
+            "Default `False` excludes ``_other`` from Σ (biologically "
+            "cleaner: ``_other`` is a pooled-counts aggregate, not a "
+            "real gene).  All five obs models support `False`: NBLN "
+            "(Commit 2b), TSLN-Rate (Commit 3b), TSLN-Logit (Commit "
+            "4b), PLN (Commit 5b) via the deviation reparameterisation; "
+            "LNM (Commit 6) via ALR-reference pinning.  `True` is the "
+            "explicit legacy opt-in for users who relied on ``_other`` "
+            "participating in Σ."
         ),
     )
 
