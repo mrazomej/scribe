@@ -537,23 +537,25 @@ def test_prune_dead_components_all_active_unchanged(mock_mixture_all_active):
 
 def test_prune_dead_components_aggressive_threshold_keeps_best(
     mock_mixture_4comp,
+    scribe_caplog,
 ):
     """A threshold that kills all components should fall back to keeping the best."""
-    from scribe.mc.results import _prune_dead_components
-    import warnings
+    import logging
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        pruned, active = _prune_dead_components(
-            mock_mixture_4comp, threshold=0.99
-        )
+    from scribe.mc.results import _prune_dead_components
+
+    scribe_caplog.set_level(logging.WARNING, logger="scribe.mc.results")
+    pruned, active = _prune_dead_components(
+        mock_mixture_4comp, threshold=0.99
+    )
 
     # Should warn and keep exactly 1 component
     assert active is not None
     assert int(active.sum()) == 1
     assert pruned.n_components == 1
-    # The kept component should be the one with the largest posterior-mean weight
-    assert len(w) > 0  # a UserWarning was issued
+    assert any(
+        "component_threshold=" in record.message for record in scribe_caplog.records
+    )
 
 
 def test_prune_dead_components_active_mask_correct_length(mock_mixture_4comp):
@@ -566,22 +568,24 @@ def test_prune_dead_components_active_mask_correct_length(mock_mixture_4comp):
     assert len(active) == mock_mixture_4comp.n_components  # 4
 
 
-def test_prune_dead_components_missing_mixing_weights_warns():
-    """If posterior_samples has no mixing_weights key, a UserWarning is issued."""
+def test_prune_dead_components_missing_mixing_weights_warns(scribe_caplog):
+    """If posterior_samples has no mixing_weights key, a warning log is issued."""
+    import logging
+
     from scribe.mc.results import _prune_dead_components
-    import warnings
 
     # Create a mock with n_components > 1 but no mixing weights in samples
     class MockNoWeights:
         n_components = 3
         posterior_samples = {"some_other_param": jnp.ones((10, 3))}
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        pruned, active = _prune_dead_components(MockNoWeights(), threshold=0.05)
+    scribe_caplog.set_level(logging.WARNING, logger="scribe.mc.results")
+    pruned, active = _prune_dead_components(MockNoWeights(), threshold=0.05)
 
     assert active is None  # pruning skipped
-    assert any("mixing_weights" in str(warning.message) for warning in w)
+    assert any(
+        "mixing_weights" in record.message for record in scribe_caplog.records
+    )
 
 
 # --------------------------------------------------------------------------

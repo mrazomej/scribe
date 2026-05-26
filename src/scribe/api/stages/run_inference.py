@@ -8,7 +8,7 @@ The dispatcher is resolved at call time through the ``scribe.api``
 module object rather than bound at import time.  This preserves
 monkeypatch compatibility: tests that ``patch("scribe.api._run_inference")``
 replace the attribute on the ``scribe.api`` module, and this stage
-honours that replacement by looking it up dynamically.
+honors that replacement by looking it up dynamically.
 
 This stage also handles the **SVI-informative-prior cascade** for
 NBLN-Laplace fits: when the user passes ``informative_priors_from``,
@@ -45,25 +45,39 @@ def dispatch_inference(ctx: FitContext) -> None:
         returned inference results object.
     """
     # Look up _run_inference at call time so unittest.mock.patch
-    # on "scribe.api._run_inference" is honoured.
+    # on "scribe.api._run_inference" is honored.
     _api = sys.modules["scribe.api"]
     _run_inference = _api._run_inference
 
     informative_priors_from = ctx.kwargs.get("informative_priors_from")
     informative_priors = None
     capture_mode_override = None
+    # Subset-aware cascade metadata.  ``None`` for plain (non-cascade)
+    # fits and for equal-panel cascades; populated when the Laplace
+    # target's panel is a strict subset of the SVI source's so PPC and
+    # frozen-moment-match consumers can re-aggregate samples onto the
+    # target gene axis.  See ``scribe.laplace.priors.SubsetInfo``.
+    _cascade_subset_info = None
 
     if informative_priors_from is not None:
-        # --- Scope validation (Round-4 Finding 1) ----------------------
+        # --- Scope validation (Round-4 Finding 1; round-7 extended) -----
         # Run AFTER ctx.model_config and ctx.inference_config are built,
         # so we check the resolved base_model / method even when the
         # user passes prebuilt config objects rather than raw kwargs.
+        # Single source of truth:
+        # ``api.constants.CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS``.
+        from ..constants import CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS
+
         base_model = ctx.model_config.base_model
         method = ctx.inference_config.method.value
-        if base_model != "nbln" or method != "laplace":
+        if (
+            base_model not in CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS
+            or method != "laplace"
+        ):
             raise ValueError(
                 "informative_priors_from is only supported for "
-                "model='nbln' and inference_method='laplace'; got "
+                f"model in {sorted(CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS)} "
+                f"with inference_method='laplace'; got "
                 f"base_model={base_model!r}, inference_method={method!r}."
             )
 
@@ -83,24 +97,150 @@ def dispatch_inference(ctx: FitContext) -> None:
             if filtered is not None:
                 target_gene_names = filtered
 
-        # --- Build prior bundle via Layer 2 ----------------------------
-        from ...laplace.priors import priors_from_results
+        # --- positive_transform string for the cascade adapter ---------
+        # Cascade adapters accept either a single transform name OR a
+        # per-parameter dict mapping internal parameter name → transform.
+        # Honor the dict-form ``positive_transform`` on the target
+        # ``model_config`` so the cascade adapter applies the right
+        # ``pos_inverse`` to each positive parameter — getting this
+        # wrong would silently corrupt the cascade priors / freeze
+        # values for users who set per-parameter transforms (the
+        # auditor's Step 3-5 catch).
+        #
+        # For NBLN's older single-string API we resolve the canonical
+        # ``r`` transform; for the TwoState variants we build a dict
+        # covering all positive globals that the adapter touches:
+        #   - TSLN-Rate  → keys ``mu`` / ``burst_size`` / ``k_off``
+        #   - TSLN-Logit → keys ``rate`` / ``kappa``
+        #     (``eta_anchor`` is real-valued — no transform).
+        if hasattr(ctx.model_config, "resolve_positive_transform"):
+            if base_model == "twostate_ln_rate":
+                _pos_xform_str = {
+                    "mu": ctx.model_config.resolve_positive_transform("mu"),
+                    "burst_size": ctx.model_config.resolve_positive_transform(
+                        "burst_size"
+                    ),
+                    "k_off": ctx.model_config.resolve_positive_transform(
+                        "k_off"
+                    ),
+                }
+            elif base_model == "twostate_ln_logit":
+                _pos_xform_str = {
+                    "rate": ctx.model_config.resolve_positive_transform(
+                        "rate"
+                    ),
+                    "kappa": ctx.model_config.resolve_positive_transform(
+                        "kappa"
+                    ),
+                }
+            else:
+                _pos_xform_str = ctx.model_config.resolve_positive_transform(
+                    "r"
+                )
+        else:
+            _pos_xform_str = ctx.model_config.positive_transform
+            if not isinstance(_pos_xform_str, (str, dict)):
+                _pos_xform_str = "softplus"
 
-        informative_priors, capture_mode_override = priors_from_results(
-            informative_priors_from,
-            target_positive_transform=ctx.model_config.positive_transform,
-            target_n_genes=ctx.n_genes,
-            target_n_cells=ctx.n_cells,
-            target_gene_names=target_gene_names,
-            target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
-            # Pass target counts so amortized-capture SVI sources can
-            # draw samples; the adapter decides whether it's safe to
-            # use them based on the identity-verification state.
-            source_counts=ctx.count_data,
-            n_samples=int(ctx.kwargs.get("informative_priors_n_samples", 1000)),
-            tau=float(ctx.kwargs.get("informative_priors_tau", 1.0)),
-            verbose=bool(ctx.kwargs.get("informative_priors_verbose", True)),
-        )
+        # --- Compute subset-aware cascade metadata (single source of truth)
+        # ``_check_gene_identity`` returns ``(strict_var_name_verified,
+        # identity_method, subset_info)``.  Capturing it once here lets us
+        # persist ``subset_info`` on the result for PPC routing without
+        # repeating gene-identity logic across cascade-aware consumers.
+        # The priors / freeze adapters re-derive their own copies
+        # internally (cheap; centralises raise paths there); this one is
+        # the canonical handle threaded through the inference dispatcher.
+        from ...laplace.priors import _check_gene_identity as _cgi
+        try:
+            _, _, _cascade_subset_info = _cgi(
+                results=informative_priors_from,
+                target_n_genes=int(ctx.n_genes),
+                target_gene_names=target_gene_names,
+                target_gene_mask=getattr(
+                    ctx, "_gene_coverage_mask", None
+                ),
+            )
+        except Exception:
+            # If subset detection itself fails (e.g. var-name shape
+            # mismatch raised by ``_check_gene_identity``), let the
+            # downstream priors / freeze call surface the same error
+            # with full context.  Leave ``_cascade_subset_info`` as
+            # ``None`` so the inference dispatcher behaves as today.
+            _cascade_subset_info = None
+
+        # --- Build prior bundle (dispatch on base_model) ---------------
+        if base_model in ("twostate_ln_rate", "twostate_ln_logit"):
+            from ...laplace.priors import priors_from_twostate_results
+
+            _target_variant = (
+                "rate" if base_model == "twostate_ln_rate" else "logit"
+            )
+            informative_priors, capture_mode_override = (
+                priors_from_twostate_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_variant=_target_variant,
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    n_samples=int(
+                        ctx.kwargs.get(
+                            "informative_priors_n_samples", 1000
+                        )
+                    ),
+                    tau=float(
+                        ctx.kwargs.get("informative_priors_tau", 1.0)
+                    ),
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
+            )
+            # PR-2 capture restriction (Rev 4): TSLN-Logit cannot
+            # accept a soft-cascade eta because the joint Newton path
+            # is deferred to phase 3.  When the SVI source supplies
+            # per-cell eta (capture_mode_override == "eta"), the
+            # downstream obs-model constructor would reject it via
+            # ``informative_priors['eta']``.  Strip the eta entry from
+            # the prior bundle here and force the cascade to be a
+            # *frozen-offset* one (the eta freeze value is built below
+            # from the SVI MAP).  ``capture_mode_override`` stays
+            # "eta" so the bridge knows capture is on; the obs model
+            # sees no soft eta prior.
+            if (
+                base_model == "twostate_ln_logit"
+                and informative_priors is not None
+                and "eta" in informative_priors
+            ):
+                del informative_priors["eta"]
+        else:
+            from ...laplace.priors import priors_from_results
+
+            informative_priors, capture_mode_override = priors_from_results(
+                informative_priors_from,
+                target_positive_transform=_pos_xform_str,
+                target_n_genes=ctx.n_genes,
+                target_n_cells=ctx.n_cells,
+                target_gene_names=target_gene_names,
+                target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
+                # Pass target counts so amortized-capture SVI sources can
+                # draw samples; the adapter decides whether it's safe to
+                # use them based on the identity-verification state.
+                source_counts=ctx.count_data,
+                n_samples=int(
+                    ctx.kwargs.get("informative_priors_n_samples", 1000)
+                ),
+                tau=float(ctx.kwargs.get("informative_priors_tau", 1.0)),
+                verbose=bool(
+                    ctx.kwargs.get("informative_priors_verbose", True)
+                ),
+            )
 
     # --- Freeze API: extract point estimates + resolve cascade source ---
     # The freeze API is activated only when a cascade is supplied.  When
@@ -120,27 +260,115 @@ def dispatch_inference(ctx: FitContext) -> None:
         # aliases to internal short names and raises on ambiguity
         # (e.g. ("r", "dispersion")).
         from ...models.config.parameter_mapping import normalize_freeze_keys
-        raw_freeze = ctx.kwargs.get("informative_priors_freeze", ("r", "eta"))
+        # Per-base-model defaults — the plan §5.4 "Level 4" cascade
+        # for each variant:
+        #   NBLN          → (r, eta)
+        #   TSLN-Rate     → (mu, burst_size, k_off)
+        #   TSLN-Logit    → (rate, kappa, eta_anchor)   [Rev 3]
+        if base_model == "twostate_ln_rate":
+            _default_freeze = ("mu", "burst_size", "k_off")
+        elif base_model == "twostate_ln_logit":
+            _default_freeze = ("rate", "kappa", "eta_anchor")
+        else:
+            _default_freeze = ("r", "eta")
+        # ``informative_priors_freeze=None`` (the API default in
+        # ``fit.py``) signals "use the per-variant default".  An empty
+        # tuple ``()`` (or empty list / iterable) means "no freeze".
+        # A non-empty user-supplied tuple is normalized via alias map.
+        raw_freeze = ctx.kwargs.get(
+            "informative_priors_freeze", None
+        )
         if raw_freeze is None:
+            freeze_params = normalize_freeze_keys(_default_freeze)
+        elif len(tuple(raw_freeze)) == 0:
             freeze_params = ()
         else:
             freeze_params = normalize_freeze_keys(raw_freeze)
+
+        # PR-2 capture restriction (Rev 4): for TSLN-Logit, when the
+        # SVI source has per-cell capture (``capture_mode_override ==
+        # "eta"``), we MUST route capture through the fixed-offset
+        # path because soft-cascade eta would require the joint
+        # Newton (deferred to phase 3).  Auto-include ``"eta"`` in
+        # ``freeze_params`` so the cascade adapter populates
+        # ``freeze_values["eta"]`` from the SVI MAP and the obs model
+        # routes to the ``x_only_offset`` Newton.  Note: the user
+        # CANNOT opt out by dropping ``"eta"`` from
+        # ``informative_priors_freeze`` — the auto-add fires
+        # unconditionally on capture-bearing sources.  The only way
+        # to fit TSLN-Logit without capture is to use a non-VCP SVI
+        # source (or strip capture from the source upstream).
+        if (
+            base_model == "twostate_ln_logit"
+            and capture_mode_override == "eta"
+            and "eta" not in freeze_params
+        ):
+            import logging
+            logging.getLogger("scribe").info(
+                "TSLN-Logit: auto-adding 'eta' to "
+                "informative_priors_freeze because the SVI source has "
+                "per-cell capture and Rev 4 permits only fixed-offset "
+                "capture in PR-2.  This auto-add fires unconditionally "
+                "on capture-bearing cascade sources; to fit TSLN-Logit "
+                "without any capture term, refit the SVI source without "
+                "the capture submodel (e.g. use 'twostate' instead of "
+                "'twostatevcp', or drop the capture_efficiency / "
+                "organism prior on the source)."
+            )
+            freeze_params = freeze_params + ("eta",)
         # Build the freeze-values bundle from SVI's get_map().
         if freeze_params:
-            from ...laplace.priors import freeze_values_from_results
-            freeze_values = freeze_values_from_results(
-                informative_priors_from,
-                target_positive_transform=ctx.model_config.positive_transform,
-                target_n_genes=ctx.n_genes,
-                target_n_cells=ctx.n_cells,
-                target_gene_names=target_gene_names,
-                target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
-                source_counts=ctx.count_data,
-                freeze_params=freeze_params,
-                verbose=bool(
-                    ctx.kwargs.get("informative_priors_verbose", True)
-                ),
-            )
+            if base_model in ("twostate_ln_rate", "twostate_ln_logit"):
+                from ...laplace.priors import (
+                    freeze_values_from_twostate_results,
+                )
+
+                _target_variant = (
+                    "rate" if base_model == "twostate_ln_rate" else "logit"
+                )
+                freeze_values = freeze_values_from_twostate_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_variant=_target_variant,
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    freeze_params=freeze_params,
+                    # Pass-through for cascade reproducibility.
+                    # None = inherit SVI source's default; "transform"
+                    # = pin legacy uncorrected median.
+                    map_method=ctx.kwargs.get("cascade_map_method"),
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
+            else:
+                from ...laplace.priors import freeze_values_from_results
+
+                freeze_values = freeze_values_from_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    freeze_params=freeze_params,
+                    map_method=ctx.kwargs.get("cascade_map_method"),
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
         # Embed the SVI results object so PPC and get_distributions can
         # consult its guide directly for frozen parameters.  Per Round-5
         # R5-6: store counts on the Laplace result (cascade_source_counts)
@@ -176,6 +404,34 @@ def dispatch_inference(ctx: FitContext) -> None:
                 f"base_model={bm!r}, method={method_value!r}."
             )
 
+    # Resolve the two _other-detection signals once so they can be
+    # threaded through to the Laplace engine (which forwards them to
+    # the obs model's AxisLayout factory).  See
+    # ``scribe.laplace._axis_layout.build_axis_layout`` for the
+    # detection-priority contract.
+    #
+    # Names-fallback chain (auditor finding rev-4 #3): when the
+    # gene-coverage stage runs, it populates ``_filtered_gene_names``.
+    # When it does NOT run (e.g. user passed an unfiltered AnnData and
+    # did not set ``gene_coverage``), fall back to AnnData's own
+    # ``var_names`` so a manually-pre-filtered AnnData whose tail is
+    # literally ``"_other"`` still triggers the names-based detection.
+    _filtered_gene_names_for_layout = getattr(
+        ctx, "_filtered_gene_names", None
+    )
+    if _filtered_gene_names_for_layout is None:
+        _adata_for_layout = getattr(ctx, "_adata_for_inference", None)
+        if _adata_for_layout is not None:
+            _vn = getattr(_adata_for_layout, "var_names", None)
+            if _vn is not None:
+                try:
+                    _filtered_gene_names_for_layout = list(_vn.values)
+                except AttributeError:
+                    _filtered_gene_names_for_layout = list(_vn)
+    _has_pooled_other_for_layout = getattr(
+        ctx, "_has_pooled_other", None
+    )
+
     results = _run_inference(
         ctx.inference_config.method,
         model_config=ctx.model_config,
@@ -195,6 +451,12 @@ def dispatch_inference(ctx: FitContext) -> None:
         freeze_params=freeze_params,
         cascade_source=cascade_source,
         cascade_source_counts=cascade_source_counts,
+        cascade_subset_info=_cascade_subset_info,
         w_prior=w_prior,
+        # Axis-layout signals for `correlate_other_column` decoupling
+        # (see `scribe.laplace._axis_layout`).  Both are forwarded to
+        # the Laplace engine; non-Laplace dispatchers ignore them.
+        filtered_gene_names=_filtered_gene_names_for_layout,
+        has_pooled_other=_has_pooled_other_for_layout,
     )
     ctx.results = results

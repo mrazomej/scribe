@@ -890,12 +890,11 @@ class EarlyStoppingConfig(BaseModel):
         # Note: We can't access other fields in field_validator easily,
         # so we just validate that smoothing_window is reasonable
         if v > 1000:
-            import warnings
+            import logging
 
-            warnings.warn(
+            logging.getLogger(__name__).warning(
                 f"Large smoothing_window ({v}) may cause slow response "
-                "to convergence. Consider using a smaller value.",
-                UserWarning,
+                "to convergence. Consider using a smaller value."
             )
         return v
 

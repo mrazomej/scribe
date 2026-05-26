@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import warnings
+import logging
 from typing import List, Optional, TYPE_CHECKING
 
 import numpy as _np
@@ -10,9 +10,12 @@ import jax.numpy as jnp
 
 from ._extract import (
     extract_alr_params,
+    has_compositional_marginal,
     is_lnm_or_pln_results,
     lnm_or_pln_results_to_parametric_dict,
 )
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .results import (
@@ -215,8 +218,23 @@ def compare(
     _b_is_lnm_pln_results = _b_is_results and is_lnm_or_pln_results(model_B)
     _both_lnm_pln_results = _a_is_lnm_pln_results and _b_is_lnm_pln_results
 
+    # Broader predicate covering every result type whose fitted globals
+    # (μ, 𝑊, 𝑑) define a compositional marginal — LNM/PLN PLUS
+    # NBLN and TSLN-rate/logit, which share the same softmax-of-log-rate
+    # generative composition.  Gates the empirical marginal-driven
+    # path so ``compare(nbln_A, nbln_B, method="empirical")`` routes
+    # through ``_compare_empirical_from_marginal`` (using each result's
+    # own ``get_compositional_samples``) instead of falling through to
+    # the posterior-samples path that NBLN/TSLN do not populate.
+    _a_has_marginal = _a_is_results and has_compositional_marginal(model_A)
+    _b_has_marginal = _b_is_results and has_compositional_marginal(model_B)
+    _both_have_compositional_marginal = _a_has_marginal and _b_has_marginal
+
     # Auto-detect method when not explicitly provided: use "parametric" for
     # fitted logistic-normal models, "empirical" for everything else.
+    # Note: NBLN/TSLN have compositional marginals but no parametric ALR
+    # converter (their PLN-style log-rate latent would need a separate
+    # adapter), so they auto-route to empirical via the broader predicate.
     if method is None:
         if _is_parametric_model(model_A) and _is_parametric_model(model_B):
             method = "parametric"
@@ -245,13 +263,18 @@ def compare(
             "logistic-normal model comparisons."
         )
 
-    # When both inputs are LNM / PLN result objects and method=="empirical",
-    # short-circuit to the marginal-driven empirical pipeline.  This
-    # samples fresh simplex draws from each fit's generative marginal
-    # (the level="marginal" PPC sample source, stopped at the simplex
-    # step) rather than trying to drive the existing posterior-samples
-    # pipeline with per-cell-conditional latents that DE doesn't want.
-    if _both_lnm_pln_results and method == "empirical":
+    # When both inputs expose a compositional marginal (LNM/PLN/NBLN/TSLN)
+    # and method=="empirical", short-circuit to the marginal-driven
+    # empirical pipeline.  This samples fresh simplex draws from each
+    # fit's generative marginal (the level="marginal" PPC sample source,
+    # stopped at the simplex step) rather than trying to drive the
+    # existing posterior-samples pipeline with per-cell-conditional
+    # latents that DE doesn't want.  Note: NBLN and TSLN-rate/logit have
+    # the same generative-marginal composition as PLN/LNM because the
+    # observation noise (NB / Poisson-Beta) averages out under softmax
+    # of log-rates — see ``get_compositional_samples`` in
+    # ``laplace/_sampling.py``.
+    if _both_have_compositional_marginal and method == "empirical":
         if mixture_weighted:
             raise NotImplementedError(
                 "mixture_weighted=True for LNM/PLN empirical DE is not "
@@ -265,6 +288,34 @@ def compare(
                 "fitted globals (μ, 𝑊, 𝑑), which already define the "
                 "model's marginal composition distribution."
             )
+        # Auto-mask logic for the marginal-driven path: when both
+        # results were fit with ``gene_coverage < 1.0`` the count
+        # matrix has a trailing aggregated ``_other`` column, and DE
+        # callers almost never want that column in the CLR output.
+        # Mirror the auto-detect from the posterior-samples branch
+        # below so both paths drop the trailing column by default.
+        if gene_mask is None:
+            _has_prefilter_A = (
+                getattr(model_A, "_gene_coverage_mask", None) is not None
+            )
+            _has_prefilter_B = (
+                getattr(model_B, "_gene_coverage_mask", None) is not None
+            )
+            if _has_prefilter_A and _has_prefilter_B:
+                # Probe a single tiny draw to learn the target axis size.
+                _G = int(getattr(model_A, "n_genes", 0) or 0)
+                if _G < 2:
+                    # Fall back to one-sample probe if n_genes is missing.
+                    import jax
+                    _probe = model_A.get_compositional_samples(
+                        n_samples=1, rng_key=jax.random.PRNGKey(0),
+                        store_samples=False,
+                    )
+                    _G = int(_probe.shape[-1])
+                if _G >= 2:
+                    gene_mask = jnp.asarray(
+                        [True] * (_G - 1) + [False], dtype=bool
+                    )
         return _compare_empirical_from_marginal(
             model_A,
             model_B,
@@ -419,11 +470,9 @@ def compare(
         # Warn if K=1 (mixture weighting is a no-op)
         w_A_arr = _np.asarray(_mix_weights_A)
         if w_A_arr.ndim == 2 and w_A_arr.shape[1] == 1:
-            warnings.warn(
+            _log.info(
                 "mixture_weighted=True with K=1 is a no-op.  "
-                "Consider using the standard compare() path.",
-                UserWarning,
-                stacklevel=2,
+                "Consider using the standard compare() path."
             )
 
         empirical_result = _compare_empirical_mixture(

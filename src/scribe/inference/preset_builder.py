@@ -84,6 +84,13 @@ def build_config_from_preset(
     # LNM diagonal mode (``lnm`` / ``lnmvcp`` only; see ``ModelConfig.d_mode``)
     d_mode: str = "low_rank",
     alr_reference_idx: int = -1,
+    # Whether the trailing aggregated '_other' column participates in
+    # the latent low-rank covariance.  Current default ``True`` is
+    # legacy (held at True for the Commit 2 release; flips to ``False``
+    # when Commit 2b lands the decoupled-math path).  See
+    # ``scribe.models.config.base.ModelConfig.correlate_other_column``
+    # for the per-model wiring status and the default-flip schedule.
+    correlate_other_column: bool = True,
     guide_rank: Optional[int] = None,
     joint_params: Optional[Union[str, List[str]]] = None,
     dense_params: Optional[Union[str, List[str]]] = None,
@@ -329,15 +336,16 @@ def build_config_from_preset(
         if inference_method.lower() == "svi":
             inference_method = "vae"
         # Validate Laplace is requested only on supported models.
-    elif inference_method.lower() == "laplace" and model_lower not in (
-        "lnm",
-        "lnmvcp",
-    ):
-        raise ValueError(
-            "inference_method='laplace' is supported for PLN, NBLN, "
-            "LNM, and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
-            f"{model_lower!r}."
-        )
+    elif inference_method.lower() == "laplace":
+        # Single source of truth: ``api.constants.LAPLACE_SUPPORTED_BASE_MODELS``.
+        from ..api.constants import LAPLACE_SUPPORTED_BASE_MODELS
+
+        if model_lower not in LAPLACE_SUPPORTED_BASE_MODELS:
+            raise ValueError(
+                "inference_method='laplace' is supported for "
+                f"{sorted(LAPLACE_SUPPORTED_BASE_MODELS)}. "
+                f"Use 'svi'/'vae'/'mcmc' for model={model_lower!r}."
+            )
     if d_mode not in ("low_rank", "learned"):
         raise ValueError(
             f"d_mode must be 'low_rank' or 'learned', got {d_mode!r}."
@@ -682,6 +690,12 @@ def build_config_from_preset(
 
     if model_lower == "pln":
         builder._d_mode = d_mode
+
+    # `correlate_other_column` applies to PLN/NBLN/TSLN-Rate/TSLN-Logit
+    # (informational for LNM — see ModelConfig.correlate_other_column
+    # docstring).  Forward unconditionally; non-applicable model
+    # families simply ignore the flag.
+    builder._correlate_other_column = bool(correlate_other_column)
 
     # Forward positive_transform (string or per-parameter dict) to the
     # underlying ``ModelConfig``.  The dict form is normalized to

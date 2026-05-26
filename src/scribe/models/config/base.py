@@ -449,6 +449,60 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Whether the trailing aggregated '_other' column (emitted by the
+    # gene-coverage stage when gene_coverage < 1.0) participates in the
+    # latent low-rank gene-gene covariance ``Σ = W Wᵀ + diag(d)``.
+    #
+    # Applies to PLN / NBLN / TSLN-Rate / TSLN-Logit (LNM via the ALR
+    # reference, see §LNM below).  ``False`` excludes ``_other`` from Σ:
+    # ``W`` has shape ``(G_kept, K)`` and ``d`` has shape ``(G_kept,)``
+    # where ``G_kept = G_obs − 1``; the ``_other`` column gets a plain
+    # observation likelihood with no latent z-modulation.  ``True``
+    # recovers the legacy behaviour where ``_other`` participates in Σ
+    # as a regular gene.
+    #
+    # **Default: ``False``** (the biologically cleaner setting).  The
+    # full harmonic-hare ladder is now landed: scaffolding (Commits
+    # 2-6) plus the per-model deviation-form math for NBLN (Commit
+    # 2b), TSLN-Rate (Commit 3b), TSLN-Logit (Commit 4b), and PLN
+    # (Commit 5b).  LNM is end-to-end correct via ALR-reference
+    # pinning (Commit 6).  Under the default ``False``, the pooled
+    # ``_other`` aggregate is excluded from the latent low-rank
+    # covariance Σ: loss / Newton / global_uncertainty / PPC /
+    # get_map / get_distributions across all five obs-model families
+    # handle the kept-vs-obs axis split.  ``True`` is now the explicit
+    # legacy opt-in — preserves the bit-equal contract for users who
+    # relied on ``_other`` participating in Σ.
+    #
+    # **LNM / LNMVCP** is the exception: LNM realises the decoupling
+    # without the deviation reparameterisation because the ALR
+    # construction excludes the reference gene from Σ by definition.
+    # Under ``False``, the gene-coverage stage auto-pins
+    # ``alr_reference_idx`` to ``_other``'s position when a pooled
+    # column is present, and rejects explicit non-``_other``
+    # references.  The math commits do not affect LNM.
+    #
+    # Rationale: ``_other`` is a pooled-counts aggregate, not a real
+    # gene, so its row in the regulatory covariance has no biophysical
+    # meaning.  Excluding it from Σ removes capacity wasted on spurious
+    # off-diagonal entries and keeps the W loadings interpretable.
+    # See ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other.
+    correlate_other_column: bool = Field(
+        False,
+        description=(
+            "Whether the trailing '_other' pooled column participates "
+            "in the latent low-rank covariance Σ = W Wᵀ + diag(d).  "
+            "Default `False` excludes ``_other`` from Σ (biologically "
+            "cleaner: ``_other`` is a pooled-counts aggregate, not a "
+            "real gene).  All five obs models support `False`: NBLN "
+            "(Commit 2b), TSLN-Rate (Commit 3b), TSLN-Logit (Commit "
+            "4b), PLN (Commit 5b) via the deviation reparameterisation; "
+            "LNM (Commit 6) via ALR-reference pinning.  `True` is the "
+            "explicit legacy opt-in for users who relied on ``_other`` "
+            "participating in Σ."
+        ),
+    )
+
     # Gene-specific overdispersion beyond the NB family.
     overdispersion: OverdispersionType = Field(
         OverdispersionType.NONE,

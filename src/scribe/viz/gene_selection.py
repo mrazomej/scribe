@@ -1,7 +1,9 @@
 """Gene selection utilities for ECDF and PPC plots."""
 
 import numpy as np
-import warnings
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def _get_gene_names(results):
@@ -77,11 +79,9 @@ def _coerce_and_align_counts_to_results(counts, results, *, context="viz"):
                 aggregate_counts_by_mask(counts_arr, mask_arr)
             )
             if int(aligned.shape[1]) == n_genes_results:
-                warnings.warn(
+                _log.info(
                     f"[{context}] Auto-aligned counts from original gene "
-                    "space to model gene space using gene_coverage_mask.",
-                    UserWarning,
-                    stacklevel=2,
+                    "space to model gene space using gene_coverage_mask."
                 )
                 return aligned
 

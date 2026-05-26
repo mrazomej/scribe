@@ -3,8 +3,8 @@
 This directory contains scribe's Laplace-approximation inference path. Unlike
 the SVI / VAE path, Laplace inference has no encoder: each cell's per-cell
 posterior is found locally via Newton iteration on the log-density, and the
-Gaussian approximation is centred at the resulting MAP with covariance
-$-H^{-1}$ from the Hessian curvature. The outer loop optimises global
+Gaussian approximation is centered at the resulting MAP with covariance
+$-H^{-1}$ from the Hessian curvature. The outer loop optimizes global
 parameters (decoder $\mu$, $W$, $d$, NB-on-totals globals when present) by
 SVI on the Laplace-approximated ELBO.
 
@@ -30,6 +30,8 @@ class, and orbax checkpointer. The only cross-submodule dependency is
 | `nbln` | ✅ | NB-LogNormal: per-cell `(x, η)` Newton with the NB-Hessian diagonal `a_g = (u_g + r_g) p_g (1 - p_g)`. Adds gene dispersion `r` as a global; everything else mirrors PLN. |
 | `lnm` | ✅ | Per-cell composition Newton; `d_mode='learned'` → Newton over `y_alr` (G−1 dim) with Woodbury; `d_mode='low_rank'` → Newton over `z` (k dim, no Woodbury). |
 | `lnmvcp` | ✅ | LNM composition Newton + scalar Newton on per-cell `eta_capture`. The `(z, η)` Hessian is **block-diagonal** (multinomial conditions on observed `u_T`, NB conditions on η only) so the two blocks decouple cleanly. |
+| `twostate_ln_rate` | ✅ | TwoState-LogNormal-Rate (PR-1 of the cross-gene TwoState extension): per-cell `(x, η)` Newton on a Poisson-Beta compound likelihood with closed-form factors `a_g = λ E_q[p] − λ² Var_q(p)`, `g_data,g = u − λ E_q[p]` (via fixed Gauss-Legendre quadrature). Cascades from a TwoState SVI fit. **W-shrinkage strategies beyond `NoneWPrior` are not yet wired** (transferrable from NBLN; deferred to a follow-up PR). |
+| `twostate_ln_logit` | 🟨 | TwoState-LogNormal-Logit (PR-2 of the cross-gene TwoState extension): planned. Latent z enters on the activation log-odds rather than on the production rate; saturating mean response, exact gauge. Currently raises `NotImplementedError`. |
 | `nbdm`, `nbvcp`, `zinb`, `zinbvcp` | ❌ | DM-family Laplace would require its own Newton kernel — no current implementation. |
 
 ## Architecture
@@ -256,7 +258,7 @@ In both cases:
 
 The engine runs one final Newton sweep over all cells (longer than the
 inner-loop iterations during training) and reports the worst per-cell
-gradient norm. If it exceeds `newton_tolerance`, behaviour is controlled
+gradient norm. If it exceeds `newton_tolerance`, behavior is controlled
 by `LaplaceConfig.convergence_action`:
 
 | Value | Effect |
@@ -351,7 +353,7 @@ worst comp grad doesn't converge below tolerance
 ├─ loss is decreasing?
 │   ├─ YES → globals are improving. Worst-grad lag is a
 │   │        symptom of the rank-deficient Hessian; it will
-│   │        shrink as globals stabilise.
+│   │        shrink as globals stabilize.
 │   │
 │   └─ NO  → numerical issue. Check init: empirical mu
 │            (from log-counts) should not be NaN, W should
@@ -506,6 +508,81 @@ latent log-rate). No `positive_transform` is applied; the constrained
 distribution returned by `get_distributions()` is `Normal(mu_loc,
 mu_scale).to_event(1)` directly.
 
+## SVI-to-Laplace informative-prior cascade (TwoState → TSLN-Rate)
+
+Mirrors the NBLN cascade pattern below, but the SVI source is a
+`TwoState` (or `TwoStateVCP`) fit and the target is
+`twostate_ln_rate`. The adapter lives in `scribe.laplace.priors`
+under `priors_from_twostate_results` and
+`freeze_values_from_twostate_results`.
+
+### Coordinate map
+
+| TSLN-Rate target | SVI source (TwoState) | Transform |
+|---|---|---|
+| `mu_loc` | `mu` (positive gene mean) | `pos_inverse` (`inv_softplus` for `softplus`, `log` for `exp`) |
+| `burst_size_loc` | `burst_size` (positive) | `pos_inverse` |
+| `k_off_loc` | `k_off` (positive) | `pos_inverse` |
+| `eta` | `eta_capture` (when present; biology-informed capture) | identity |
+
+All three positive globals map through `pos_inverse` to the
+unconstrained location space — the cascade samples a posterior
+draw, applies `pos_inverse`, and moment-matches a Gaussian. The
+``logit`` variant (PR-2) is gated with `NotImplementedError`.
+
+### Recommended freeze level
+
+The default cascade for TSLN-Rate is
+`freeze_params=("mu", "burst_size", "k_off")` — all three gene-level
+positive globals hard-frozen at the SVI MAP. This is the "Level 4"
+freeze from the cross-gene plan: it structurally pins the rigid-
+translation gauge between `log r_hat_g` and the per-cell latent
+`z_c`, so the Laplace fit's Newton iteration cannot drift along
+the gauge null direction.
+
+```python
+svi_results = scribe.fit(
+    adata, model="twostate", inference_method="svi", n_steps=20_000,
+)
+
+laplace_results = scribe.fit(
+    adata, model="twostate_ln_rate", inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("mu", "burst_size", "k_off"),
+    n_steps=50_000,
+)
+```
+
+### Result-dataclass semantics
+
+`ScribeLaplaceResults.mu` for `twostate_ln_rate` carries the
+**latent log-rate prior center** (`log(r_hat)`) to match the
+PLN/NBLN convention where `LowRankMultivariateNormal(loc=self.mu, …)`
+is the latent distribution. The **positive TwoState gene-mean
+parameter** lives on `result.gene_mean` (and the unconstrained
+version on `gene_mean_loc`). Plotting code that reads `result.mu`
+treats it as the log-rate; biology-side reporting should read
+`result.gene_mean` instead.
+
+### Curvature-clamp diagnostics
+
+The Poisson–Beta marginal is not uniformly log-concave (the Beta
+density is U-shaped when `α` or `β` < 1), so the Hessian-diagonal
+factor `a_g = λ E_q[p] − λ² Var_q(p)` is defensively floored at
+`_A_MIN = 1e-3` before the Woodbury solve. Four diagnostic fields
+on `ScribeLaplaceResults` surface how often the clamp activated:
+
+- `a_raw_min` — scalar minimum of the un-clamped `a_raw` across
+  all `(cell, gene)` entries.
+- `a_raw_negative_fraction` — fraction with `a_raw < 0` (genuine
+  log-concavity violations).
+- `a_clamp_fraction` — fraction where the `_A_MIN` floor activated.
+- `a_clamp_per_gene` — per-gene clamp-activation rate, shape `(G,)`.
+
+A `logging.warning` is emitted at end-of-training if
+`a_clamp_fraction > 0.05`, pointing the user at the per-gene
+breakdown.
+
 ## SVI-to-Laplace informative-prior cascade (NBLN only)
 
 For NBLN-Laplace fits, you can pass a previously-fit `ScribeSVIResults`
@@ -589,6 +666,187 @@ non-eta SVI source still gets their explicit capture anchor.
   `(u+r) p (1-p)` collapses if `r` drifts far from its data-supported
   value. The SVI prior pins `r` and unlocks stable optimization of
   `(W, d)`.
+
+### Subset-aware cascade across heterogeneous `gene_coverage` settings
+
+When the upstream SVI fit and the downstream Laplace fit use
+**different** `gene_coverage` thresholds, the cascade must reconcile
+the two gene panels. Higher `gene_coverage` keeps more genes, so a
+typical broad-to-narrow workflow has
+
+```text
+SVI gene_coverage  >=  Laplace gene_coverage
+```
+
+and the Laplace panel is a strict subset of the SVI panel. The
+cascade adapter auto-detects this and pools the SVI's per-gene
+posteriors on the SVI-kept-but-Laplace-dropped genes (plus the SVI's
+own `_other` posterior if present) into the Laplace target's pooled
+`_other` column via per-sample NB **moment matching**:
+
+```text
+μ_other^(s) = μ_svi_other^(s) + Σ_{g ∈ dropped} μ_g^(s)
+r_other^(s) = (μ_other^(s))² / [(μ_svi_other^(s))²/r_svi_other^(s)
+                                + Σ_{g ∈ dropped} μ_g^(s)²/r_g^(s)]
+```
+
+aggregated per posterior sample, then moment-matched to a Gaussian
+prior in the NBLN target coordinate exactly as for the other per-gene
+slots. See [`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+section `sec-nbln-cascade-aggregation` for the full derivation.
+
+**Behavior matrix.**
+
+| Relationship between SVI and Laplace gene panels | Behavior |
+|---|---|
+| SVI panel == Laplace panel | Pass-through (bit-equal to legacy). |
+| SVI panel ⊃ Laplace panel | Auto-on aggregation; emits explicit `INFO` log line. |
+| SVI panel ⊉ Laplace panel | `ValueError` listing first 10 missing genes. |
+| SVI is amortized-capture **and** panels differ | `NotImplementedError`. |
+| TSLN-Logit cascade with panels differ | `NotImplementedError`. |
+
+**Important caveats.**
+
+- The pooled `_other` prior is exact in the **first two moments**
+  under the upstream's conditional-independence assumption. It is
+  *not* distributionally exact: a sum of independent NBs with
+  gene-specific `p_g` is not itself NB except in the shared-`p` NBDM
+  limit. The pooled prior is the closest-NB approximation of the
+  aggregate's mean and variance, sufficient for anchor-prior use.
+- TSLN-Rate uses an analogous but **approximate** aggregator: μ is
+  additive (exact), while `burst_size` and `k_off` inherit the SVI's
+  `_other` column when present, falling back to per-sample medians.
+  The two-state telegraph parameters do not close under summation.
+- TSLN-Logit subset cascades raise `NotImplementedError`; the
+  `(rate, kappa, eta_anchor)` reparameterization is even less
+  tractable. Use TSLN-Rate for broad-to-narrow cascades.
+- Post-fit PPC on the `_other` column draws from the
+  moment-matched aggregate (re-aggregated at sample time in
+  `_resolve_nbln_ppc_arrays`), not from the SVI guide's own `_other`
+  column directly — the two represent different aggregates.
+
+### Decorrelating the `_other` aggregate from Σ (`correlate_other_column`)
+
+The trailing `_other` column emitted by the gene-coverage stage is a
+pooled-counts aggregate, not a real gene. Its row in the latent
+low-rank covariance `Σ = W Wᵀ + diag(d)` has no biophysical meaning —
+including it wastes capacity on spurious cross-gene correlations and
+biases the `W` loadings used for regulatory-program identification
+and gauge-invariant diagnostics (see
+[`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd)
+Theorem 2). The `correlate_other_column: bool` flag on `ModelConfig`
+controls whether the trailing `_other` row participates in Σ.
+
+**Default: `False`** (the biologically cleaner setting — `_other`
+is a pooled-counts aggregate, not a real gene; excluding it from Σ
+removes wasted capacity on spurious off-diagonal entries).  All
+five obs models support `False`: NBLN (Commit 2b), TSLN-Rate
+(Commit 3b), TSLN-Logit (Commit 4b), PLN (Commit 5b) via the
+deviation reparameterisation; LNM (Commit 6) via ALR-reference
+pinning.  `True` is the explicit legacy opt-in for users who
+relied on `_other` participating in Σ.  Under `False`, the layout
+has:
+
+```text
+W shape: (G_kept, K)        # latent-covariance axis (no _other row)
+d shape: (G_kept,)
+mu shape: (G_obs,)           # observation-layer axis (with _other)
+r shape: (G_obs,)            # NB dispersion, observation-layer
+per-cell x_dev: (G_kept,)    # deviation from μ_kept, prior N(0, Σ_kept)
+```
+
+Effective per-gene log-rate fed to the NB likelihood:
+
+- For kept gene `g` at kept-position `k`: `μ[g] + x_dev[k] − η_c`
+- For `_other`: `μ[other_idx] − η_c` — no z-modulation
+
+**Current landing status (harmonic-hare plan).** All scaffolding
+commits (2–6) have landed: the `AxisLayout` abstraction, signal
+threading from `gene_coverage` through the engine to the obs model,
+`ScribeLaplaceResults.axis_layout` + `G_obs` / `G_kept` properties,
+layout-aware `init_state` (W and d sized to `G_kept`), and
+`pack_result` plumbing.  NBLN's deviation-parameterised math has
+landed (Commit 2b: loss, Newton, profiled-μ Schur,
+`compute_global_uncertainty`, decoupled compositional sampler).
+TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) followed the same
+deviation-form pattern.  LNM has been correct end-to-end since
+Commit 6 via ALR-reference pinning.
+
+**Default flipped to `False` in Commit 5b** (the biologically
+cleaner setting).  `True` is now the explicit legacy opt-in for
+users who relied on `_other` participating in Σ.
+
+Behaviour matrix (all five obs models support decoupling — full
+harmonic-hare ladder landed):
+
+| Configuration | Behaviour |
+|---|---|
+| No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (explicit legacy opt-in) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | **Decoupled math live (Commit 2b).** `x_dev ~ N(0, Σ_kept)` per cell; μ moves into NB likelihood; `_other`'s log-rate is deterministic (`μ_other − η`); compositional sampler scatters kept x_dev onto full G_obs simplex. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | **Decoupled math live (Commit 3b).** Same deviation-form pattern as NBLN; Poisson-Beta data quadrature evaluates at the full G_obs log-rate, Woodbury solves on the kept axis, `a_min` floor applies to the kept slice.  PPC, `get_map`, and `get_distributions` all honour the kept-vs-obs split. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Logit | **Decoupled math live (Commit 4b).** Per-gene `rate` / `kappa` / `eta_anchor` stay on G_obs — only `W` / `d` / per-cell `z` shrink to G_kept.  Because TSLN-Logit's latent `z` is already zero-centred (no μ in the MVN prior), the deviation reparameterisation is a no-op — only 2 Newton paths (x-only, x-only-offset).  Activation log-odds for `_other` reduces to `θ[other_idx]` (no z modulation). |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` — PLN | **Decoupled math live (Commit 5b).** The simplest of the four count likelihoods — no per-gene NB dispersion, no Two-State Beta parameters, just pure Poisson on `μ + x_dev − η` for kept genes and `μ_other − η` for `_other`.  PPC paths (marginal, library-anchored, per-cell MAP-only, per-cell Laplace) all honour the kept-vs-obs split. |
+| Array-input fit (no AnnData) with pooled `_other` | Detected via `ctx._has_pooled_other` primary signal — array fits do NOT silently fall back to legacy when the user explicitly sets `correlate_other_column=False`. |
+| AnnData fit with no gene_coverage but `var_names[-1] == "_other"` (manually-pre-filtered AnnData) | Detected via the AnnData var_names fallback (rev-4 #3); the layout factory honours the literal `_other` sentinel even without the gene_coverage stage running. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` — LNM / LNMVCP | The ALR reference is auto-pinned to the `_other` position by `apply_gene_coverage_and_alr` (the min-variance auto-selection is skipped under this flag).  LNM realises the decoupling through ALR construction; no deviation reparameterisation needed. |
+| `gene_coverage < 1.0` AND `correlate_other_column=False` AND explicit `alr_reference_idx` points to a retained gene — LNM / LNMVCP | `apply_gene_coverage_and_alr` raises `ValueError`: the explicit reference contradicts the flag's intent.  The user must either drop the override (auto-pin to `_other`) or pass `correlate_other_column=True`. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (legacy) AND any explicit `alr_reference_idx` — LNM / LNMVCP | Pass-through: any retained-gene reference accepted silently; references to `_other` raise (preserves today's contract). |
+| Direct `ModelConfig` construction bypassing `apply_gene_coverage_and_alr` with inconsistent `correlate_other_column` / `alr_reference_idx` — LNM | `LNMObservationModel.init_state` raises `ValueError` at init time, naming both flags.  Defensive guard for users who skip the standard engine path. |
+
+**Disagreement is loud.** When the data context provides BOTH a
+`has_pooled_other` flag AND a `gene_names` tail and the two disagree
+(`has_pooled_other=True` but `gene_names[-1] != "_other"`, or
+vice-versa), `build_axis_layout` raises `ValueError` rather than
+silently choosing one — silent disagreement here can corrupt the
+axis split downstream.
+
+**LNM real wiring (Commit 6, landed).** LNM excludes the ALR
+reference gene from Σ by construction.  Under
+`correlate_other_column=False` AND a pooled `_other` column, the
+gene-coverage stage now pins the ALR reference to `_other`'s
+position automatically: the min-variance auto-selection is skipped
+because the variance-winner is typically a low-expression
+individual gene, not the pooled aggregate.  Explicit overrides to
+a non-`_other` reference under this flag raise `ValueError` with
+a message pointing at both flags.  Under legacy
+`correlate_other_column=True`, explicit references to any retained
+gene continue to be accepted as today (bit-equal contract).
+
+A defensive consistency check at `LNMObservationModel.init_state`
+catches the case where a user constructs `ModelConfig` directly and
+bypasses the gene-coverage stage; it raises `ValueError` if the
+detected pooled `_other` and the configured ALR reference disagree.
+Under legacy, the check is a no-op (the trivial `AxisLayout` short-
+circuits before the position check).  See
+`paper/_nb_lognormal.qmd` §sec-nbln-decorrelate-lnm for the
+biophysical rationale and `paper/_logistic_normal_multinomial.qmd`
+§sec-lnm-alr-pooled-other for the LNM-side cross-reference.
+
+**PLN underdispersion caveat.** Under `correlate_other_column=False`,
+PLN's `_other` column has `log_rate = μ_other − η_c` —
+deterministic up to the capture offset.  The marginal on the
+pooled count collapses to `Poisson(exp(μ_other − η_c))` with
+variance equal to mean.  When the pooled tail exhibits substantial
+overdispersion (common in practice, since it aggregates many
+low-expression genes), PLN's predictive intervals on this column
+will be unrealistically narrow.  NBLN / TSLN-Rate / TSLN-Logit do
+not have this issue — their per-gene NB dispersion (or burst
+kernel) fits the `_other` column freely on the observation axis.
+For PLN fits where the pooled tail's overdispersion is biologically
+meaningful, pass `correlate_other_column=True` to retain `_other`
+in Σ (the legacy layout couples `μ_other` to the latent through
+the diagonal `d_other` term).  See
+`paper/_nb_lognormal.qmd` §sec-nbln-decorrelate-pln-caveat for the
+mathematical treatment.
+
+**Default flip — landed.** The harmonic-hare ladder is complete
+(Commits 2 → 6 + 2b/3b/4b/5b).  Commit 5b shipped the PLN math and
+flipped the user-facing default from `True` (legacy, `_other` in Σ)
+to `False` (decoupled, biologically cleaner).  `True` is now the
+explicit legacy opt-in for users who relied on the prior shape
+contract.  See `ModelConfig.correlate_other_column` docstring for
+the per-model implications.
 
 ### Phase-2: Cascade-parameter freeze
 
@@ -806,6 +1064,120 @@ for cross-dataset transfer.
 - **`w_prior={"type": "none"}`** is normalized to `None` *before*
   scope validation, so the explicit no-op config is universally
   accepted (useful for parameterized testing).
+
+## Jacobian-corrected MAP (`map_method`)
+
+The Laplace approximation stores the posterior as a Gaussian in
+*unconstrained* space (``*_loc``, ``*_scale`` per parameter), then maps
+through ``positive_transform`` (Exp or Softplus) at result-construction
+time to produce the constrained stored fields (``self.r``,
+``self.gene_mean``, ``self.mu_T``, ``self.r_T``, etc.).
+
+By default, those stored fields are ``transform(loc)`` — the **median**
+of the constrained-space posterior for monotone transforms, NOT the
+mode (MAP). To get the true constrained-space mode, you need the
+**Jacobian correction**: for ``X ~ N(\\mu, \\sigma^2)``, ``Y = e^X`` has
+mode ``e^{\\mu - \\sigma^2}``, not ``e^{\\mu}``.
+
+### `get_map(map_method=...)`
+
+```python
+result = scribe.fit(counts, ...)
+
+# Default: Jacobian-corrected MAP. New in v1; produces ~exp(sigma^2)-
+# shifted values compared to legacy.
+m = result.get_map()
+
+# Legacy: f(loc) (=median); reproduces pre-correction byte-for-byte.
+m_legacy = result.get_map(map_method="transform")
+
+# Strict: raise on unsupported (transform, base) pairs.
+m_strict = result.get_map(map_method="jacobian")
+```
+
+The method controls how the **returned dict** computes constrained
+values from the persisted ``(_loc, _scale)`` pairs. It does NOT mutate
+the stored fields — ``result.r`` still has the median value unless you
+call ``with_jacobian_map()`` (see below).
+
+### `with_jacobian_map()` — opt-in persistent correction
+
+If downstream code reads ``self.r`` / ``self.gene_mean`` directly (e.g.,
+PPC samplers, cascade adapters), use ``with_jacobian_map()`` to
+materialize the corrected view into the stored fields:
+
+```python
+new_result = result.with_jacobian_map()
+# new_result.r is now the corrected MAP.
+# For TSLN-Rate, new_result.alpha / .beta / .r_hat are also re-derived
+# from the corrected (gene_mean, burst_size, k_off) via _twostate_reparam.
+# For LNM, the derived p is recomputed from the corrected (mu_T, r_T)
+# inside get_map().
+```
+
+The ``_loc`` / ``_scale`` pairs are NOT modified, so
+``new_result.get_map(map_method="transform")`` still derives from
+``_loc`` and returns the uncorrected median. The chosen semantics:
+``"transform"`` always means "raw transform-of-loc", regardless of
+what's in the stored view fields.
+
+### Cascade reproducibility (`cascade_map_method`)
+
+When ``scribe.fit(..., informative_priors_from=svi_results)`` is used,
+the cascade extractors (``freeze_values_from_results``,
+``freeze_values_from_twostate_results``) call
+``svi_results.get_map()`` internally to extract MAP values from the SVI
+source. The SVI default flipped to ``map_method="auto"`` (Jacobian-
+corrected MAP) in v1, which means:
+
+* Pre-v1 cascade fits used ``transform(loc)`` median values.
+* Post-v1 cascade fits use ``exp(\\mu - \\sigma^2)``-shifted values by
+  default.
+
+For reproducibility of pre-v1 cascade results, pass
+``cascade_map_method="transform"`` to ``scribe.fit``:
+
+```python
+# Reproduce pre-correction cascade behavior.
+result = scribe.fit(
+    counts,
+    informative_priors_from=svi_results,
+    cascade_map_method="transform",   # pins legacy uncorrected median
+    ...
+)
+
+# Default (post-v1): cascade uses Jacobian-corrected MAP.
+result = scribe.fit(
+    counts,
+    informative_priors_from=svi_results,
+    ...
+)
+```
+
+### Limitations (v1)
+
+* **`p_capture` cannot be corrected**: requires persisting
+  ``eta_scale``, which is not yet wired into ``pack_result``. Calling
+  ``get_map(map_method="auto")`` on a result with ``eta_loc`` emits a
+  one-per-call-site warning; ``map_method="jacobian"`` raises.
+* **`LowRankMVN + Sigmoid/Softplus`** requires a coupled multi-start
+  optimizer not in v1. Falls back to ``transform(loc)`` with a warning
+  under ``"auto"``; raises under ``"jacobian"``. In practice this only
+  matters for low-rank guides on probability or positive parameters —
+  most production fits use independent Normal bases for these.
+* **Heuristic sigma ceiling**: the grid+Newton refinement for
+  Sigmoid/Softplus is reliable for ``sigma < SIGMA_CEILING_WARN``
+  (default 10). Beyond that, the adaptive grid may not cover
+  asymptotic modes; the public wrapper warns under ``"auto"`` and
+  raises under ``"jacobian"``.
+
+### See also
+
+* [`scribe/stats/jacobian_map.py`](../stats/jacobian_map.py) for the
+  math and dispatch table.
+* [`scribe/laplace/_derived.py`](_derived.py) — derivation helpers
+  used by ``with_jacobian_map`` to recompute TSLN ``(\\alpha, \\beta,
+  r_{\\hat{}})`` and LNM ``p``.
 
 ## See also
 

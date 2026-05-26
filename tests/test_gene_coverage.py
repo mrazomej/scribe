@@ -200,12 +200,19 @@ def test_lnm_auto_reference_includes_pooled_other(monkeypatch):
         _fake_select_alr_reference,
     )
 
+    # ``correlate_other_column=True`` opts into the legacy LNM auto-
+    # selection path (where the pooled ``_other`` competes with real
+    # genes via the variance-minimising selector).  Under the new
+    # default ``False`` (flipped in Commit 5b), the gene-coverage
+    # stage auto-pins ALR ref to ``_other``'s position and the
+    # selector is skipped entirely.
     result = fit(
         counts,
         model="lnm",
         inference_method="svi",
         n_steps=1,
         gene_coverage=0.95,
+        correlate_other_column=True,
     )
     # Selector saw all 3 columns (2 retained genes + 1 ``_other``).
     assert received_shapes["n_genes"] == 3
@@ -249,6 +256,10 @@ def test_lnm_reference_maps_from_original_gene_space(monkeypatch):
 
     monkeypatch.setattr("scribe.api._run_inference", _fake_run_inference)
 
+    # Under the new default ``correlate_other_column=False`` (flipped
+    # in Commit 5b), an explicit non-``_other`` reference raises a
+    # ``ValueError``.  This test exercises the legacy mapping behaviour
+    # — opt in with ``True``.
     result = fit(
         counts,
         model="lnm",
@@ -256,6 +267,7 @@ def test_lnm_reference_maps_from_original_gene_space(monkeypatch):
         n_steps=1,
         gene_coverage=0.8,
         alr_reference_idx=3,
+        correlate_other_column=True,
     )
     assert int(result.model_config.alr_reference_idx) == 1
 

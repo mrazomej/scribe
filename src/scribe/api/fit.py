@@ -39,6 +39,8 @@ Examples
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+import logging
+
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
@@ -67,6 +69,8 @@ from .stages.model_config_build import build_model_config
 from .stages.inference_config_build import build_inference_config
 from .stages.run_inference import dispatch_inference
 from .stages.result_postprocess import postprocess_results
+
+_log = logging.getLogger(__name__)
 
 
 def fit(
@@ -151,6 +155,19 @@ def fit(
     # Pass an explicit string to override.
     d_mode: Optional[str] = None,
     alr_reference_idx: Optional[int] = None,
+    # Whether the trailing aggregated '_other' column (emitted by the
+    # gene-coverage stage when gene_coverage < 1.0) participates in
+    # the latent low-rank covariance Σ = W Wᵀ + diag(d).  Applies to
+    # PLN/NBLN/TSLN-Rate/TSLN-Logit (LNM realises the decoupling via
+    # ALR-reference pinning).  **Default ``False``** (biologically
+    # cleaner — ``_other`` is a pooled-counts aggregate, not a real
+    # gene).  ``True`` is the explicit legacy opt-in for users who
+    # relied on ``_other`` participating in Σ.  See
+    # ``scribe.laplace._axis_layout`` for the shape contract,
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-decorrelate-other for the
+    # biophysical rationale, and ``ModelConfig.correlate_other_column``
+    # for the per-model wiring status.
+    correlate_other_column: bool = False,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
@@ -220,7 +237,7 @@ def fit(
     restore_best: bool = False,
     # KL annealing options (for VAE only -- automatically defaulted ON
     # for VAE-mode fits; pass an explicit ``KLAnnealingConfig`` or set
-    # ``kl_annealing_warmup`` to customise; pass
+    # ``kl_annealing_warmup`` to customize; pass
     # ``KLAnnealingConfig(enabled=False)`` to disable).
     kl_annealing: Optional[
         Union["KLAnnealingConfig", Dict[str, Any], bool]
@@ -258,6 +275,22 @@ def fit(
     informative_priors_tau: float = 1.0,
     informative_priors_n_samples: int = 1000,
     informative_priors_verbose: bool = True,
+    # Cascade-reproducibility knob: controls which ``map_method`` is
+    # passed to the SVI source's ``get_map`` inside the cascade
+    # extractors (``freeze_values_from_results`` /
+    # ``freeze_values_from_twostate_results``).
+    #   - None (default): inherit the SVI source's get_map default
+    #     (currently ``"auto"`` = Jacobian-corrected MAP).
+    #   - ``"transform"``: pin to the uncorrected median ``f(loc)``
+    #     for reproducibility with pre-correction cascade fits.
+    #   - ``"auto"`` / ``"jacobian"`` / ...: see
+    #     :func:`scribe.stats.jacobian_corrected_map`.
+    # IMPORTANT: when the SVI get_map default flips from
+    # ``"transform"`` (legacy) to ``"auto"`` (Jacobian-corrected), this
+    # cascade silently shifts MAP values by ~exp(sigma^2) per element
+    # for LogNormal-shaped guides. Pin to ``"transform"`` when
+    # re-running pre-correction scripts.
+    cascade_map_method: Optional[str] = None,
     # Phase-2 freeze: which NBLN globals are fixed at the SVI cascade's
     # MAP rather than refined during the M-step.  Default ("r", "eta")
     # eliminates the rigid-translation gauge degeneracy and yields the
@@ -277,7 +310,7 @@ def fit(
     #
     # See paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
-    informative_priors_freeze: tuple = ("r", "eta"),
+    informative_priors_freeze: Optional[tuple] = None,
     # DEPRECATED: shrinkage prior on the loadings matrix W.
     # The preferred API is to pass the strategy spec inside the
     # ``priors`` dict under the descriptive ``"loadings"`` key:
@@ -545,7 +578,7 @@ def fit(
 
         **Explicit list** (power-user): pass a list like
         ``["mu", "phi"]``.  Set to ``None`` to disable mixture
-        behaviour entirely.
+        behavior entirely.
 
     guide_rank : int, optional
         Rank for low-rank variational guide on gene-specific
@@ -796,18 +829,26 @@ def fit(
         (capture-mode detection, gene-identity check outcome, freeze
         choice).
 
-    informative_priors_freeze : tuple of str, default=("r", "eta")
-        Subset of ``{"r", "mu", "eta"}`` whose values are *pinned* at
-        the cascade-source MAP and excluded from the NBLN optimizer
-        dict.  Default ``("r", "eta")`` eliminates the rigid-translation
-        gauge degeneracy by structurally fixing per-cell ``eta`` while
-        the NBLN M-step refines ``mu``, ``W``, and ``d``.  Descriptive
-        aliases are accepted: ``"dispersion" -> "r"``,
+    informative_priors_freeze : tuple of str, optional
+        Subset of parameters whose values are *pinned* at the
+        cascade-source MAP and excluded from the Laplace optimizer
+        dict.  Pass ``None`` (the default) to use the
+        per-base-model "Level 4" cascade defaults:
+
+          - ``"nbln"``              → ``("r", "eta")``
+          - ``"twostate_ln_rate"``  → ``("mu", "burst_size", "k_off")``
+          - ``"twostate_ln_logit"`` → ``("rate", "kappa", "eta_anchor")``
+
+        Pass ``()`` (empty tuple) for plain no-freeze cascade
+        behavior.  Pass any iterable of valid parameter names to
+        override the variant default.  Descriptive aliases are
+        accepted for NBLN: ``"dispersion" -> "r"``,
         ``"mean_expression"`` (or ``"expression"``) ``-> "mu"``,
         ``"capture_efficiency" -> "eta"`` — see
         ``FREEZE_KEY_ALIASES`` in
-        ``scribe.models.config.parameter_mapping``.  Pass ``()`` for
-        plain (no-freeze) cascade behaviour.  See
+        ``scribe.models.config.parameter_mapping``.  TSLN variants
+        do not currently expose descriptive aliases; pass the
+        internal short names directly.  See
         ``paper/_diffexp_nbln_robustness.qmd`` and
         ``sec-nbln-cascade-freeze``.
 
@@ -1020,13 +1061,11 @@ def fit(
             "is deprecated."
         )
     if w_prior is not None:
-        import warnings as _warnings
-        _warnings.warn(
+        _log.warning(
             "`w_prior=` kwarg is deprecated; pass the W-shrinkage "
             "prior inside the priors dict as "
             "`priors={'loadings': {'type': '...', ...}}` instead. "
-            "Both routes resolve to the same internal plumbing.",
-            DeprecationWarning, stacklevel=2,
+            "Both routes resolve to the same internal plumbing."
         )
         _effective_w_prior = w_prior
     else:
@@ -1070,6 +1109,7 @@ def fit(
             overdispersion_prior=overdispersion_prior,
             d_mode=d_mode,
             alr_reference_idx=alr_reference_idx,
+            correlate_other_column=correlate_other_column,
             mixture_params=mixture_params,
             guide_rank=guide_rank,
             joint_params=joint_params,

@@ -27,6 +27,7 @@ from scribe.models.config import AmortizationConfig
 import json
 import pickle
 import os
+import logging
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from scribe.data_loader import load_and_preprocess_anndata
+
+_log = logging.getLogger(__name__)
 
 # NOTE: Do NOT create a module-level Console() here.  Rich's Console
 # contains an _thread.RLock that cannot be pickled, which breaks Hydra's
@@ -497,7 +500,7 @@ def _build_priors_dict(priors_cfg):
 
 
 def _load_svi_init(svi_init_path, console: Console = None):
-    """Load a pickled ``ScribeSVIResults`` file for MCMC initialization.
+    """Load a pickled ``ScribeSVIResults`` file for warm starts/cascade.
 
     Parameters
     ----------
@@ -528,11 +531,11 @@ def _load_svi_init(svi_init_path, console: Console = None):
     abs_path = hydra.utils.to_absolute_path(str(svi_init_path))
 
     if not os.path.isfile(abs_path):
-        raise FileNotFoundError(f"svi_init file not found: {abs_path}")
+        raise FileNotFoundError(f"SVI results file not found: {abs_path}")
 
     if console:
         console.print(
-            f"[dim]Loading SVI init from:[/dim] [cyan]{abs_path}[/cyan]"
+            f"[dim]Loading SVI results from:[/dim] [cyan]{abs_path}[/cyan]"
         )
 
     with open(abs_path, "rb") as f:
@@ -540,14 +543,14 @@ def _load_svi_init(svi_init_path, console: Console = None):
 
     if not isinstance(svi_results, ScribeSVIResults):
         raise TypeError(
-            f"svi_init file must contain a ScribeSVIResults object, "
+            f"SVI results file must contain a ScribeSVIResults object, "
             f"got {type(svi_results).__name__}"
         )
 
     if console:
         console.print(
             "[green]✓[/green] [bold green]SVI results loaded for "
-            "MCMC initialization[/bold green]"
+            "warm-start/cascade[/bold green]"
         )
 
     return svi_results
@@ -926,6 +929,22 @@ def main(cfg: DictConfig) -> None:
     inference_method = inference_cfg.pop("method")
     # Pop SVI-only pipeline flags before forwarding to scribe.fit()
     empirical_mixing = inference_cfg.pop("empirical_mixing", True)
+    # Pop Laplace-only Newton controls and pass them via laplace_config.
+    laplace_keys = (
+        "n_newton_steps",
+        "newton_tolerance",
+        "damping",
+        "newton_max_step",
+        "convergence_action",
+    )
+    laplace_config = None
+    if inference_method == "laplace":
+        laplace_config = {}
+        for key in laplace_keys:
+            if key in inference_cfg:
+                laplace_config[key] = inference_cfg.pop(key)
+        if not laplace_config:
+            laplace_config = None
 
     # Set checkpoint directory for early stopping (automatically within Hydra
     # output)
@@ -988,11 +1007,10 @@ def main(cfg: DictConfig) -> None:
     if cfg.get("mixture_model", False) and n_components is None:
         # If mixture_model=true but n_components not set, default to 2
         n_components = 2
-        warnings.warn(
+        _log.warning(
             "mixture_model=true without n_components specified. "
             "Defaulting to n_components=2. "
-            "Please use n_components=N directly instead of mixture_model flag.",
-            DeprecationWarning,
+            "Please use n_components=N directly instead of mixture_model flag."
         )
 
     # Build capture amortization config once from YAML; pass as single object
@@ -1029,6 +1047,25 @@ def main(cfg: DictConfig) -> None:
 
     # Load SVI results for MCMC chain initialization (if path is provided)
     svi_init_results = _load_svi_init(cfg.get("svi_init"), console)
+    # Resolve cascade source: top-level override wins, data YAML is fallback.
+    _cascade_path = cfg.get("informative_priors_from") or cfg.data.get(
+        "informative_priors_from"
+    )
+    informative_priors_source = _load_svi_init(_cascade_path, console)
+    # Index into a single dataset when the cascade source is multi-dataset.
+    # Lives under data.prior_index so it can be burned into per-pair YAMLs.
+    informative_priors_dataset_index = cfg.data.get("prior_index")
+    if (
+        informative_priors_source is not None
+        and informative_priors_dataset_index is not None
+    ):
+        ds_idx = int(informative_priors_dataset_index)
+        console.print(
+            f"[dim]Indexing cascade source to dataset {ds_idx}[/dim]"
+        )
+        informative_priors_source = informative_priors_source.get_dataset(
+            ds_idx
+        )
     if (
         svi_init_results is None
         and resume_source is not None
@@ -1041,12 +1078,23 @@ def main(cfg: DictConfig) -> None:
         )
         svi_init_results = _load_svi_init(resume_source.results_path, console)
 
+    informative_priors_freeze = cfg.get("informative_priors_freeze")
+    if informative_priors_freeze is not None and OmegaConf.is_config(
+        informative_priors_freeze
+    ):
+        informative_priors_freeze = OmegaConf.to_container(
+            informative_priors_freeze, resolve=True
+        )
+    if informative_priors_freeze is not None:
+        informative_priors_freeze = tuple(informative_priors_freeze)
+
     # Build kwargs for scribe.fit()
     kwargs = {
         # Model configuration
         "model": model_type,
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
+        "positive_transform": cfg.get("positive_transform"),
         "expression_prior": cfg.get("expression_prior", "none"),
         "prob_prior": cfg.get("prob_prior", "none"),
         "zero_inflation_prior": cfg.get("zero_inflation_prior", "none"),
@@ -1078,6 +1126,9 @@ def main(cfg: DictConfig) -> None:
         # Gene-specific overdispersion (e.g. BNB)
         "overdispersion": cfg.get("overdispersion", "none"),
         "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
+        "latent_dim": cfg.get("latent_dim"),
+        "d_mode": cfg.get("d_mode"),
+        "alr_reference_idx": cfg.get("alr_reference_idx"),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params", "all"),
         "guide_rank": cfg.guide_rank,
@@ -1108,11 +1159,21 @@ def main(cfg: DictConfig) -> None:
         "annotation_min_cells": cfg.get("annotation_min_cells"),
         # Inference configuration
         "inference_method": inference_method,
+        "laplace_config": laplace_config,
         # SVI-to-MCMC initialization
         "svi_init": svi_init_results,
+        "informative_priors_from": informative_priors_source,
+        "informative_priors_tau": cfg.get("informative_priors_tau", 1.0),
+        "informative_priors_n_samples": cfg.get(
+            "informative_priors_n_samples", 1000
+        ),
+        "informative_priors_freeze": informative_priors_freeze,
+        "cascade_map_method": cfg.get("cascade_map_method"),
         # Data configuration
         "cells_axis": cfg.cells_axis,
         "layer": cfg.data.get("layer", cfg.layer),
+        "gene_coverage": cfg.get("gene_coverage"),
+        "kl_annealing_warmup": cfg.get("kl_annealing_warmup"),
         "seed": cfg.seed,
     }
 

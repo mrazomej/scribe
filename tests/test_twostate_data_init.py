@@ -292,13 +292,13 @@ class TestInjectAndThread:
         # For ribosomal-scale means, softplus_inv ≈ identity.
         assert abs(mu_loc[-1] - rps2_mean) / rps2_mean < 0.01
 
-    def test_user_warning_fires_by_default(self):
-        """The data-driven mu init must surface a ``UserWarning`` so
-        the user sees the anchor is being applied (Python's logging
-        is silent at INFO level without explicit config).
+    def test_user_warning_fires_by_default(self, scribe_caplog):
+        """The data-driven mu init must surface an INFO log so
+        the user sees the anchor is being applied.
         """
+        import logging
+
         import scribe
-        import warnings
 
         rng = np.random.default_rng(0)
         n_cells, n_genes = 32, 8
@@ -306,31 +306,30 @@ class TestInjectAndThread:
         counts = np.stack(
             [rng.poisson(m, n_cells) for m in per_gene], axis=1
         )
-        with warnings.catch_warnings(record=True) as wlist:
-            warnings.simplefilter("always", UserWarning)
-            scribe.fit(
-                counts,
-                model="twostatevcp",
-                parameterization="natural",
-                inference_method="svi",
-                n_steps=1,
-                unconstrained=True,
-            )
+        scribe_caplog.set_level(logging.INFO, logger="scribe")
+        scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=1,
+            unconstrained=True,
+        )
         matched = [
-            str(w.message)
-            for w in wlist
-            if "TwoState" in str(w.message) and "mu_prior_loc" in str(w.message)
+            record.message
+            for record in scribe_caplog.records
+            if "TwoState" in record.message and "mu_prior_loc" in record.message
         ]
-        assert matched, "Expected a TwoState mu_prior_loc UserWarning"
-        # Sanity-check the message includes the range summary.
+        assert matched, "Expected a TwoState mu_prior_loc INFO log"
         assert "applied per-gene mu_prior_loc" in matched[0]
 
-    def test_user_warning_for_skip_with_explicit_prior(self):
+    def test_user_warning_for_skip_with_explicit_prior(self, scribe_caplog):
         """Passing ``priors={'mu': ...}`` must short-circuit the anchor
-        AND emit a UserWarning so the user knows the empirical init
+        AND emit an INFO log so the user knows the empirical init
         was skipped."""
+        import logging
+
         import scribe
-        import warnings
 
         rng = np.random.default_rng(0)
         n_cells, n_genes = 32, 8
@@ -338,23 +337,22 @@ class TestInjectAndThread:
         counts = np.stack(
             [rng.poisson(m, n_cells) for m in per_gene], axis=1
         )
-        with warnings.catch_warnings(record=True) as wlist:
-            warnings.simplefilter("always", UserWarning)
-            scribe.fit(
-                counts,
-                model="twostatevcp",
-                parameterization="natural",
-                inference_method="svi",
-                n_steps=1,
-                unconstrained=True,
-                priors={"mu": (1.5, 2.0)},
-            )
+        scribe_caplog.set_level(logging.INFO, logger="scribe")
+        scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=1,
+            unconstrained=True,
+            priors={"mu": (1.5, 2.0)},
+        )
         matched = [
-            str(w.message)
-            for w in wlist
-            if "skipping" in str(w.message) and "mu_prior_loc" in str(w.message)
+            record.message
+            for record in scribe_caplog.records
+            if "skipping" in record.message and "mu_prior_loc" in record.message
         ]
-        assert matched, "Expected a 'skipping mu_prior_loc' UserWarning"
+        assert matched, "Expected a 'skipping mu_prior_loc' INFO log"
 
     def test_post_fit_predictive_after_per_gene_anchor(self):
         """Regression: after a fit with the per-gene mu anchor,

@@ -808,4 +808,437 @@ __all__ = [
     # Laplace-posterior samplers (used by the per-cell PPC path).
     "sample_x_posterior",
     "sample_x_posterior_batch",
+    # Commit 5b: decoupled-layout kernels (`_other` excluded from Σ).
+    "newton_step_joint_decoupled",
+    "laplace_newton_loop_decoupled",
+    "laplace_newton_batch_decoupled",
+    "newton_step_x_only_decoupled",
+    "laplace_newton_loop_x_only_decoupled",
+    "laplace_newton_batch_x_only_decoupled",
+    "laplace_log_det_neg_H_decoupled",
+    "laplace_log_det_neg_H_batch_decoupled",
+    "laplace_log_det_neg_H_batch_x_only_decoupled",
+    "pln_grad_split_batch_decoupled",
+    "pln_grad_x_only_norm_batch_decoupled",
 ]
+
+
+# =====================================================================
+# Decoupled-layout kernels (`_other` excluded from Σ, Commit 5b)
+# =====================================================================
+#
+# Under ``correlate_other_column=False`` with a pooled trailing
+# ``_other`` column, PLN's per-cell latent splits into:
+#
+#   • ``x_dev`` ∈ ℝ^{G_kept} — deviation from μ on the kept-gene axis,
+#     with MVN prior ``x_dev ~ 𝒩(0, Σ_kept)`` where ``Σ_kept = W Wᵀ
+#     + diag(d)`` and ``W: (G_kept, k)``, ``d: (G_kept,)``.
+#   • ``η`` ∈ ℝ — per-cell capture offset (unchanged across layouts).
+#
+# PLN is the simplest of the four count-likelihood models because:
+#
+#   1. No per-gene observation dispersion (no NB ``r``, no Beta
+#      ``α/β`` or ``κ/θ``).  Per-gene global is just ``μ`` on G_obs.
+#   2. The Poisson factor is closed-form ``rate = exp(log_rate)``;
+#      no quadrature needed.
+#   3. PLN is uniformly log-concave, so no defensive ``a_min`` floor
+#      is needed (TSLN-Rate/TSLN-Logit need it for Beta-Poisson edge
+#      cases).
+#
+# Effective log-rate fed to the Poisson likelihood per gene:
+#
+#   kept gene ``g`` at position ``k_g``:  ``μ[g] + x_dev[k_g] − η``
+#   ``_other`` at ``other_idx``:           ``μ[other_idx] − η``
+#
+# Math contract (same shape as NBLN's Commit 2b; the data-side
+# curvature ``a_g`` reduces to the Poisson rate ``λ_g = exp(log_rate_g)``):
+#
+#   −H_{x_dev, x_dev} = diag(λ_kept) + Σ_kept⁻¹   on G_kept × G_kept
+#       where λ_full[g] = exp(log_rate_g) on G_obs;
+#       λ_kept = λ_full[kept_idx].
+#
+#   −H_{x_dev[k], η} = −λ_kept[k]    (kept axis only)
+#   −H_{η, η} = Σ_{g ∈ G_obs} λ_full[g] + 1/σ_M²
+#                                  (full sum including ``_other``)
+#
+#   Schur scalar s = Σ_g λ_full[g] + 1/σ_M² − λ_keptᵀ A⁻¹ λ_kept
+#       where A = diag(λ_kept) + Σ_kept⁻¹.
+
+
+def _scatter_log_rate_decoupled(
+    x_dev: jnp.ndarray,
+    mu: jnp.ndarray,
+    eta_subtract: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+) -> jnp.ndarray:
+    """Build full G_obs log-rate from kept-axis x_dev under decoupling.
+
+    Returns ``log_rate`` of shape ``(G_obs,)`` with:
+        log_rate[g] = mu[g] + x_dev[k] − eta_subtract  for g == kept_idx[k]
+        log_rate[g] = mu[g] − eta_subtract             for g == other_idx
+
+    Mirrors NBLN/TSLN-Rate's ``_scatter_log_rate_decoupled``
+    (duplicated per-module to keep Newton kernels self-contained).
+    """
+    base = mu - eta_subtract
+    return base.at[kept_idx].add(x_dev)
+
+
+# ---------------------------------------------------------------------
+# Joint Newton (soft-η, decoupled)
+# ---------------------------------------------------------------------
+
+
+def newton_step_joint_decoupled(
+    x_dev: jnp.ndarray,
+    eta: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """One joint Newton step on ``(x_dev, η)`` under the deviation reparam.
+
+    Mirrors :func:`newton_step_joint` structurally; differences:
+
+    * Latent ``x_dev`` lives on G_kept (length-K-rank low-rank covariance).
+    * The Poisson rate is computed at the FULL G_obs log-rate via
+      :func:`_scatter_log_rate_decoupled`; ``λ_full`` covers every gene
+      (including ``_other``) and ``λ_kept = λ_full[kept_idx]`` is
+      sliced to drive the Woodbury factors for ``A``.
+    * The MVN-prior gradient term is ``Σ_kept⁻¹ x_dev`` (zero-centred)
+      instead of ``Σ⁻¹ (x − μ)`` — μ has moved into the Poisson
+      likelihood under the reparameterisation.
+    * The η Schur scalar s uses the FULL G_obs sum of ``λ_full``.
+    """
+    log_rate_full = _scatter_log_rate_decoupled(x_dev, mu, eta, kept_idx)
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+    log_rate_kept = log_rate_full[kept_idx]
+    rate_kept = rate_full[kept_idx]
+
+    # ``_woodbury_factors`` recomputes ``rate_kept`` internally from
+    # ``log_rate_kept`` (same clamp); we pass the kept slice so W and
+    # d's G_kept axis matches.
+    factors = _woodbury_factors(W, d, log_rate_kept, damping)
+
+    # Σ_kept⁻¹ x_dev via the inner Woodbury for Σ_kept.  Zero-centred
+    # prior: no μ offset to subtract.
+    inv_d = 1.0 / d
+    sigma_inv_xdev = inv_d * x_dev - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * x_dev)
+        )
+    )
+
+    # Data-side gradient on G_obs (Poisson: ``u - rate``).
+    g_lograte_full = u - rate_full
+    g_x_dev_data = g_lograte_full[kept_idx]
+    g_eta_data = -jnp.sum(g_lograte_full)
+
+    g_x_dev = g_x_dev_data - sigma_inv_xdev
+    g_eta = g_eta_data - (eta - eta_anchor) / (sigma_M**2)
+
+    # Schur back-substitution.  Identical structure to legacy joint
+    # solve; only the kept-axis substitution and full-G_obs Schur
+    # scalar differ.
+    A_inv_g_x = _solve_A(factors, g_x_dev)
+    rate_inv_A = _solve_A(factors, rate_kept)
+    s = (
+        jnp.sum(rate_full)
+        + 1.0 / (sigma_M**2)
+        - jnp.dot(rate_kept, rate_inv_A)
+        + damping
+    )
+    delta_eta = (g_eta + jnp.dot(rate_kept, A_inv_g_x)) / s
+    delta_x_dev = A_inv_g_x + rate_inv_A * delta_eta
+
+    grad_inf_norm = jnp.maximum(
+        jnp.max(jnp.abs(g_x_dev)), jnp.abs(g_eta)
+    )
+    _MAX_STEP = 5.0
+    step_norm = jnp.maximum(jnp.max(jnp.abs(delta_x_dev)), jnp.abs(delta_eta))
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    delta_x_dev = delta_x_dev * scale
+    delta_eta = delta_eta * scale
+    eta_new = eta + delta_eta
+    eta_new = jnp.maximum(eta_new, 1e-3)
+    return x_dev + delta_x_dev, eta_new, grad_inf_norm
+
+
+def laplace_newton_loop_decoupled(
+    x_dev_init: jnp.ndarray,
+    eta_init: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    n_iters: int,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Run ``n_iters`` Newton steps on ``(x_dev, η)`` for one cell."""
+
+    def step(carry, _):
+        x_, eta_, _grad = carry
+        x_new, eta_new, grad_norm = newton_step_joint_decoupled(
+            x_, eta_, u, mu, W, d, kept_idx,
+            eta_anchor, sigma_M, damping,
+        )
+        return (x_new, eta_new, grad_norm), None
+
+    init = (x_dev_init, eta_init, jnp.asarray(jnp.inf, dtype=x_dev_init.dtype))
+    (x_final, eta_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    # log det(-H) at the converged MAP.
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_final, mu, eta_final, kept_idx
+    )
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+    log_rate_kept = log_rate_full[kept_idx]
+    rate_kept = rate_full[kept_idx]
+    factors = _woodbury_factors(W, d, log_rate_kept, damping)
+    log_det_A = _log_det_A(factors)
+    rate_inv_A = _solve_A(factors, rate_kept)
+    s = (
+        jnp.sum(rate_full)
+        + 1.0 / (sigma_M**2)
+        - jnp.dot(rate_kept, rate_inv_A)
+        + damping
+    )
+    log_det_neg_H = log_det_A + jnp.log(s)
+    return x_final, eta_final, final_grad, log_det_neg_H
+
+
+laplace_newton_batch_decoupled = jax.vmap(
+    laplace_newton_loop_decoupled,
+    in_axes=(0, 0, 0, None, None, None, None, 0, 0, None, None),
+)
+
+
+# ---------------------------------------------------------------------
+# x-only Newton (no capture, decoupled)
+# ---------------------------------------------------------------------
+
+
+def newton_step_x_only_decoupled(
+    x_dev: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Single Newton step on ``x_dev`` only (no capture, decoupled)."""
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_dev, mu, jnp.asarray(0.0, dtype=x_dev.dtype), kept_idx
+    )
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+    log_rate_kept = log_rate_full[kept_idx]
+
+    factors = _woodbury_factors(W, d, log_rate_kept, damping)
+
+    inv_d = 1.0 / d
+    sigma_inv_xdev = inv_d * x_dev - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * x_dev)
+        )
+    )
+    g_lograte_full = u - rate_full
+    g_x_dev = g_lograte_full[kept_idx] - sigma_inv_xdev
+
+    delta_x_dev = _solve_A(factors, g_x_dev)
+    grad_inf_norm = jnp.max(jnp.abs(g_x_dev))
+    _MAX_STEP = 5.0
+    step_norm = jnp.max(jnp.abs(delta_x_dev))
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    return x_dev + delta_x_dev * scale, grad_inf_norm
+
+
+def laplace_newton_loop_x_only_decoupled(
+    x_dev_init: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    n_iters: int,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """``n_iters`` Newton steps on ``x_dev`` (no capture, decoupled)."""
+
+    def step(carry, _):
+        x_, _grad = carry
+        x_new, grad_norm = newton_step_x_only_decoupled(
+            x_, u, mu, W, d, kept_idx, damping,
+        )
+        return (x_new, grad_norm), None
+
+    init = (x_dev_init, jnp.asarray(jnp.inf, dtype=x_dev_init.dtype))
+    (x_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_final, mu, jnp.asarray(0.0, dtype=x_final.dtype), kept_idx
+    )
+    log_rate_kept = log_rate_full[kept_idx]
+    factors = _woodbury_factors(W, d, log_rate_kept, damping)
+    log_det_neg_H = _log_det_A(factors)
+    return x_final, final_grad, log_det_neg_H
+
+
+laplace_newton_batch_x_only_decoupled = jax.vmap(
+    laplace_newton_loop_x_only_decoupled,
+    in_axes=(0, 0, None, None, None, None, None, None),
+)
+
+
+# ---------------------------------------------------------------------
+# log det(−H) batch helpers (decoupled)
+# ---------------------------------------------------------------------
+
+
+def laplace_log_det_neg_H_decoupled(
+    x_dev_map: jnp.ndarray,
+    eta_map: Optional[jnp.ndarray],
+    u: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    mu: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    sigma_M: float,
+) -> jnp.ndarray:
+    """``log det(−H)`` at the MAP under the decoupled PLN layout.
+
+    Soft-η (joint path): ``log det A + log s``.  No-capture
+    (``eta_map is None``): ``log det A``.
+    """
+    eta_sub = eta_map if eta_map is not None else jnp.asarray(
+        0.0, dtype=x_dev_map.dtype
+    )
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_dev_map, mu, eta_sub, kept_idx
+    )
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+    log_rate_kept = log_rate_full[kept_idx]
+    rate_kept = rate_full[kept_idx]
+    factors = _woodbury_factors(W, d, log_rate_kept, damping=0.0)
+    log_det_A = _log_det_A(factors)
+    if eta_map is None:
+        return log_det_A
+    rate_inv_A = _solve_A(factors, rate_kept)
+    s = jnp.maximum(
+        jnp.sum(rate_full)
+        + 1.0 / (sigma_M**2)
+        - jnp.dot(rate_kept, rate_inv_A),
+        1e-30,
+    )
+    return log_det_A + jnp.log(s)
+
+
+laplace_log_det_neg_H_batch_decoupled = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, 0, 0, None, None, None, None, 0),
+)
+laplace_log_det_neg_H_batch_x_only_decoupled = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, None, 0, None, None, None, None, None),
+)
+
+
+# ---------------------------------------------------------------------
+# Per-block gradient-norm diagnostics (decoupled)
+# ---------------------------------------------------------------------
+
+
+def _pln_grad_split_decoupled_with_eta(
+    x_dev_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-block L∞ grad norms at the joint decoupled Newton MAP."""
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_dev_map, mu, eta_map, kept_idx
+    )
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_xdev = inv_d * x_dev_map - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * x_dev_map))
+    )
+
+    g_lograte_full = u - rate_full
+    g_x_dev = g_lograte_full[kept_idx] - sigma_inv_xdev
+    g_eta = (
+        -jnp.sum(g_lograte_full) - (eta_map - eta_anchor) / (sigma_M**2)
+    )
+    return jnp.max(jnp.abs(g_x_dev)), jnp.abs(g_eta)
+
+
+pln_grad_split_batch_decoupled = jax.vmap(
+    _pln_grad_split_decoupled_with_eta,
+    in_axes=(0, 0, 0, None, None, None, None, 0, 0),
+)
+
+
+def _pln_grad_x_only_norm_decoupled(
+    x_dev_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    kept_idx: jnp.ndarray,
+) -> jnp.ndarray:
+    """L∞ of ``∇_{x_dev} f`` at the decoupled x-only Newton MAP."""
+    log_rate_full = _scatter_log_rate_decoupled(
+        x_dev_map, mu, jnp.asarray(0.0, dtype=x_dev_map.dtype), kept_idx
+    )
+    rate_full = jnp.exp(
+        jnp.clip(log_rate_full, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    )
+
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_xdev = inv_d * x_dev_map - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * x_dev_map))
+    )
+    g_x_dev = (u - rate_full)[kept_idx] - sigma_inv_xdev
+    return jnp.max(jnp.abs(g_x_dev))
+
+
+pln_grad_x_only_norm_batch_decoupled = jax.vmap(
+    _pln_grad_x_only_norm_decoupled,
+    in_axes=(0, 0, None, None, None, None),
+)

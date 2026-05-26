@@ -580,6 +580,159 @@ def _prepare_calibration_data(
             "annotations": _annotations,
         }
 
+    # ---- TSLN-Rate path: per-cell Poisson-Beta compound predicted mean ------
+    # TSLN-Rate stores ``x_loc`` (per-cell latent log-rate MAP) just
+    # like PLN, but the observation model is a Poisson-Beta compound
+    # rather than plain Poisson.  The per-cell conditional mean is:
+    #
+    #     ⟨u_cg | x_cg⟩ = exp(x_cg − η_c) · α_g / (α_g + β_g)
+    #
+    # where α_g = k⁺_g (ON rate) and β_g = k⁻_g (OFF rate).  The
+    # ON-fraction factor α/(α + β) equals μ_g/r̂_g by the mean-
+    # preserving parameterization.  Without this factor the predicted
+    # mean is the *production* rate, not the expected count, and
+    # over-predicts by r̂_g/μ_g = 1 + b_g·k⁻_g/μ_g — which can be
+    # an order of magnitude for bursty genes.
+    _bm = getattr(
+        getattr(results, "model_config", None), "base_model", None
+    )
+    if _bm == "twostate_ln_rate":
+        x_loc = getattr(results, "x_loc", None)
+        if x_loc is None:
+            console.print(
+                "[yellow]Skipping mean calibration: x_loc unavailable "
+                "for TSLN-Rate model.[/yellow]"
+            )
+            return None
+        x_arr = np.asarray(x_loc, dtype=float)
+        if x_arr.ndim != 2 or x_arr.shape[0] <= 1:
+            console.print(
+                "[yellow]Skipping mean calibration: x_loc has unexpected "
+                f"shape {x_arr.shape} for TSLN-Rate model.[/yellow]"
+            )
+            return None
+
+        # Retrieve alpha and beta from the results object.
+        alpha_ts = getattr(results, "alpha", None)
+        beta_ts = getattr(results, "beta", None)
+        if alpha_ts is None or beta_ts is None:
+            console.print(
+                "[yellow]Skipping mean calibration: alpha/beta "
+                "unavailable on TSLN-Rate result.[/yellow]"
+            )
+            return None
+        alpha_arr = np.asarray(alpha_ts, dtype=float).reshape(-1)
+        beta_arr = np.asarray(beta_ts, dtype=float).reshape(-1)
+        on_fraction = alpha_arr / (alpha_arr + beta_arr)
+
+        # Per-cell capture offset (eta_loc), if present.
+        eta_loc = getattr(results, "eta_loc", None)
+        if eta_loc is not None:
+            eta_arr = np.asarray(eta_loc, dtype=float).reshape(-1)
+            if eta_arr.shape[0] == x_arr.shape[0]:
+                x_eff = x_arr - eta_arr[:, None]
+            else:
+                log_capture = float(np.log(np.mean(np.exp(-eta_arr))))
+                x_eff = x_arr + log_capture
+        else:
+            eta_arr = None
+            x_eff = x_arr
+
+        # pred_g = ⟨exp(x_cg − η_c)⟩_c · α_g / (α_g + β_g)
+        pred_mean = np.exp(x_eff).mean(axis=0) * on_fraction
+
+        _annotations = []
+        if eta_arr is not None:
+            mean_eta = float(np.mean(eta_arr))
+            _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
+        _annotations.append("TSLN-Rate (Poisson-Beta)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
+    # ---- TSLN-Logit path: per-cell sigmoid-gated predicted mean ------------
+    # TSLN-Logit stores per-cell latent ``x_loc`` (= z MAP, zero-centred)
+    # and per-gene globals rate_g, eta_anchor_g (activation log-odds
+    # θ_g).  The conditional mean is:
+    #
+    #     ⟨u_cg | z_cg⟩ = rate_g · σ(θ_g + z_cg) · exp(−η_c)
+    #
+    # where σ is the sigmoid.  The latent z shifts the activation
+    # log-odds per cell, so unlike TSLN-Rate the ON-fraction is
+    # cell-specific.
+    if _bm == "twostate_ln_logit":
+        x_loc = getattr(results, "x_loc", None)
+        if x_loc is None:
+            console.print(
+                "[yellow]Skipping mean calibration: x_loc unavailable "
+                "for TSLN-Logit model.[/yellow]"
+            )
+            return None
+        z_arr = np.asarray(x_loc, dtype=float)
+        if z_arr.ndim != 2 or z_arr.shape[0] <= 1:
+            console.print(
+                "[yellow]Skipping mean calibration: x_loc has unexpected "
+                f"shape {z_arr.shape} for TSLN-Logit model.[/yellow]"
+            )
+            return None
+
+        rate_lg = getattr(results, "rate", None)
+        eta_anchor_lg = getattr(results, "eta_anchor", None)
+        if rate_lg is None or eta_anchor_lg is None:
+            console.print(
+                "[yellow]Skipping mean calibration: rate/eta_anchor "
+                "unavailable on TSLN-Logit result.[/yellow]"
+            )
+            return None
+        rate_arr = np.asarray(rate_lg, dtype=float).reshape(-1)
+        theta_arr = np.asarray(eta_anchor_lg, dtype=float).reshape(-1)
+
+        # Per-cell capture offset (eta_loc), if present.
+        eta_loc = getattr(results, "eta_loc", None)
+        if eta_loc is not None:
+            eta_arr = np.asarray(eta_loc, dtype=float).reshape(-1)
+        else:
+            eta_arr = None
+
+        # σ(θ_g + z_cg): per-(cell, gene) ON-fraction
+        def _sigmoid(x):
+            return 1.0 / (1.0 + np.exp(-x))
+
+        phi_cg = _sigmoid(theta_arr[None, :] + z_arr)  # (C, G)
+
+        # pred_cg = rate_g · σ(θ_g + z_cg) · exp(−η_c)
+        pred_cg = rate_arr[None, :] * phi_cg
+        if eta_arr is not None:
+            if eta_arr.shape[0] == z_arr.shape[0]:
+                pred_cg = pred_cg * np.exp(-eta_arr)[:, None]
+            else:
+                mean_capture = float(np.mean(np.exp(-eta_arr)))
+                pred_cg = pred_cg * mean_capture
+        pred_mean = pred_cg.mean(axis=0)
+
+        _annotations = []
+        if eta_arr is not None:
+            mean_eta = float(np.mean(eta_arr))
+            _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
+        _annotations.append("TSLN-Logit (sigmoid)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
     # ---- PLN path: predicted observed mean -----------------------------------
     # We have two routes for the per-gene predicted mean:
     #

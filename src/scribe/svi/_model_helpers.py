@@ -7,9 +7,11 @@ validation and posterior sampling.
 """
 
 from typing import Callable, Tuple, Optional
-import warnings
+import logging
 
 from ..models.config import InferenceMethod
+
+_log = logging.getLogger(__name__)
 
 # ==============================================================================
 # Model Helpers Mixin
@@ -135,13 +137,11 @@ class ModelHelpersMixin:
         if decoder_width is None:
             return int(n_genes)
         if int(decoder_width) != int(n_genes):
-            warnings.warn(
+            _log.warning(
                 "VAE model reconstruction gene-width mismatch: "
                 f"results.n_genes={int(n_genes)} but "
                 f"'vae_decoder$params' implies {int(decoder_width)} genes. "
-                "Using decoder-parameter width for model/guide reconstruction.",
-                UserWarning,
-                stacklevel=2,
+                "Using decoder-parameter width for model/guide reconstruction."
             )
             return int(decoder_width)
         return int(n_genes)

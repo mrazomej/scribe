@@ -149,6 +149,12 @@ class DatasetMixin:
             n_vars=self.n_vars,
             n_components=getattr(self, "n_components", None),
             param_layouts=new_layouts,
+            # Preserve gene-coverage metadata so per-dataset viz alignment
+            # can map raw counts back to the model's filtered gene space.
+            _gene_coverage_mask=getattr(self, "_gene_coverage_mask", None),
+            _gene_coverage=getattr(self, "_gene_coverage", None),
+            _excluded_gene_names=getattr(self, "_excluded_gene_names", None),
+            _total_count_max=getattr(self, "_total_count_max", None),
         )
 
     # ------------------------------------------------------------------

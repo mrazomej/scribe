@@ -114,6 +114,7 @@ def _build_from_kwargs(ctx, kw, d_mode):
             if ctx.alr_reference_idx is not None
             else -1
         ),
+        correlate_other_column=kw.get("correlate_other_column", False),
         guide_rank=kw.get("guide_rank"),
         joint_params=kw.get("joint_params"),
         dense_params=kw.get("dense_params"),
@@ -232,7 +233,6 @@ def _inject_twostate_data_init(ctx, model_config):
     from ...core.twostate_data_init import inject_twostate_data_init
 
     import jax.numpy as _jnp
-    import warnings as _warnings
 
     # Honour an explicit user override on ``priors['mu']`` (or
     # ``priors['mu_prior_loc']``) by skipping the empirical anchor —
@@ -244,12 +244,10 @@ def _inject_twostate_data_init(ctx, model_config):
     if isinstance(_user_priors, dict) and (
         "mu" in _user_priors or "mu_prior_loc" in _user_priors
     ):
-        _warnings.warn(
+        _log.info(
             "TwoState: skipping the default data-driven mu_prior_loc "
             "init because priors['mu'] (or priors['mu_prior_loc']) was "
-            "provided by the user.",
-            UserWarning,
-            stacklevel=2,
+            "provided by the user."
         )
         return model_config
 
@@ -290,7 +288,6 @@ def _inject_twostate_data_init(ctx, model_config):
             _transform,
             _capture_tag,
         )
-        _warnings.warn(_msg, UserWarning, stacklevel=2)
         _log.info(_msg)
     else:
         _msg = (
@@ -309,7 +306,6 @@ def _inject_twostate_data_init(ctx, model_config):
             float(_jnp.median(_anchor_arr)),
             float(_jnp.max(_anchor_arr)),
         )
-        _warnings.warn(_msg, UserWarning, stacklevel=2)
         _log.info(_msg)
     return model_config
 

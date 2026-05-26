@@ -38,7 +38,10 @@ def _run_laplace_inference(
     freeze_params: tuple = (),
     cascade_source: Optional[Any] = None,
     cascade_source_counts: Optional[jnp.ndarray] = None,
+    cascade_subset_info: Optional[Any] = None,
     w_prior: Optional[Dict[str, Any]] = None,
+    filtered_gene_names: Optional[Any] = None,
+    has_pooled_other: Optional[bool] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -72,10 +75,15 @@ def _run_laplace_inference(
         If ``model_config.base_model`` is not in ``{"pln", "lnm"}``.
     """
     base_model = getattr(model_config, "base_model", None)
-    if base_model not in ("pln", "nbln", "lnm", "lnmvcp"):
+    # Single source of truth: ``api.constants.LAPLACE_SUPPORTED_BASE_MODELS``.
+    # See that constant's docstring for the design rationale.
+    from ..api.constants import LAPLACE_SUPPORTED_BASE_MODELS
+
+    if base_model not in LAPLACE_SUPPORTED_BASE_MODELS:
         raise ValueError(
-            f"inference_method='laplace' is currently supported for "
-            f"PLN, NBLN, LNM, and LNMVCP (got base_model={base_model!r}). "
+            f"inference_method='laplace' is supported for "
+            f"{sorted(LAPLACE_SUPPORTED_BASE_MODELS)} "
+            f"(got base_model={base_model!r}). "
             "Use 'svi'/'vae'/'mcmc' for other models."
         )
 
@@ -92,7 +100,7 @@ def _run_laplace_inference(
     # via PRIOR_KEY_ALIASES). Plain LNM has no capture submodel so
     # no anchor is set.
     capture_anchor = None
-    if base_model in ("pln", "nbln", "lnmvcp"):
+    if base_model in ("pln", "nbln", "lnmvcp", "twostate_ln_rate"):
         priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
@@ -140,6 +148,11 @@ def _run_laplace_inference(
         freeze_values=freeze_values,
         freeze_params=freeze_params,
         w_prior=w_prior,
+        # Axis-layout signals for `correlate_other_column` decoupling
+        # (see `scribe.laplace._axis_layout`).  The engine forwards
+        # them to the per-model obs-model constructors.
+        filtered_gene_names=filtered_gene_names,
+        has_pooled_other=has_pooled_other,
     )
 
     g = run_result.globals
@@ -149,8 +162,21 @@ def _run_laplace_inference(
     # distribution accessors don't multiply in an un-fitted variance
     # term. For PLN and LNM learned, ``d`` is fitted as usual.
     # Resolve the same positive transform used during training so
-    # that constrained globals are derived consistently.
-    pos_forward, _ = resolve_positive_fns(model_config)
+    # that constrained globals are derived consistently.  Use the
+    # per-parameter resolver to handle dict-form ``positive_transform``
+    # (audit round-7: when the user passes
+    # ``positive_transform={"mean_expression": "exp"}`` the field is a
+    # dict, and the legacy ``resolve_positive_fns(model_config)`` call
+    # fails because it tries to use the dict as a hashable key).
+    from ..laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    if hasattr(model_config, "resolve_positive_transform"):
+        _d_transform = model_config.resolve_positive_transform("d")
+    else:
+        _d_transform = getattr(model_config, "positive_transform", "softplus")
+        if not isinstance(_d_transform, str):
+            _d_transform = "softplus"
+    pos_forward, _ = _JAX_POSITIVE_FNS[_d_transform]
 
     d_mode = getattr(model_config, "d_mode", "learned") or "learned"
     if base_model in ("lnm", "lnmvcp") and d_mode == "low_rank":
@@ -190,6 +216,9 @@ def _run_laplace_inference(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
+            # Axis layout from the obs model (`correlate_other_column`
+            # plumbing).  Harmonic-hare Commit 5 scaffolding.
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     if base_model == "nbln":
@@ -220,6 +249,7 @@ def _run_laplace_inference(
                     r_scale_fallback=r_scale_val,
                     mu_loc_fallback=mu_loc_val,
                     mu_scale_fallback=mu_scale_val,
+                    cascade_subset_info=cascade_subset_info,
                 )
             )
 
@@ -242,6 +272,126 @@ def _run_laplace_inference(
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model (``correlate_other_column``
+            # plumbing).  ``None`` when the obs model didn't construct one
+            # (legacy code paths predating the AxisLayout integration).
+            axis_layout=getattr(run_result, "axis_layout", None),
+        )
+
+    if base_model == "twostate_ln_logit":
+        # TSLN-Logit (PR-2): the latent prior is centred at zero
+        # (``z ~ N(0, Σ)``).  The gene baseline lives in ``eta_anchor``
+        # (per-gene activation log-odds θ_g), and the obs model packs
+        # ``common_kwargs["mu"]`` as zeros — see ``_obs_twostate_ln_logit
+        # .pack_result``.  We override here defensively to be explicit:
+        # ``self.mu`` carries the latent-z prior center, which is zero.
+        gu = run_result.global_uncertainty
+        n_g = int(g.get("rate", g.get("W")).shape[0]) if "rate" in g else None
+        if n_g is None and "W" in g:
+            n_g = int(g["W"].shape[0])
+        if n_g is not None:
+            common_kwargs["mu"] = jnp.zeros((n_g,), dtype=jnp.float32)
+        # ``mu_loc / mu_scale`` are NBLN-specific; explicitly NOT
+        # populated for TSLN-Logit (the latent prior centre is fixed
+        # at zero, not a learnable parameter).  TSLN-Logit's
+        # uncertainty for the gene-level globals lives on
+        # ``rate_loc / rate_scale``, ``kappa_loc / kappa_scale``, and
+        # ``eta_anchor_loc / eta_anchor_scale``.
+        return ScribeLaplaceResults(
+            **common_kwargs,
+            x_loc=run_result.x_loc,
+            eta_loc=run_result.eta_loc,
+            # Constrained sampled coordinates (Variant B).
+            rate=g.get("rate"),
+            kappa=g.get("kappa"),
+            eta_anchor=g.get("eta_anchor"),
+            # Derived reporting quantities at ``z = 0``.
+            gene_mean=g.get("gene_mean"),
+            alpha=g.get("alpha"),
+            beta=g.get("beta"),
+            # Unconstrained loc/scale from the global-uncertainty hook.
+            rate_loc=g.get("rate_loc"),
+            rate_scale=gu.get("rate_scale"),
+            kappa_loc=g.get("kappa_loc"),
+            kappa_scale=gu.get("kappa_scale"),
+            eta_anchor_loc=g.get("eta_anchor_loc"),
+            eta_anchor_scale=gu.get("eta_anchor_scale"),
+            # Curvature-clamp diagnostics.
+            a_raw_min=g.get("a_raw_min"),
+            a_raw_negative_fraction=g.get("a_raw_negative_fraction"),
+            a_clamp_fraction=g.get("a_clamp_fraction"),
+            a_clamp_per_gene=g.get("a_clamp_per_gene"),
+            # Cascade plumbing.
+            frozen_params=run_result.frozen_params,
+            cascade_source=cascade_source,
+            cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model (`correlate_other_column`
+            # plumbing).  Harmonic-hare Commit 4 scaffolding.
+            axis_layout=getattr(run_result, "axis_layout", None),
+        )
+
+    if base_model == "twostate_ln_rate":
+        # TSLN-Rate: same per-cell shape as NBLN (x_loc is the latent
+        # log-rate MAP, eta_loc the optional capture offset).  Three
+        # gene-level positive globals (gene_mean, burst_size, k_off) plus
+        # the derived (alpha, beta, r_hat).
+        #
+        # CONVENTION (round-5 audit fix): override ``common_kwargs["mu"]``
+        # to ``log(r_hat)`` so ``self.mu`` carries the latent log-rate
+        # prior center — matching NBLN/PLN where every Laplace mixin
+        # treats ``self.mu`` as the loc of the latent log-rate
+        # distribution.  The TwoState positive ``mu`` (gene mean) is
+        # routed into the new ``gene_mean`` field instead.  This
+        # prevents mixins like ``get_distributions``, ``get_map``, and
+        # downstream PPC paths from quietly using the wrong coordinate
+        # system for ``y_log_rate``.
+        gu = run_result.global_uncertainty
+        r_hat_val = g.get("r_hat")
+        if r_hat_val is not None:
+            common_kwargs["mu"] = jnp.log(jnp.maximum(r_hat_val, 1e-30))
+        # ``mu_loc / mu_scale`` are NBLN-specific (post-fit Laplace
+        # Normal on the latent log-rate prior mean).  For TSLN-Rate we
+        # explicitly DO NOT populate them — the analogous quantities
+        # for the TwoState parameterization live on
+        # ``gene_mean_loc / gene_mean_scale``.
+        return ScribeLaplaceResults(
+            **common_kwargs,
+            x_loc=run_result.x_loc,
+            eta_loc=run_result.eta_loc,
+            # Constrained positives (computed in pack_result via pos_forward).
+            gene_mean=g.get("mu"),  # TwoState positive mu, now routed here
+            burst_size=g.get("burst_size"),
+            k_off=g.get("k_off"),
+            # Derived TSLN quantities.
+            alpha=g.get("alpha"),
+            beta=g.get("beta"),
+            r_hat=r_hat_val,
+            # Unconstrained loc/scale fields from the global-uncertainty hook.
+            # NB: ``self.mu_loc / self.mu_scale`` left as None for TSLN-Rate.
+            gene_mean_loc=g.get("mu_loc"),
+            gene_mean_scale=gu.get("mu_scale"),
+            burst_size_loc=g.get("burst_size_loc"),
+            burst_size_scale=gu.get("burst_size_scale"),
+            k_off_loc=g.get("k_off_loc"),
+            k_off_scale=gu.get("k_off_scale"),
+            # Curvature-clamp diagnostics from pack_result.
+            a_raw_min=g.get("a_raw_min"),
+            a_raw_negative_fraction=g.get("a_raw_negative_fraction"),
+            a_clamp_fraction=g.get("a_clamp_fraction"),
+            a_clamp_per_gene=g.get("a_clamp_per_gene"),
+            # Cascade plumbing (mirrors NBLN).
+            frozen_params=run_result.frozen_params,
+            cascade_source=cascade_source,
+            cascade_source_counts=cascade_source_counts,
+            _cascade_subset_info=cascade_subset_info,
+            # Axis layout from the obs model
+            # (`correlate_other_column` plumbing).  Trivial layout
+            # under the current Commit 3 default; non-trivial under
+            # decoupled but the obs model raises before reaching
+            # here.  See ``scribe.laplace._axis_layout``.
+            axis_layout=getattr(run_result, "axis_layout", None),
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it
@@ -301,6 +451,7 @@ def _moment_match_frozen_for_nbln(
     r_scale_fallback: Optional[jnp.ndarray],
     mu_loc_fallback: Optional[jnp.ndarray],
     mu_scale_fallback: Optional[jnp.ndarray],
+    cascade_subset_info: Optional[Any] = None,
 ) -> tuple:
     """Moment-match SVI samples into NBLN target coord for r and mu.
 
@@ -315,8 +466,22 @@ def _moment_match_frozen_for_nbln(
     ``ScribeLaplaceResults.cascade_source.get_distributions()`` /
     ``.get_posterior_samples()``.  This helper provides the simpler
     Gaussian summary the existing PPC paths expect.
+
+    Parameters
+    ----------
+    cascade_subset_info : SubsetInfo, optional
+        Populated by the cascade adapter when the Laplace target's gene
+        panel is a STRICT subset of the SVI source's panel.  Triggers
+        per-sample NB moment-matching aggregation that pools the SVI's
+        dropped per-gene posteriors (and the SVI's own ``"_other"`` if
+        present) into the Laplace target's trailing ``"_other"`` slot.
+        ``None`` for equal-panel cascades (today's behavior).
     """
     from scribe.laplace._global_uncertainty import resolve_positive_fns
+    from scribe.laplace.priors import (
+        _aggregate_other_nb,
+        _assemble_per_gene_subset_samples,
+    )
 
     _pos_fwd, pos_inv = resolve_positive_fns(model_config)
 
@@ -333,13 +498,68 @@ def _moment_match_frozen_for_nbln(
     mu_loc = mu_loc_fallback
     mu_scale = mu_scale_fallback
 
+    _subset_active = (
+        cascade_subset_info is not None
+        and cascade_subset_info.is_subset
+        and not cascade_subset_info.is_equal
+    )
+
+    # Pre-aggregate per-sample r/mu to target shape when subset is
+    # active; the moment-match formula couples r and mu, so we do both
+    # together to ensure the trailing ``_other`` entry is built
+    # consistently across the two parameter blocks below.
+    if _subset_active:
+        # In subset mode the aggregator couples r and mu.  Silently
+        # falling back to source-shaped raw samples would produce
+        # wrong-shape result fields; raise immediately instead so the
+        # bug surfaces at the cascade-binding site rather than as a
+        # mysterious shape error in PPC or get_distributions later.
+        if (("r" in frozen_params or "mu" in frozen_params)
+                and ("r" not in svi_samples or "mu" not in svi_samples)):
+            raise ValueError(
+                "Subset-aware frozen-result moment-match requires the "
+                "SVI source to expose both 'r' and 'mu' per sample; "
+                f"got keys {sorted(svi_samples.keys())}."
+            )
+        r_src = jnp.asarray(svi_samples["r"])
+        mu_src = jnp.asarray(svi_samples["mu"])
+        r_kept = _assemble_per_gene_subset_samples(
+            r_src, cascade_subset_info.kept_idx_in_source
+        )
+        mu_kept = _assemble_per_gene_subset_samples(
+            mu_src, cascade_subset_info.kept_idx_in_source
+        )
+        r_other_s, mu_other_s = _aggregate_other_nb(
+            r_src,
+            mu_src,
+            cascade_subset_info.dropped_idx_in_source,
+            cascade_subset_info.source_other_index_in_source,
+        )
+        r_subset_pos = jnp.concatenate(
+            [r_kept, r_other_s[:, None]], axis=1
+        )
+        mu_subset_pos = jnp.concatenate(
+            [mu_kept, mu_other_s[:, None]], axis=1
+        )
+    else:
+        r_subset_pos = None
+        mu_subset_pos = None
+
     if "r" in frozen_params and "r" in svi_samples:
-        r_pos = jnp.asarray(svi_samples["r"])  # (S, G)
+        r_pos = (
+            r_subset_pos
+            if r_subset_pos is not None
+            else jnp.asarray(svi_samples["r"])
+        )  # (S, G_target)
         r_uncon = pos_inv(jnp.maximum(r_pos, 1e-8))
         r_scale = jnp.std(r_uncon, axis=0, ddof=1).astype(jnp.float32)
 
     if "mu" in frozen_params and "mu" in svi_samples:
-        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G)
+        mu_pos = (
+            mu_subset_pos
+            if mu_subset_pos is not None
+            else jnp.asarray(svi_samples["mu"])
+        )  # (S, G_target)
         mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
         mu_loc = jnp.mean(mu_log, axis=0).astype(jnp.float32)
         mu_scale = jnp.std(mu_log, axis=0, ddof=1).astype(jnp.float32)

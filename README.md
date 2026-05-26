@@ -99,6 +99,26 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
 - **Custom Distributions**: BetaPrime, LowRankLogisticNormal,
   LowRankPoissonLogNormal, SoftmaxNormal with registered KL divergences
 
+## Recent changes
+
+- **`correlate_other_column` flag (`ModelConfig`).** Controls whether
+  the trailing pooled `_other` column emitted by `gene_coverage<1.0`
+  participates in the latent low-rank covariance Σ used by PLN /
+  NBLN / TSLN-Rate / TSLN-Logit / LNM.  **Default `False`**: the
+  pooled aggregate is excluded from Σ (biologically cleaner —
+  `_other` is a pooled-counts aggregate, not a real gene).  All
+  five obs models support `False`: PLN / NBLN / TSLN-Rate / TSLN-
+  Logit via the deviation reparameterisation (Commits 2b–5b); LNM
+  via ALR-reference pinning (Commit 6).  Pass `True` to recover the
+  legacy behaviour where `_other` participates in Σ — preserved
+  bit-equal for users who relied on it.  LNM auto-pins the ALR
+  reference to `_other`'s position under `False`; explicit
+  conflicting overrides raise.  See
+  [`src/scribe/laplace/README.md`](src/scribe/laplace/README.md)
+  *Decorrelating the `_other` aggregate from Σ* for the behaviour
+  matrix and [`paper/_nb_lognormal.qmd`](paper/_nb_lognormal.qmd)
+  §sec-nbln-decorrelate-other for the math.
+
 ## Model Construction Space
 
 SCRIBE models are built compositionally. The likelihood is constructed by
@@ -578,6 +598,52 @@ print(nbln_results.w_prior_diagnostics["effective_rank"])
 # (not from a variational guide on an independent-counts model).
 corr = nbln_results.get_correlation_compositional()
 ```
+
+**Broad-SVI → narrow-Laplace cascade with hierarchical-`p`.** Because
+NBLN's covariance matrix is hard to identify when `G` is large, you
+may want the upstream SVI to fit on the **full** gene panel
+(``gene_coverage=1.0``) while the NBLN-Laplace runs on a tighter
+subset (``gene_coverage=0.99``, ~10K top-expressed genes in a typical
+heavy-tailed dataset). The cascade auto-detects the panel mismatch
+and aggregates the SVI's per-gene posteriors on the dropped genes
+into NBLN's pooled ``_other`` column via per-sample NB moment
+matching:
+
+```python
+# Broad SVI (all 20K genes) with hierarchical-`p` shrinkage.
+# `prob_prior` activates a hierarchical prior on logit(p_g); options
+# are "none" (default; flat shared-p), "gaussian", "horseshoe", or
+# "neg".  All choices require `unconstrained=True`.
+svi_results = scribe.fit(
+    adata,
+    model="nbdm",
+    prob_prior="gaussian",   # or "horseshoe" / "neg"
+    unconstrained=True,
+    gene_coverage=1.0,
+    inference_method="svi",
+    n_steps=250_000,
+)
+
+# Narrow NBLN-Laplace (~10K genes); SVI per-gene posteriors on the
+# remaining ~10K genes are pooled into NBLN's `_other` column via
+# per-sample NB moment matching.  Convention: higher `gene_coverage`
+# keeps MORE genes, so SVI's value must be >= the Laplace value.
+nbln_results = scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    informative_priors_from=svi_results,
+    gene_coverage=0.99,
+    n_steps=20_000,
+)
+```
+
+The Laplace gene panel must be a **subset** of the SVI gene panel
+(`SVI gene_coverage >= Laplace gene_coverage`); inverting the
+direction raises a `ValueError` listing the missing genes. See
+[`paper/_nb_lognormal.qmd`](paper/_nb_lognormal.qmd) section
+`sec-nbln-cascade-aggregation` for the moment-matching derivation
+and its caveats.
 
 End-to-end tutorial: [`docs/tutorials/jurkat_cells_nbln.py`](docs/tutorials/jurkat_cells_nbln.py).
 Theory: [`docs/theory/nb-lognormal.md`](docs/theory/nb-lognormal.md) and

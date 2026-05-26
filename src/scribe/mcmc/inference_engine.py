@@ -4,7 +4,7 @@ Inference engine for MCMC.
 This module handles the execution of MCMC inference using NUTS.
 """
 
-import warnings
+import logging
 from typing import Any, Dict, Optional, Union
 
 import jax.numpy as jnp
@@ -13,6 +13,8 @@ from numpyro.infer import MCMC, NUTS
 
 from ..models.config import ModelConfig
 from ..models.model_registry import get_model_and_guide
+
+_log = logging.getLogger(__name__)
 
 
 class MCMCInferenceEngine:
@@ -81,11 +83,9 @@ class MCMCInferenceEngine:
             from numpyro.infer.initialization import init_to_value
 
             if "init_strategy" in effective_kwargs:
-                warnings.warn(
+                _log.info(
                     "init_values overrides the existing init_strategy "
-                    "in mcmc_kwargs.",
-                    UserWarning,
-                    stacklevel=2,
+                    "in mcmc_kwargs."
                 )
             effective_kwargs["init_strategy"] = init_to_value(
                 values=init_values

@@ -360,7 +360,10 @@ For hierarchical multi-dataset models, `DatasetMixin` (`_dataset.py`) provides
 results. Results support 3-axis indexing: `results[:, :, d]` for dataset
 selection (alongside `results[g]` for genes and `results[:, k]` for components).
 The `dataset_indices` parameter in `MCMCInferenceEngine.run_inference()`
-restricts inference to specified datasets.
+restricts inference to specified datasets. `get_dataset(d)` also forwards
+gene-coverage metadata (`_gene_coverage_mask`, `_gene_coverage`,
+`_excluded_gene_names`, `_total_count_max`) so that per-dataset visualization
+routines can align raw counts to the model's filtered gene space.
 
 **MCMC Diagnostics:**
 ```python

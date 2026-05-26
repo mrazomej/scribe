@@ -54,13 +54,15 @@ computation path based on which posterior samples are supplied:
    (``mu_A`` or ``mu_B``) before interpreting the results.
 """
 
-import warnings
+import logging
 from collections.abc import Sequence
 from typing import Optional, List, Iterable, Set, TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from ..stats.divergences import gamma_jeffreys
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
@@ -97,11 +99,9 @@ def _needs_gene_broadcast(
 
     # Legacy fallback: ndim == 1 means no gene dimension.
     # Deprecated — callers should provide layout metadata.
-    warnings.warn(
+    _log.warning(
         "Calling _needs_gene_broadcast without layout metadata is "
-        "deprecated. Pass param_layouts explicitly.",
-        DeprecationWarning,
-        stacklevel=2,
+        "deprecated. Pass param_layouts explicitly."
     )
     return arr.ndim == 1
 

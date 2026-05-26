@@ -55,12 +55,28 @@ def test_initialize_conf_creates_all_managed_files(tmp_path: Path) -> None:
     assert (summary.target_root / "inference" / "svi.yaml").exists()
     assert (summary.target_root / "inference" / "mcmc.yaml").exists()
     assert (summary.target_root / "inference" / "vae.yaml").exists()
+    assert (summary.target_root / "inference" / "laplace.yaml").exists()
     assert (summary.target_root / "viz" / "default.yaml").exists()
     assert (summary.target_root / "amortization" / "capture.yaml").exists()
     assert (summary.target_root / "slurm" / "README.md").exists()
     assert (summary.target_root / "slurm" / "default.yaml").exists()
     assert (summary.target_root / "dirname_aliases" / "default.yaml").exists()
     assert (summary.target_root / "paths" / "paths.yaml").exists()
+
+
+def test_initialize_conf_laplace_template_is_parseable(tmp_path: Path) -> None:
+    """Laplace inference template should be generated as valid Hydra YAML."""
+    omegaconf = pytest.importorskip("omegaconf")
+    summary = init_mod.initialize_conf(
+        str(tmp_path / "conf"),
+        input_func=lambda _prompt: "y",
+    )
+
+    laplace_cfg = omegaconf.OmegaConf.load(
+        summary.target_root / "inference" / "laplace.yaml"
+    )
+    assert laplace_cfg.method == "laplace"
+    assert laplace_cfg.n_newton_steps == 5
 
 
 def test_initialize_conf_prompts_before_overwrite(tmp_path: Path) -> None:

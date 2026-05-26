@@ -587,7 +587,9 @@ def _prune_dead_components(results, threshold: float):
         Boolean mask indicating surviving components, or ``None`` if pruning
         was not applied (threshold zero, non-mixture, or all components active).
     """
-    import warnings
+    import logging
+
+    _log = logging.getLogger(__name__)
 
     # Skip non-mixture models and disabled threshold
     if threshold <= 0.0:
@@ -615,12 +617,10 @@ def _prune_dead_components(results, threshold: float):
 
     if mw is None:
         # Cannot determine mixing weights — skip pruning
-        warnings.warn(
+        _log.warning(
             f"Cannot prune dead components: 'mixing_weights' not found in "
             f"posterior_samples for model with n_components={n_comp}. "
-            "Skipping pruning.",
-            UserWarning,
-            stacklevel=3,
+            "Skipping pruning."
         )
         return results, None
 
@@ -637,12 +637,10 @@ def _prune_dead_components(results, threshold: float):
         best = int(np.argmax(mw))
         active = np.zeros(n_comp, dtype=bool)
         active[best] = True
-        warnings.warn(
+        _log.warning(
             f"component_threshold={threshold} would remove all {n_comp} "
             f"components (max weight = {mw.max():.4f}). "
-            f"Keeping the largest component (index {best}) only.",
-            UserWarning,
-            stacklevel=3,
+            f"Keeping the largest component (index {best}) only."
         )
 
     # Prune via ComponentMixin.get_component — returns a new results object

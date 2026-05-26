@@ -10,12 +10,17 @@ import sys
 import types
 
 import jax.numpy as jnp
+import pytest
 from jax import random
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import OmegaConf
-from numpyro.infer import SVI, Trace_ELBO
-from numpyro.optim import Adam
+
+# Hydra-based config tests depend on omegaconf (optional extra
+# [hydra] in pyproject.toml). Skip cleanly when absent.
+pytest.importorskip("omegaconf")
+from omegaconf import OmegaConf  # noqa: E402
+from numpyro.infer import SVI, Trace_ELBO  # noqa: E402
+from numpyro.optim import Adam  # noqa: E402
 
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.inference.preset_builder import build_config_from_preset
@@ -3557,6 +3562,196 @@ def test_prepare_calibration_data_pln_uses_per_cell_map(monkeypatch):
     # Per-cell-MAP formula with no capture: ``mean_c[exp(x_g^(c))]``.
     expected = np.exp(x_loc).mean(axis=0)
     np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+
+
+def test_prepare_calibration_data_tsln_rate_includes_on_fraction(monkeypatch):
+    """TSLN-Rate calibration must multiply by α/(α + β) (ON-fraction).
+
+    The observation model for TSLN-Rate is a Poisson-Beta compound:
+    ``⟨u_cg | x_cg⟩ = exp(x_cg − η_c) · α_g/(α_g + β_g)``.
+    Without the ON-fraction, the predicted mean equals the production
+    rate and over-predicts by r̂_g/μ_g.
+    """
+    n_cells, n_genes = 4, 3
+    x_loc = np.array(
+        [[0.0, 1.0, 1.5],
+         [0.5, 1.2, 1.8],
+         [0.2, 0.8, 1.6],
+         [0.3, 1.1, 1.7]],
+        dtype=float,
+    )
+    # alpha = k_on, beta = k_off for the Beta latent.
+    alpha = np.array([2.0, 5.0, 1.0], dtype=float)
+    beta = np.array([3.0, 5.0, 9.0], dtype=float)
+
+    class _FakeResults:
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                base_model="twostate_ln_rate",
+                parameterization=Parameterization.TWO_STATE_NATURAL,
+                uses_biology_informed_capture=False,
+                uses_variable_capture=False,
+            )
+            self.n_genes = n_genes
+            self.x_loc = x_loc
+            self.alpha = alpha
+            self.beta = beta
+            self.eta_loc = None
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", lambda *a, **kw: {})
+
+    counts = np.array(
+        [[1, 2, 3], [2, 1, 4], [1, 3, 2], [2, 2, 5]], dtype=float
+    )
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    assert payload["mode"] == "single"
+    assert "TSLN-Rate (Poisson-Beta)" in payload["annotations"]
+
+    on_fraction = alpha / (alpha + beta)
+    expected = np.exp(x_loc).mean(axis=0) * on_fraction
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+
+
+def test_prepare_calibration_data_tsln_rate_with_capture(monkeypatch):
+    """TSLN-Rate calibration with per-cell capture offset η."""
+    n_cells, n_genes = 4, 2
+    x_loc = np.array(
+        [[1.0, 2.0], [1.5, 2.5], [1.2, 2.2], [1.3, 2.3]], dtype=float
+    )
+    alpha = np.array([3.0, 1.0], dtype=float)
+    beta = np.array([2.0, 4.0], dtype=float)
+    eta_loc = np.array([0.1, 0.3, 0.2, 0.15], dtype=float)
+
+    class _FakeResults:
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                base_model="twostate_ln_rate",
+                parameterization=Parameterization.TWO_STATE_NATURAL,
+                uses_biology_informed_capture=True,
+                uses_variable_capture=False,
+            )
+            self.n_genes = n_genes
+            self.x_loc = x_loc
+            self.alpha = alpha
+            self.beta = beta
+            self.eta_loc = eta_loc
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", lambda *a, **kw: {})
+
+    counts = np.array(
+        [[1, 2], [2, 1], [1, 3], [2, 2]], dtype=float
+    )
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    on_fraction = alpha / (alpha + beta)
+    x_eff = x_loc - eta_loc[:, None]
+    expected = np.exp(x_eff).mean(axis=0) * on_fraction
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+    assert any("\\eta" in a for a in payload["annotations"])
+
+
+def test_prepare_calibration_data_tsln_logit(monkeypatch):
+    """TSLN-Logit calibration uses rate · σ(θ + z) per cell.
+
+    The observation model for TSLN-Logit gates the production rate
+    through a sigmoid of the activation log-odds plus the per-cell
+    latent: ``⟨u_cg | z_cg⟩ = rate_g · σ(θ_g + z_cg)``.
+    """
+    n_cells, n_genes = 4, 3
+    # z MAP (zero-centered latent)
+    z_loc = np.array(
+        [[0.1, -0.2, 0.3],
+         [-0.1, 0.4, -0.3],
+         [0.0, 0.0, 0.0],
+         [0.2, -0.1, 0.1]],
+        dtype=float,
+    )
+    rate = np.array([10.0, 20.0, 5.0], dtype=float)
+    eta_anchor = np.array([0.5, -1.0, 2.0], dtype=float)
+
+    class _FakeResults:
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                base_model="twostate_ln_logit",
+                parameterization=Parameterization.TWO_STATE_NATURAL,
+                uses_biology_informed_capture=False,
+                uses_variable_capture=False,
+            )
+            self.n_genes = n_genes
+            self.x_loc = z_loc
+            self.rate = rate
+            self.eta_anchor = eta_anchor
+            self.eta_loc = None
+            self.alpha = None
+            self.beta = None
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", lambda *a, **kw: {})
+
+    counts = np.array(
+        [[1, 2, 3], [2, 1, 4], [1, 3, 2], [2, 2, 5]], dtype=float
+    )
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    assert payload["mode"] == "single"
+    assert "TSLN-Logit (sigmoid)" in payload["annotations"]
+
+    sigmoid = lambda x: 1.0 / (1.0 + np.exp(-x))
+    phi_cg = sigmoid(eta_anchor[None, :] + z_loc)
+    expected = (rate[None, :] * phi_cg).mean(axis=0)
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+
+
+def test_prepare_calibration_data_tsln_logit_with_capture(monkeypatch):
+    """TSLN-Logit calibration with per-cell capture offset η."""
+    n_cells, n_genes = 4, 2
+    z_loc = np.array(
+        [[0.1, -0.2], [-0.1, 0.4], [0.0, 0.0], [0.2, -0.1]],
+        dtype=float,
+    )
+    rate = np.array([10.0, 5.0], dtype=float)
+    eta_anchor = np.array([0.5, -1.0], dtype=float)
+    eta_loc = np.array([0.1, 0.3, 0.2, 0.15], dtype=float)
+
+    class _FakeResults:
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                base_model="twostate_ln_logit",
+                parameterization=Parameterization.TWO_STATE_NATURAL,
+                uses_biology_informed_capture=True,
+                uses_variable_capture=False,
+            )
+            self.n_genes = n_genes
+            self.x_loc = z_loc
+            self.rate = rate
+            self.eta_anchor = eta_anchor
+            self.eta_loc = eta_loc
+            self.alpha = None
+            self.beta = None
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", lambda *a, **kw: {})
+
+    counts = np.array([[1, 2], [2, 1], [1, 3], [2, 2]], dtype=float)
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    sigmoid = lambda x: 1.0 / (1.0 + np.exp(-x))
+    phi_cg = sigmoid(eta_anchor[None, :] + z_loc)
+    pred_cg = rate[None, :] * phi_cg * np.exp(-eta_loc)[:, None]
+    expected = pred_cg.mean(axis=0)
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+    assert any("\\eta" in a for a in payload["annotations"])
 
 
 def test_plot_correlation_heatmap_skips_for_pln():

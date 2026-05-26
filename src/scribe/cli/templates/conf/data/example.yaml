@@ -50,6 +50,16 @@ path: "data/my_experiment/counts.h5ad"
 # small for stable inference.
 # min_cells_per_dataset: 1000
 
+# ---- Optional: cascade source ------------------------------------------------
+# For cascade workflows (e.g. NBVCP -> NBLN Laplace), burn the path to the
+# hierarchical scribe_results.pkl into the data YAML.  The runner loads it
+# automatically so you don't need informative_priors_from= on the CLI.
+# informative_priors_from: "/path/to/hierarchical/scribe_results.pkl"
+#
+# When the cascade source is a multi-dataset hierarchical fit, also set
+# prior_index to the 0-based dataset index to extract via get_dataset().
+# prior_index: 0
+
 # ---- Optional: split orchestration -----------------------------------------
 # If set, `scribe-infer` auto-dispatches to split mode and fits one run per
 # unique value (or value combination when split_by is a list).

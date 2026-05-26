@@ -10,6 +10,7 @@ Device: use ``pytest --device cpu`` (default) or ``pytest --device gpu``.
 """
 
 import os
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -539,7 +540,7 @@ class TestModelHelpersVAEGeneContract:
         dummy._model_and_guide()
         assert captured["n_genes"] == 15
 
-    def test_model_and_guide_prefers_decoder_width_on_mismatch(self):
+    def test_model_and_guide_prefers_decoder_width_on_mismatch(self, scribe_caplog):
         """Mismatched width should fall back to decoder param width.
 
         When no stored decoder module is available, the raw param bias
@@ -563,9 +564,11 @@ class TestModelHelpersVAEGeneContract:
             }
         }
 
-        with pytest.warns(UserWarning, match="gene-width mismatch"):
+        scribe_caplog.set_level(logging.WARNING, logger="scribe.svi._model_helpers")
+        with scribe_caplog.at_level(logging.WARNING, logger="scribe.svi._model_helpers"):
             resolved = dummy._factory_n_genes()
         assert resolved == 20
+        assert any("gene-width mismatch" in record.message for record in scribe_caplog.records)
 
     def test_factory_n_genes_respects_alr_offset(self):
         """ALR heads have output_dim = n_genes - 1; factory must use n_genes.

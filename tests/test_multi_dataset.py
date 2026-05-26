@@ -517,6 +517,33 @@ class TestSVIDatasetMixin:
         assert ds0._label_map == results._label_map
         assert ds0._component_mapping is results._component_mapping
 
+    def test_get_dataset_preserves_gene_coverage_metadata(
+        self, multi_dataset_svi_results
+    ):
+        """Dataset subsetting should keep gene-coverage mask and metadata.
+
+        Without this, per-dataset viz alignment (e.g. PPC) cannot map
+        raw counts back to the model's filtered gene space and raises a
+        ValueError.
+        """
+        results = multi_dataset_svi_results
+        n_original = 20
+        mask = np.zeros(n_original, dtype=bool)
+        mask[:results.n_genes] = True
+        results._gene_coverage_mask = mask
+        results._gene_coverage = 0.99
+        results._excluded_gene_names = ["geneA", "geneB"]
+        results._original_n_genes = n_original
+        results._total_count_max = 5000
+
+        ds0 = results.get_dataset(0)
+
+        np.testing.assert_array_equal(ds0._gene_coverage_mask, mask)
+        assert ds0._gene_coverage == 0.99
+        assert ds0._excluded_gene_names == ["geneA", "geneB"]
+        assert ds0._original_n_genes == n_original
+        assert ds0._total_count_max == 5000
+
 
 # ==============================================================================
 # _slice_param_for_dataset broadcasting
@@ -2597,102 +2624,122 @@ class TestFitApiDatasetHierarchyValidation:
         )
         assert result.n_cells == adata.n_obs
 
-    def test_single_dataset_auto_downgrades_dataset_mu(self):
+    def test_single_dataset_auto_downgrades_dataset_mu(self, scribe_caplog):
         """Single-dataset columns downgrade hierarchical_dataset_mu safely."""
+        import logging
+
         import scribe
 
         adata = self._make_adata(
             include_dataset_column=True, single_dataset_column=True
         )
 
-        # Auto-downgrade should disable dataset-level mu and warn.
-        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_steps=1,
-                batch_size=3,
-                seed=0,
-                unconstrained=True,
-                dataset_key="dataset",
-                expression_dataset_prior="gaussian",
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+        )
+        assert any(
+            "automatic hierarchy downgrade" in record.message
+            for record in scribe_caplog.records
+        )
         assert result.model_config.expression_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
     @pytest.mark.parametrize("dataset_p_mode", ["gene_specific", "two_level"])
     def test_single_dataset_auto_downgrades_dataset_p_to_gene_level(
-        self, dataset_p_mode
+        self, dataset_p_mode, scribe_caplog
     ):
         """Single-dataset p hierarchy maps to gene-level hierarchical_p."""
+        import logging
+
         import scribe
 
         adata = self._make_adata(
             include_dataset_column=True, single_dataset_column=True
         )
 
-        # gene_specific/two_level are downgraded to hierarchical_p in 1-dataset.
-        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_steps=1,
-                batch_size=3,
-                seed=0,
-                unconstrained=True,
-                dataset_key="dataset",
-                prob_dataset_prior="gaussian",
-                prob_dataset_mode=dataset_p_mode,
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            dataset_key="dataset",
+            prob_dataset_prior="gaussian",
+            prob_dataset_mode=dataset_p_mode,
+        )
+        assert any(
+            "automatic hierarchy downgrade" in record.message
+            for record in scribe_caplog.records
+        )
         assert result.model_config.prob_prior != "none"
         assert result.model_config.prob_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
-    def test_single_dataset_auto_downgrades_dataset_p_scalar_to_none(self):
+    def test_single_dataset_auto_downgrades_dataset_p_scalar_to_none(self, scribe_caplog):
         """Single-dataset scalar p hierarchy downgrades without hierarchical_p."""
+        import logging
+
         import scribe
 
         adata = self._make_adata(
             include_dataset_column=True, single_dataset_column=True
         )
 
-        # scalar mode maps to shared p/phi and should not enable hierarchical_p.
-        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_steps=1,
-                batch_size=3,
-                seed=0,
-                unconstrained=True,
-                dataset_key="dataset",
-                prob_dataset_prior="gaussian",
-                prob_dataset_mode="scalar",
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            dataset_key="dataset",
+            prob_dataset_prior="gaussian",
+            prob_dataset_mode="scalar",
+        )
+        assert any(
+            "automatic hierarchy downgrade" in record.message
+            for record in scribe_caplog.records
+        )
         assert result.model_config.prob_prior == "none"
         assert result.model_config.prob_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
-    def test_single_dataset_auto_downgrades_dataset_gate_to_gene_level(self):
+    def test_single_dataset_auto_downgrades_dataset_gate_to_gene_level(self, scribe_caplog):
         """Single-dataset gate hierarchy maps to gene-level hierarchical_gate."""
+        import logging
+
         import scribe
 
         adata = self._make_adata(
             include_dataset_column=True, single_dataset_column=True
         )
 
-        # Dataset gate hierarchy should downgrade to gene-level gate in 1-dataset.
-        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
-            result = scribe.fit(
-                adata,
-                model="zinb",
-                n_steps=1,
-                batch_size=3,
-                seed=0,
-                unconstrained=True,
-                dataset_key="dataset",
-                zero_inflation_dataset_prior="gaussian",
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="zinb",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            dataset_key="dataset",
+            zero_inflation_dataset_prior="gaussian",
+        )
+        assert any(
+            "automatic hierarchy downgrade" in record.message
+            for record in scribe_caplog.records
+        )
         assert result.model_config.zero_inflation_prior != "none"
         assert result.model_config.zero_inflation_dataset_prior == "none"
         assert result.model_config.n_datasets is None

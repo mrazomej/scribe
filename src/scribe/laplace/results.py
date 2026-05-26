@@ -167,6 +167,81 @@ class ScribeLaplaceResults(
     # LNM / LNMVCP.  Derived as ``positive_transform(r_loc)``.
     r: Optional[jnp.ndarray] = None
 
+    # TwoState-LogNormal-Rate fields (``base_model == "twostate_ln_rate"``).
+    # All constrained positive quantities; per-gene shape ``(G,)``.
+    # See plan §4.A.3 and ``_obs_twostate_ln_rate.py``.
+    #
+    # CONVENTION.  For TSLN-Rate, the
+    # interpretation of ``mu`` is the **latent log-rate prior
+    # center** ``log(r_hat)`` — matching NBLN/PLN where ``self.mu``
+    # is the loc of the latent log-rate distribution
+    # ``LowRankMultivariateNormal(loc=self.mu, ...)``.  The
+    # **positive TwoState gene-mean parameter** (the SVI source's
+    # ``mu``) is stored separately in :attr:`gene_mean` so that
+    # ``self.mu`` is semantically consistent across all
+    # Laplace-supported base models.
+    burst_size: Optional[jnp.ndarray] = None
+    k_off: Optional[jnp.ndarray] = None
+    # The TwoState positive gene-mean parameter (= SVI source's ``mu``).
+    # Distinct from ``self.mu`` which carries the latent log-rate
+    # prior center for TSLN-Rate.  ``gene_mean = pos_forward(
+    # gene_mean_loc)``.
+    gene_mean: Optional[jnp.ndarray] = None
+    # Derived TSLN quantities (gene-level, all shape ``(G,)``).
+    # ``alpha = gene_mean/burst_size``, ``beta = k_off``,
+    # ``r_hat = gene_mean + burst_size*k_off`` after the mean-preserving
+    # floor in ``_twostate_reparam``.
+    #
+    # For ``twostate_ln_logit`` (Variant B) these fields are also
+    # populated but with the logit-variant derivation:
+    # ``alpha = kappa · σ(eta_anchor)``,
+    # ``beta = kappa · (1 − σ(eta_anchor))``.  ``r_hat`` is left
+    # unpopulated for the logit variant — its analog is :attr:`rate`.
+    alpha: Optional[jnp.ndarray] = None
+    beta: Optional[jnp.ndarray] = None
+    r_hat: Optional[jnp.ndarray] = None
+
+    # TwoState-LogNormal-Logit fields (``base_model ==
+    # "twostate_ln_logit"``).  Variant B's sampled gene-level globals.
+    # See plan §4.C.3 and ``_obs_twostate_ln_logit.py``.
+    #
+    # ``rate`` (positive): gene-level ON-production rate.
+    # **z-independent** by Rev 4 (auditor's Round-1 fix).  The Poisson
+    # scale in the data-side likelihood is ``λ = rate · ν_c`` where
+    # ``ν_c = exp(-eta_capture)`` for fixed-offset capture.
+    # ``kappa`` (positive): Beta concentration ``α + β``.
+    # ``eta_anchor`` (real): per-gene activation log-odds ``θ_g``.
+    # The TSLN-Logit per-cell-per-gene shape parameters are derived
+    # at the data side as ``α_cg = κ · σ(θ_g + z_g)`` and
+    # ``β_cg = κ · (1 − σ(θ_g + z_g))``.  The cell-level posterior
+    # over (α, β) is implicit in (x_loc, eta_anchor); the gene-level
+    # ``alpha`` / ``beta`` fields above carry the values at ``z = 0``.
+    rate: Optional[jnp.ndarray] = None
+    kappa: Optional[jnp.ndarray] = None
+    eta_anchor: Optional[jnp.ndarray] = None
+
+    # Curvature-clamp diagnostics (TSLN-rate, plan §4.A.3 Rev 3+).  The
+    # closed-form Hessian-diagonal factor ``a_g`` is defensively floored
+    # at ``_A_MIN`` before the Woodbury solve because the Poisson-Beta
+    # marginal is not log-concave in general (Beta U-shape regime).
+    # These fields surface how often the clamp activated on the final
+    # sweep so users can detect prior-dominated cells/genes.
+    #
+    # ``a_raw_min``: scalar minimum of ``a_raw`` across ALL
+    #   ``(cell, gene)`` entries in the final-sweep tensor — a single
+    #   diagnostic number for "worst case curvature on this fit".
+    # ``a_raw_negative_fraction``: scalar fraction of ``(cell, gene)``
+    #   entries with ``a_raw < 0`` (genuine log-concavity violations).
+    # ``a_clamp_fraction``: scalar fraction where ``_A_MIN`` floor
+    #   activated (≥ ``a_raw_negative_fraction``).
+    # ``a_clamp_per_gene``: per-gene clamp activation rate, shape
+    #   ``(G,)`` — averaged over cells so users can identify which
+    #   genes most often trigger the floor.
+    a_raw_min: Optional[jnp.ndarray] = None  # scalar (over (cell, gene))
+    a_raw_negative_fraction: Optional[jnp.ndarray] = None  # scalar
+    a_clamp_fraction: Optional[jnp.ndarray] = None  # scalar
+    a_clamp_per_gene: Optional[jnp.ndarray] = None  # shape (G,)
+
     # --- Global posterior uncertainty (unconstrained space) --------
     #
     # All ``*_loc`` and ``*_scale`` fields live in unconstrained
@@ -180,6 +255,34 @@ class ScribeLaplaceResults(
     # NBLN fields:
     r_loc: Optional[jnp.ndarray] = None
     r_scale: Optional[jnp.ndarray] = None
+    # TSLN-rate fields (unconstrained location/scale of the three
+    # positive globals; constrained values are in the non-_loc
+    # attributes above):
+    burst_size_loc: Optional[jnp.ndarray] = None
+    burst_size_scale: Optional[jnp.ndarray] = None
+    k_off_loc: Optional[jnp.ndarray] = None
+    k_off_scale: Optional[jnp.ndarray] = None
+    # ``gene_mean_loc`` is the unconstrained pre-transform of
+    # ``gene_mean`` (the TwoState positive gene-mean parameter).
+    # ``gene_mean = pos_forward(gene_mean_loc)`` exactly.
+    # For TSLN-Rate, ``self.mu_loc`` / ``self.mu_scale`` are NOT
+    # populated — those are NBLN-specific.
+    gene_mean_loc: Optional[jnp.ndarray] = None
+    gene_mean_scale: Optional[jnp.ndarray] = None
+    # TSLN-Logit fields (``base_model == "twostate_ln_logit"``).
+    # ``rate_loc / kappa_loc`` are unconstrained pre-transforms of
+    # the positive gene-level globals (``rate / kappa``).
+    # ``eta_anchor_loc`` is real-valued (identity transform) and equal
+    # to :attr:`eta_anchor`.  All three are populated by
+    # ``compute_global_uncertainty``; the corresponding ``*_scale``
+    # entries are NaN when the parameter is frozen at the cascade MAP
+    # (the default L4 cascade freezes all three).
+    rate_loc: Optional[jnp.ndarray] = None
+    rate_scale: Optional[jnp.ndarray] = None
+    kappa_loc: Optional[jnp.ndarray] = None
+    kappa_scale: Optional[jnp.ndarray] = None
+    eta_anchor_loc: Optional[jnp.ndarray] = None
+    eta_anchor_scale: Optional[jnp.ndarray] = None
     # NBLN latent prior mean ``mu`` posterior (per gene, log-rate
     # coordinate).  Populated by ``compute_global_uncertainty`` using
     # the diagonal-Σ approximation of the profiled Hessian.  Both
@@ -232,6 +335,36 @@ class ScribeLaplaceResults(
     # reads ``cascade_source._original_counts`` directly.  Storing here
     # avoids mutating the user's SVI result.
     cascade_source_counts: Optional[jnp.ndarray] = None
+    #
+    # ``_cascade_subset_info`` carries the panel-relationship metadata
+    # from ``scribe.laplace.priors._check_gene_identity`` when the
+    # Laplace target's gene panel is a STRICT subset of the SVI
+    # source's.  Read by PPC (``_resolve_nbln_ppc_arrays``) and other
+    # cascade-aware consumers to apply per-sample NB moment-matching
+    # aggregation when slicing SVI samples onto the target gene axis.
+    # ``None`` when panels match exactly (today's pass-through path).
+    # The typed ``SubsetInfo`` lives in ``scribe.laplace.priors``; this
+    # field is ``Optional[Any]`` to avoid a circular import.
+    _cascade_subset_info: Optional[Any] = None
+    #
+    # ``axis_layout`` records the obs-axis / latent-covariance-axis
+    # split used by the obs model under
+    # ``ModelConfig.correlate_other_column``.  Under the legacy layout
+    # (or when no ``_other`` column was emitted) the layout is
+    # trivial and ``G_kept == G_obs``; the shapes of ``W``/``d``/etc.
+    # remain identical to today.  Under the decoupled layout
+    # (``axis_layout.decoupled is True``) ``W`` has shape
+    # ``(G_kept, K)``, ``d`` has shape ``(G_kept,)``, and the per-cell
+    # latent stores a deviation in ``(G_kept,)`` while ``mu`` and ``r``
+    # stay at ``(G_obs,)``.  Downstream tools (PPC, compositional
+    # sampler, ``get_W_compositional``, DE) check this field to
+    # disambiguate the W/d shape from the mu/r shape; see the
+    # ``G_obs`` / ``G_kept`` properties below.  ``None`` for non-PLN/
+    # NBLN/TSLN base models and for legacy fits not threaded through
+    # the engine's gene-name / has-pooled-other plumbing.  Typed
+    # ``Optional[Any]`` to avoid a circular import with
+    # ``scribe.laplace._axis_layout.AxisLayout``.
+    axis_layout: Optional[Any] = None
 
     # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
     # model's ``pack_result`` when a W-prior strategy is configured
@@ -256,6 +389,62 @@ class ScribeLaplaceResults(
 
     _subset_gene_index: Optional[np.ndarray] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Jacobian-corrected MAP control. ``None`` lets ``get_map`` use its
+    # own ``"auto"`` default; a string here pins the per-result default
+    # (e.g., ``with_jacobian_map()`` sets this to ``"auto"`` to mark
+    # the result's stored fields as already corrected). See
+    # ``scribe.stats.jacobian_map`` for the math and the plan's §3.2.
+    map_method: Optional[str] = None
+
+    @property
+    def G_obs(self) -> int:
+        """Length of the observation-layer gene axis.
+
+        Equals the number of count-data columns and the length of
+        observation-only per-gene parameters (``r`` for NBLN/TSLN,
+        ``eta_anchor`` for TSLN-Logit).  Always ``self.n_genes`` when
+        that attribute is populated; otherwise falls back to the
+        ``axis_layout.G_obs`` when an axis layout is present.
+
+        Use this to disambiguate from :attr:`G_kept` (which excludes
+        the trailing ``_other`` pooled column under the decoupled
+        layout).  See ``scribe.laplace._axis_layout.AxisLayout`` for
+        the full shape contract.
+        """
+        if self.n_genes is not None:
+            return int(self.n_genes)
+        if self.axis_layout is not None:
+            return int(self.axis_layout.G_obs)
+        # Last-resort introspection from a known per-gene array.
+        if self.mu is not None and self.mu.ndim >= 1:
+            return int(self.mu.shape[0])
+        raise ValueError(
+            "Cannot determine G_obs: n_genes, axis_layout, and mu are "
+            "all unavailable on this result object."
+        )
+
+    @property
+    def G_kept(self) -> int:
+        """Length of the latent-covariance gene axis.
+
+        Equals the number of rows in ``W`` and ``d`` and the per-cell
+        latent's gene dimension.  Under the **decoupled** layout
+        (``ModelConfig.correlate_other_column=False`` AND data has a
+        trailing ``_other`` aggregate), ``G_kept == G_obs - 1`` and
+        the ``_other`` row is excluded from the regulatory covariance
+        Σ = W Wᵀ + diag(d).  Under the legacy layout (or when no
+        ``_other`` was emitted), ``G_kept == G_obs``.
+
+        Use this when inspecting the shape of ``self.W`` / ``self.d``
+        or building compositional accessors that must operate on the
+        kept-gene subspace (see ``get_W_compositional``).
+        """
+        if self.axis_layout is not None:
+            return int(self.axis_layout.G_kept)
+        # Without an axis_layout we cannot distinguish decoupled from
+        # legacy; fall back to G_obs (today's behaviour).
+        return self.G_obs
 
     def __repr__(self) -> str:
         """Return a concise text summary for interactive inspection.
@@ -332,6 +521,171 @@ class ScribeLaplaceResults(
             return "unknown"
         return str(getattr(self.model_config, "base_model", "unknown"))
 
+    def with_jacobian_map(self) -> "ScribeLaplaceResults":
+        """Return a copy where the stored positive globals are
+        recomputed with the Jacobian-corrected MAP, AND all derived
+        quantities are re-derived from the corrected parents.
+
+        Semantics
+        ---------
+        The ``_loc`` / ``_scale`` pairs on a ``ScribeLaplaceResults``
+        are the canonical posterior parameterization; the stored
+        constrained fields (``self.r``, ``self.gene_mean``, etc.) are
+        a *view* derived from them. By default (``map_method=None``,
+        defaults to ``"auto"`` inside :meth:`get_map`), the view is
+        recomputed lazily on every ``get_map`` call. This method
+        materializes the corrected view into the stored fields so that:
+
+        - ``new_result.gene_mean`` returns the corrected value.
+        - Downstream code reading ``self.r`` / ``self.gene_mean`` /
+          ``self.alpha`` directly (e.g., PPC samplers, cascade
+          adapters) sees the corrected values.
+        - ``new_result.map_method`` is set to ``"auto"`` so subsequent
+          ``get_map()`` calls inherit the same default.
+
+        Important: ``_loc`` and ``_scale`` are NOT modified, so
+        ``new_result.get_map(map_method="transform")`` still derives
+        from the loc/scale pair and returns the uncorrected median
+        ``transform(loc)``. The chosen semantics are: ``"transform"``
+        always means "raw transform-of-loc", regardless of what's in
+        the stored view fields.
+
+        Limitations
+        -----------
+        * ``LowRankMVN + Sigmoid``/``Softplus`` pairs cannot be
+          corrected in v1; the corresponding fields fall back to
+          ``transform(loc)`` with a warning.
+        * ``p_capture`` requires ``eta_scale``, which is not currently
+          persisted; the warning fires once (deduped by the default
+          Python warning filter).
+
+        Returns
+        -------
+        ScribeLaplaceResults
+            A new dataclass instance with corrected constrained fields
+            and ``map_method="auto"``.
+        """
+        from dataclasses import replace as _replace
+
+        from ._derived import (
+            lnm_p_from_parents,
+            twostate_logit_derived_from_parents,
+            twostate_rate_derived_from_parents,
+        )
+        from ._dispatch import _correct_positive
+        from ._results_shared import _base_model
+
+        bm = _base_model(self.model_config)
+        updates: Dict[str, Any] = {"map_method": "auto"}
+
+        if bm == "nbln":
+            r_corrected = _correct_positive(
+                self.model_config, "r",
+                getattr(self, "r_loc", None),
+                getattr(self, "r_scale", None),
+                method="auto",
+            )
+            if r_corrected is not None:
+                updates["r"] = r_corrected
+
+        elif bm == "twostate_ln_rate":
+            gene_mean_corrected = _correct_positive(
+                self.model_config, "mu",
+                getattr(self, "gene_mean_loc", None),
+                getattr(self, "gene_mean_scale", None),
+                method="auto",
+            )
+            burst_size_corrected = _correct_positive(
+                self.model_config, "burst_size",
+                getattr(self, "burst_size_loc", None),
+                getattr(self, "burst_size_scale", None),
+                method="auto",
+            )
+            k_off_corrected = _correct_positive(
+                self.model_config, "k_off",
+                getattr(self, "k_off_loc", None),
+                getattr(self, "k_off_scale", None),
+                method="auto",
+            )
+            if gene_mean_corrected is not None:
+                updates["gene_mean"] = gene_mean_corrected
+            if burst_size_corrected is not None:
+                updates["burst_size"] = burst_size_corrected
+            if k_off_corrected is not None:
+                updates["k_off"] = k_off_corrected
+            # Re-derive (alpha, beta, r_hat) from corrected parents,
+            # iff all three are available. Otherwise leave the stored
+            # derived values untouched.
+            if all(
+                k in updates for k in ("gene_mean", "burst_size", "k_off")
+            ):
+                derived = twostate_rate_derived_from_parents(
+                    gene_mean=updates["gene_mean"],
+                    burst_size=updates["burst_size"],
+                    k_off=updates["k_off"],
+                )
+                updates["alpha"] = derived["alpha"]
+                updates["beta"] = derived["beta"]
+                updates["r_hat"] = derived["r_hat"]
+                # CRITICAL: TSLN-Rate convention requires
+                # ``self.mu == log(self.r_hat)`` (mu is the latent
+                # log-rate prior center). PPC paths in _sampling.py
+                # read self.mu directly via
+                # _ppc_twostate_ln_rate_marginal — without this
+                # re-sync, with_jacobian_map() would leave a stale
+                # latent center and PPC samples would silently mix
+                # uncorrected mu with corrected (alpha, beta).
+                # Mirrors the same re-sync in _dispatch.py:get_map.
+                updates["mu"] = jnp.log(
+                    jnp.maximum(derived["r_hat"], 1e-30)
+                )
+
+        elif bm == "twostate_ln_logit":
+            rate_corrected = _correct_positive(
+                self.model_config, "rate",
+                getattr(self, "rate_loc", None),
+                getattr(self, "rate_scale", None),
+                method="auto",
+            )
+            kappa_corrected = _correct_positive(
+                self.model_config, "kappa",
+                getattr(self, "kappa_loc", None),
+                getattr(self, "kappa_scale", None),
+                method="auto",
+            )
+            if rate_corrected is not None:
+                updates["rate"] = rate_corrected
+            if kappa_corrected is not None:
+                updates["kappa"] = kappa_corrected
+            if "kappa" in updates and self.eta_anchor is not None:
+                derived = twostate_logit_derived_from_parents(
+                    kappa=updates["kappa"],
+                    eta_anchor=self.eta_anchor,
+                )
+                updates["alpha"] = derived["alpha"]
+                updates["beta"] = derived["beta"]
+
+        elif bm in ("lnm", "lnmvcp"):
+            mu_T_corrected = _correct_positive(
+                self.model_config, "mu_T",
+                self.mu_T_loc, self.mu_T_scale, method="auto",
+            )
+            r_T_corrected = _correct_positive(
+                self.model_config, "r_T",
+                self.r_T_loc, self.r_T_scale, method="auto",
+            )
+            if mu_T_corrected is not None:
+                updates["mu_T"] = mu_T_corrected
+            if r_T_corrected is not None:
+                updates["r_T"] = r_T_corrected
+            # ``p`` is not a dataclass field — it's derived inside
+            # get_map() from mu_T / r_T. So we do NOT add it to updates.
+            # On the next get_map() call, the corrected p will be
+            # computed from the updated mu_T and r_T.
+
+        # PLN has no positive globals to correct.
+        return _replace(self, **updates)
+
     def _summarize_latent_state(self) -> str:
         """Summarize which latent MAP slots are populated.
 
@@ -368,6 +722,19 @@ class ScribeLaplaceResults(
             components.append("r")
         if self.mu_loc is not None or self.mu_scale is not None:
             components.append("mu")
+        # TSLN-Rate uncertainty blocks.
+        if (
+            self.gene_mean_loc is not None
+            or self.gene_mean_scale is not None
+        ):
+            components.append("gene_mean")
+        if (
+            self.burst_size_loc is not None
+            or self.burst_size_scale is not None
+        ):
+            components.append("burst_size")
+        if self.k_off_loc is not None or self.k_off_scale is not None:
+            components.append("k_off")
         # LNM/LNMVCP totals uncertainty block.
         if (
             self.mu_T_loc is not None

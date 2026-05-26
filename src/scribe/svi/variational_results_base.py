@@ -62,6 +62,20 @@ class ScribeVariationalResults(ABC):
         """
         Return MAP estimates (optionally canonicalized) for viz consumers.
 
+        Subclasses accept a ``map_method`` keyword (default ``"auto"``)
+        that controls Jacobian correction for transformed variational
+        guides:
+
+        - ``"auto"`` (default): return Jacobian-corrected MAP in
+          constrained space (the true mode of ``Y = f(X)``); falls back
+          to ``f(loc)`` with a warning for unsupported transforms.
+        - ``"transform"``: return ``f(loc)`` (the median of ``Y`` for
+          monotone ``f``); backward-compat path that reproduces
+          pre-correction behavior.
+        - ``"jacobian"`` / ``"closed_form"`` / ``"newton"`` /
+          ``"autodiff"``: see
+          :func:`scribe.stats.jacobian_corrected_map`.
+
         Returns
         -------
         Any

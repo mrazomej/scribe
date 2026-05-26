@@ -175,16 +175,22 @@ class TestPLNFeatureFlags:
         )
         assert result == "pln"
 
-    def test_pln_vc_true_no_priors_warns(self):
+    def test_pln_vc_true_no_priors_warns(self, scribe_caplog):
         """``model='pln', variable_capture=True`` without capture priors warns."""
+        import logging
+
         import jax.numpy as jnp
 
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
         dummy = jnp.zeros((10, 5), dtype=jnp.int32)
-        with pytest.warns(UserWarning, match="variable_capture=True with model='pln'"):
-            try:
-                api.fit(dummy, model="pln", variable_capture=True, n_steps=1)
-            except Exception:
-                pass
+        try:
+            api.fit(dummy, model="pln", variable_capture=True, n_steps=1)
+        except Exception:
+            pass
+        assert any(
+            "variable_capture=True with model='pln'" in record.message
+            for record in scribe_caplog.records
+        )
 
     def test_pln_zi_true_raises(self):
         """``model='pln', zero_inflation=True`` raises ``ValueError``."""

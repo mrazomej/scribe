@@ -158,6 +158,7 @@ class TestMeanFanoBuilderAndFactory:
             "k_on",
             "k_off",
             "r_hat",
+            "eta_act",
             "burst_size",
             "effective_burst_size",
         ):

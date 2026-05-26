@@ -191,6 +191,17 @@ class LaplaceRunResult:
     # ``None`` only when the obs model itself doesn't run the W-prior
     # integration (e.g. LNM-family in v1).
     w_prior_diagnostics: Optional[Dict[str, Any]] = None
+    # ``correlate_other_column`` axis-layout metadata: captures the
+    # G_obs (observation-axis) vs G_kept (latent-covariance axis)
+    # split when the obs model excludes the trailing pooled ``_other``
+    # row from Σ.  ``None`` for legacy fits (G_kept == G_obs) and for
+    # obs models that don't honour the flag yet.  Threaded through
+    # ``_format_laplace_results`` into ``ScribeLaplaceResults.axis_layout``
+    # so downstream tooling (PPC, get_W_compositional, DE) can
+    # disambiguate the W/d shape from the mu/r shape.
+    # ``Any`` to avoid a circular import with
+    # ``scribe.laplace._axis_layout.AxisLayout``.
+    axis_layout: Optional[Any] = None
 
 
 @dataclass

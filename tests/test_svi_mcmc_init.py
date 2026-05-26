@@ -396,9 +396,11 @@ class TestEngineInitValues:
     @patch("scribe.mcmc.inference_engine.NUTS")
     @patch("scribe.mcmc.inference_engine.get_model_and_guide")
     def test_init_values_overrides_existing_strategy_warns(
-        self, mock_get_model, mock_nuts, mock_mcmc
-    ):
-        """Warning emitted when init_values overrides mcmc_kwargs init_strategy."""
+        self, mock_get_model, mock_nuts, mock_mcmc, scribe_caplog
+):
+        """Info log emitted when init_values overrides mcmc_kwargs init_strategy."""
+        import logging
+
         mock_get_model.return_value = (MagicMock(), None, None)
         mock_mcmc.return_value = MagicMock()
 
@@ -407,21 +409,19 @@ class TestEngineInitValues:
 
         from scribe.mcmc.inference_engine import MCMCInferenceEngine
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MCMCInferenceEngine.run_inference(
-                model_config=cfg,
-                count_data=jnp.zeros((10, 2)),
-                n_cells=10,
-                n_genes=2,
-                mcmc_kwargs={"init_strategy": "existing"},
-                init_values=init_vals,
-            )
+        scribe_caplog.set_level(logging.INFO, logger="scribe.mcmc.inference_engine")
+        MCMCInferenceEngine.run_inference(
+            model_config=cfg,
+            count_data=jnp.zeros((10, 2)),
+            n_cells=10,
+            n_genes=2,
+            mcmc_kwargs={"init_strategy": "existing"},
+            init_values=init_vals,
+        )
 
-        override_warnings = [
-            x for x in w if "init_values overrides" in str(x.message)
-        ]
-        assert len(override_warnings) == 1
+        assert any(
+            "init_values overrides" in record.message for record in scribe_caplog.records
+        )
 
     # ------------------------------------------------------------------
 

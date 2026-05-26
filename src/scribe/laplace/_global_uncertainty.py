@@ -20,7 +20,7 @@ configured ``positive_transform`` to the ``*_loc`` arrays.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -110,13 +110,26 @@ def resolve_positive_fns(
     return _JAX_POSITIVE_FNS[_get_positive_transform_name(model_config)]
 
 
-def resolve_numpyro_transform(model_config: Any):
+def resolve_numpyro_transform(model_config: Any, param_name: Optional[str] = None):
     """Return the NumPyro ``Transform`` for the configured positivity map.
 
     Parameters
     ----------
     model_config
-        Object with a ``positive_transform`` attribute.
+        Object with a ``positive_transform`` attribute.  This may be a
+        single string (``"softplus"`` / ``"exp"``) or — for models like
+        TSLN-Rate / TSLN-Logit — a dict mapping internal parameter
+        name to transform name.
+    param_name : str, optional
+        When the config holds a per-parameter dict, pass the internal
+        parameter name (e.g. ``"rate"``, ``"kappa"``, ``"mu"``,
+        ``"burst_size"``, ``"k_off"``) to resolve the transform for
+        that specific parameter.  When ``None`` (the default), the
+        function falls back to ``model_config.positive_transform``
+        directly — which works only when that field is itself a
+        string.  Models with a dict-form ``positive_transform`` MUST
+        pass ``param_name`` to avoid an ambiguity (and to dodge the
+        ``"unhashable dict"`` error that the legacy lookup raises).
 
     Returns
     -------
@@ -126,7 +139,7 @@ def resolve_numpyro_transform(model_config: Any):
     Raises
     ------
     ValueError
-        If ``positive_transform`` is missing or unrecognised.
+        If the resolved transform name is unknown.
     """
     import numpyro.distributions as dist
 
@@ -135,6 +148,22 @@ def resolve_numpyro_transform(model_config: Any):
         "softplus": dist.transforms.SoftplusTransform(),
         "exp": dist.transforms.ExpTransform(),
     }
+    # When a parameter name is supplied AND the model config exposes
+    # ``resolve_positive_transform`` (per-parameter resolver), route
+    # through it — this is the path TSLN-Rate / TSLN-Logit and any
+    # other model with a dict-form ``positive_transform`` must use.
+    if param_name is not None and hasattr(
+        model_config, "resolve_positive_transform"
+    ):
+        name = model_config.resolve_positive_transform(param_name)
+        if name not in _NUMPYRO_TRANSFORMS:
+            raise ValueError(
+                f"Unknown positive_transform={name!r} for "
+                f"param={param_name!r}; expected one of "
+                f"{set(_NUMPYRO_TRANSFORMS)}."
+            )
+        return _NUMPYRO_TRANSFORMS[name]
+    # Legacy path: single-string positive_transform.
     return _NUMPYRO_TRANSFORMS[_get_positive_transform_name(model_config)]
 
 
@@ -365,3 +394,136 @@ def woodbury_inv_diag_and_col(
     T = Z.T
     inv_diag = inv_d - jnp.sum(T * T, axis=-1)
     return inv_diag, L_S
+
+
+def woodbury_apply_inv(
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    v: jnp.ndarray,
+) -> jnp.ndarray:
+    r"""Apply ``(W W^T + diag(d))^{-1}`` to a vector via Woodbury.
+
+    .. math::
+        \Sigma^{-1} v
+        = D^{-1} v - D^{-1} W S^{-1} W^T D^{-1} v
+
+    where :math:`D = \mathrm{diag}(d)` and
+    :math:`S = I_k + W^T D^{-1} W`.  Used by callers that need the
+    full ``Σ^{-1} v`` action (e.g. the MVN gradient ``g_logr`` in
+    TSLN-Rate's hand-derived global curvature path); for the
+    diagonal-only path use :func:`woodbury_inv_diag`.
+
+    Parameters
+    ----------
+    W : jnp.ndarray, shape ``(G, k)``
+    d : jnp.ndarray, shape ``(G,)``
+        Positive diagonal of ``Σ``.
+    v : jnp.ndarray, shape ``(G,)``
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(G,)``
+        ``Σ^{-1} v``.
+    """
+    inv_d = 1.0 / d
+    k = W.shape[1]
+    Dv = inv_d * v                                  # (G,)
+    WT_Dv = W.T @ Dv                                # (k,)
+    S = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_S = jnp.linalg.cholesky(S)
+    y = jax.scipy.linalg.cho_solve((L_S, True), WT_Dv)
+    return Dv - inv_d * (W @ y)
+
+
+# =====================================================================
+# Chunked Hessian-diagonal extraction
+# =====================================================================
+#
+# ``jax.hessian(f, argnums=k)(x)`` followed by ``jnp.diag(...)`` is
+# the lazy way to get ``∂²f/∂x_i²`` for a vector parameter ``x``.  It
+# materialises the entire ``(G, G)`` Hessian, and in the process
+# JAX's forward-over-reverse traces through every cell-level
+# intermediate before summing — leading to a transient ``(C, G, G)``
+# tensor when ``f`` is a per-cell-sum-then-scalar closure.  At
+# production scale (G ~ 10K, C ~ several thousand) this is hundreds
+# of GB.
+#
+# ``hessian_diag_chunked`` evaluates the diagonal directly via the
+# index trick — for each gene ``i``, compute the second derivative
+# along the ``i``-th coordinate via ``jax.grad(jax.grad(f, by i), by
+# i)``.  Memory per chunk scales with ``chunk_size``, not ``G``;
+# total flops are the same as the full Hessian (one second-derivative
+# per gene), but the transient never exceeds the chunk size.
+
+
+def hessian_diag_chunked(
+    f: Callable,
+    args: Tuple[Any, ...],
+    argnum: int,
+    *,
+    chunk_size: int = 128,
+) -> jnp.ndarray:
+    """Diagonal of ``∇²f`` wrt ``args[argnum]``, computed in gene chunks.
+
+    Drop-in replacement for ``jnp.diag(jax.hessian(f, argnums=argnum)
+    (*args))`` that bounds peak memory by ``chunk_size``.
+
+    Parameters
+    ----------
+    f : Callable
+        Scalar function of ``args``.  Must be jit-compatible
+        elementwise on the chunked axis (the cost is dominated by
+        the inner ``f`` evaluation, not the chunking).
+    args : Tuple
+        Positional arguments forwarded to ``f``.  ``args[argnum]`` is
+        the array whose Hessian-diagonal is wanted; treated as 1-D in
+        this implementation.
+    argnum : int
+        Index of the argument to differentiate against.
+    chunk_size : int, default 128
+        Number of genes processed per inner ``vmap``.  Smaller values
+        use less peak memory but more sequential overhead.
+
+    Returns
+    -------
+    diag : jnp.ndarray, shape ``(G,)`` where ``G = args[argnum].shape[0]``
+        Diagonal entries ``∂²f/∂x_i²`` for each ``i``.
+
+    Notes
+    -----
+    The implementation uses the **index trick** rather than computing
+    the full ``(G, G)`` Hessian:
+
+    .. code-block:: python
+
+        ∂²f/∂x_i² = (∂/∂x_i)(∂f/∂x_i)
+                  = ∂/∂x_i [grad_f(x)[i]]
+                  = jax.grad(lambda y: grad_f(y)[i])(x)[i]
+
+    Wrapped in ``jax.vmap`` over a chunk of gene indices to amortise
+    the gradient-of-gradient setup cost; the outer Python loop walks
+    over chunks so the autodiff intermediate never spans all ``G``.
+    """
+    x = args[argnum]
+    G = int(x.shape[0])
+
+    def _f_indexed(x_local, i):
+        """Return ``∂f/∂x_i`` evaluated at the local argument."""
+        new_args = list(args)
+        new_args[argnum] = x_local
+        return jax.grad(f, argnums=argnum)(*new_args)[i]
+
+    def _diag_at(i):
+        """Return ``∂²f/∂x_i² = (∂/∂x_i)(∂f/∂x_i)``."""
+        return jax.grad(_f_indexed, argnums=0)(x, i)[i]
+
+    # JIT the inner vmap so XLA can specialise the chunked
+    # second-derivative graph once and reuse it.
+    _diag_chunk = jax.jit(jax.vmap(_diag_at))
+
+    pieces = []
+    for start in range(0, G, int(chunk_size)):
+        end = min(start + int(chunk_size), G)
+        idx = jnp.arange(start, end)
+        pieces.append(_diag_chunk(idx))
+    return jnp.concatenate(pieces)

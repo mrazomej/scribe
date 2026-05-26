@@ -27,6 +27,12 @@ from ._results_sampling_helpers import (
     _ppc_pln_marginal,
     _ppc_pln_per_cell,
     _ppc_pln_per_cell_laplace,
+    _ppc_twostate_ln_rate_marginal,
+    _ppc_twostate_ln_rate_per_cell,
+    _ppc_twostate_ln_rate_per_cell_laplace,
+    _ppc_twostate_ln_logit_marginal,
+    _ppc_twostate_ln_logit_per_cell,
+    _ppc_twostate_ln_logit_per_cell_laplace,
 )
 from ._results_shared import _base_model
 
@@ -157,9 +163,7 @@ def _resolve_nbln_ppc_arrays(
     # because the amortizer needs full counts) must be sliced to the
     # subset gene axis to match ``self.mu``/``self.W``/``self.d``.
     gene_idx = getattr(result, "_subset_gene_index", None)
-    gene_idx_jnp = (
-        jnp.asarray(gene_idx) if gene_idx is not None else None
-    )
+    gene_idx_jnp = jnp.asarray(gene_idx) if gene_idx is not None else None
 
     k_cascade, k_r_lap, k_eta_pick, k_r_exp, k_mu_exp, k_eta_exp = (
         jax.random.split(rng_key, 6)
@@ -168,7 +172,65 @@ def _resolve_nbln_ppc_arrays(
     cascade_samples = None
     if frozen and cascade is not None:
         cascade_samples = _draw_nbln_cascade_samples(
-            cascade, cascade_counts, n_samples, k_cascade,
+            cascade,
+            cascade_counts,
+            n_samples,
+            k_cascade,
+        )
+
+    # Subset-aware cascade routing.  When the Laplace fit's gene panel
+    # is a STRICT subset of the SVI source's, the cascade samples live
+    # on the source's larger gene axis and the source's ``"_other"``
+    # column means a DIFFERENT aggregate from the Laplace target's
+    # ``"_other"``.  Re-aggregate the SVI samples onto the target axis
+    # via per-sample NB moment matching before any downstream slicing
+    # or PPC sampling sees them.  See ``paper/_nb_lognormal.qmd``
+    # §sec-nbln-cascade-aggregation for the math.
+    _cascade_subset_info = getattr(result, "_cascade_subset_info", None)
+    _subset_active = (
+        cascade_samples is not None
+        and _cascade_subset_info is not None
+        and _cascade_subset_info.is_subset
+        and not _cascade_subset_info.is_equal
+    )
+    if _subset_active and (
+        "r" not in cascade_samples or "mu" not in cascade_samples
+    ):
+        # Subset aggregation couples r and mu; bypassing it would
+        # feed source-shape arrays to ``_gene_slice`` and either
+        # crash or use the wrong ``_other`` aggregate.  Raise so the
+        # bug surfaces clearly at PPC time.
+        raise ValueError(
+            "Subset-aware cascade PPC requires the SVI source to expose "
+            "both 'r' and 'mu' per sample; got keys "
+            f"{sorted(cascade_samples.keys())}."
+        )
+    if _subset_active:
+        from .priors import (
+            _aggregate_other_nb,
+            _assemble_per_gene_subset_samples,
+        )
+
+        _r_src = jnp.asarray(cascade_samples["r"])
+        _mu_src = jnp.asarray(cascade_samples["mu"])
+        _r_kept = _assemble_per_gene_subset_samples(
+            _r_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _mu_kept = _assemble_per_gene_subset_samples(
+            _mu_src, _cascade_subset_info.kept_idx_in_source
+        )
+        _r_other_s, _mu_other_s = _aggregate_other_nb(
+            _r_src,
+            _mu_src,
+            _cascade_subset_info.dropped_idx_in_source,
+            _cascade_subset_info.source_other_index_in_source,
+        )
+        cascade_samples = dict(cascade_samples)
+        cascade_samples["r"] = jnp.concatenate(
+            [_r_kept, _r_other_s[:, None]], axis=1
+        )
+        cascade_samples["mu"] = jnp.concatenate(
+            [_mu_kept, _mu_other_s[:, None]], axis=1
         )
 
     def _gene_slice(arr: jnp.ndarray) -> jnp.ndarray:
@@ -182,11 +244,7 @@ def _resolve_nbln_ppc_arrays(
     eta_samples: Optional[jnp.ndarray] = None
 
     # ---- r ---------------------------------------------------------
-    if (
-        "r" in frozen
-        and cascade_samples is not None
-        and "r" in cascade_samples
-    ):
+    if "r" in frozen and cascade_samples is not None and "r" in cascade_samples:
         # SVI ``r`` is in positive (constrained) space — feed directly
         # to ``LogMeanNegativeBinomial(concentration=...)``.  Subset to
         # the result's gene axis, then expand pool to n_samples.
@@ -228,11 +286,11 @@ def _resolve_nbln_ppc_arrays(
         # SVI ``mu`` is the NB mean (positive); NBLN's ``mu`` is the
         # log-rate prior mean — apply ``log`` per sample.  Subset to
         # gene axis, then expand pool to n_samples.
-        mu_pos = _gene_slice(jnp.asarray(cascade_samples["mu"]))  # (S, G_subset)
+        mu_pos = _gene_slice(
+            jnp.asarray(cascade_samples["mu"])
+        )  # (S, G_subset)
         mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
-        mu_samples = _expand_pool_to_n_samples(
-            mu_log, n_samples, k_mu_exp
-        )
+        mu_samples = _expand_pool_to_n_samples(mu_log, n_samples, k_mu_exp)
 
     # ---- eta -------------------------------------------------------
     # Eta is per-cell, not per-gene; no gene-subset slicing needed.
@@ -258,9 +316,7 @@ def _resolve_nbln_ppc_arrays(
                 eta_full, n_samples, k_eta_exp
             )  # (n_samples, N)
             n_cells = int(eta_expanded.shape[1])
-            cell_idx = jax.random.randint(
-                k_eta_pick, (n_samples,), 0, n_cells
-            )
+            cell_idx = jax.random.randint(k_eta_pick, (n_samples,), 0, n_cells)
             eta_samples = eta_expanded[jnp.arange(n_samples), cell_idx]
 
     return {
@@ -338,24 +394,42 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "level='library_anchored' requires `counts` for observed totals."
                 )
-            if bm in ("pln", "nbln"):
+            if bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
                 # Library-anchored PPC samples ``softmax(x) ->
-                # Multinomial`` against observed library size; the NB
-                # vs Poisson choice does not enter (no count-noise
-                # layer at this level), so NBLN reuses the PLN helper.
-                # For NBLN cascade fits, resolve a per-draw ``mu``
-                # array (frozen-mu → cascade samples; non-frozen-mu
-                # with Laplace Normal → Normal(mu_loc, mu_scale)).
-                # PLN never supplies ``mu_samples``.
+                # Multinomial`` against observed library size; the
+                # count-noise choice (Poisson / NB / Poisson-Beta
+                # compound) does not enter at this level, so NBLN and
+                # TSLN-Rate reuse the PLN helper.  For NBLN cascade
+                # fits, resolve a per-draw ``mu`` array (frozen-mu →
+                # cascade samples; non-frozen-mu with Laplace Normal →
+                # Normal(mu_loc, mu_scale)).  PLN and TSLN-Rate never
+                # supply ``mu_samples`` here.
                 mu_samples = None
                 if bm == "nbln":
                     arrays = _resolve_nbln_ppc_arrays(
-                        self, rng_key, n_samples, per_cell=False,
+                        self,
+                        rng_key,
+                        n_samples,
+                        per_cell=False,
                     )
                     mu_samples = arrays["mu_samples"]
+                # Commit 2b: decoupled NBLN scatters x_dev (G_kept) into
+                # the full G_obs simplex; ``_other`` is deterministic.
+                _layout = getattr(self, "axis_layout", None)
+                _kept_idx_jx = (
+                    jnp.asarray(_layout.kept_idx)
+                    if _layout is not None and _layout.decoupled
+                    else None
+                )
                 return _ppc_pln_library_anchored(
-                    rng_key, n_samples, self.mu, self.W, self.d,
-                    counts=counts, mu_samples=mu_samples,
+                    rng_key,
+                    n_samples,
+                    self.mu,
+                    self.W,
+                    self.d,
+                    counts=counts,
+                    mu_samples=mu_samples,
+                    kept_idx=_kept_idx_jx,
                 )
             if bm in ("lnm", "lnmvcp"):
                 return _ppc_lnm_library_anchored(
@@ -372,6 +446,12 @@ class SamplingResultsMixin:
             )
 
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_marginal(
                 rng_key,
                 n_samples,
@@ -379,6 +459,7 @@ class SamplingResultsMixin:
                 self.W,
                 self.d,
                 eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:
@@ -391,7 +472,19 @@ class SamplingResultsMixin:
             # - non-frozen with Laplace Normal → Normal(loc, scale);
             # - otherwise → None, helper falls back to legacy logic.
             arrays = _resolve_nbln_ppc_arrays(
-                self, rng_key, n_samples, per_cell=False,
+                self,
+                rng_key,
+                n_samples,
+                per_cell=False,
+            )
+            # Commit 2b: thread kept_idx through to the marginal kernel
+            # so the latent ``W`` / ``d`` (G_kept) get scattered onto
+            # the full G_obs axis under decoupling.
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
             )
             return _ppc_nbln_marginal(
                 rng_key,
@@ -407,6 +500,7 @@ class SamplingResultsMixin:
                 r_samples=arrays["r_samples"],
                 mu_samples=arrays["mu_samples"],
                 eta_samples=arrays["eta_samples"],
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
@@ -425,6 +519,57 @@ class SamplingResultsMixin:
                 r_T_loc=self.r_T_loc,
                 pos_forward=pos_fwd,
                 **kwargs,
+            )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate PPC requires the derived 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_rate_marginal(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.alpha,
+                self.beta,
+                eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
+            )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_logit_marginal(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
+                eta_loc=self.eta_loc,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"marginal PPC not implemented for base_model={bm!r}"
@@ -484,8 +629,16 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_per_cell_laplace(
-                rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d
+                rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:
@@ -499,7 +652,20 @@ class SamplingResultsMixin:
             # conditions on the cell-specific MAP ``x_loc`` rather
             # than redrawing ``x`` from its prior).
             arrays = _resolve_nbln_ppc_arrays(
-                self, rng_key, n_samples, per_cell=True,
+                self,
+                rng_key,
+                n_samples,
+                per_cell=True,
+            )
+            # Commit 2b: thread mu + kept_idx through for decoupled NBLN
+            # so the per-cell kernel reconstructs full G_obs log-rate
+            # from kept-axis ``x_dev`` (which is what ``x_loc`` carries
+            # under decoupling).
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
             )
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
@@ -514,6 +680,8 @@ class SamplingResultsMixin:
                 pos_forward=pos_fwd,
                 r_samples=arrays["r_samples"],
                 eta_samples=arrays["eta_samples"],
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
@@ -534,6 +702,58 @@ class SamplingResultsMixin:
                 r_T_loc=self.r_T_loc,
                 pos_forward=pos_fwd,
                 **kwargs,
+            )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate per-cell PPC requires 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_rate_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+                self.alpha,
+                self.beta,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
+            )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit per-cell PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_logit_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"get_per_cell_predictive_samples not implemented for base_model={bm!r}"
@@ -576,20 +796,39 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_pln_per_cell(
-                rng_key, n_samples, self.x_loc, self.eta_loc
+                rng_key, n_samples, self.x_loc, self.eta_loc,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm == "nbln":
             if self.r is None:
                 raise ValueError(
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
+            # Commit 2b: under decoupling, ``x_loc`` is ``x_dev`` on
+            # G_kept; the kernel needs ``mu`` + ``kept_idx`` to
+            # reconstruct the full G_obs per-cell log-rate.
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
             return _ppc_nbln_per_cell(
                 rng_key,
                 n_samples,
                 self.x_loc,
                 self.eta_loc,
                 self.r,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
             )
         if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_per_cell(
@@ -605,6 +844,54 @@ class SamplingResultsMixin:
                 r_T=self.r_T,
                 p_capture_loc=self.p_capture_loc,
                 **kwargs,
+            )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate map PPC requires 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_rate_per_cell(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.alpha,
+                self.beta,
+                mu=self.mu if _kept_idx_jx is not None else None,
+                kept_idx=_kept_idx_jx,
+            )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit map PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            _layout = getattr(self, "axis_layout", None)
+            _kept_idx_jx = (
+                jnp.asarray(_layout.kept_idx)
+                if _layout is not None and _layout.decoupled
+                else None
+            )
+            return _ppc_twostate_ln_logit_per_cell(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
+                kept_idx=_kept_idx_jx,
             )
         raise NotImplementedError(
             f"get_map_ppc_samples not implemented for base_model={bm!r}"
@@ -684,11 +971,17 @@ class SamplingResultsMixin:
             if ref_idx < 0:
                 ref_idx = n_genes_full + ref_idx
             is_alr = True
-        elif bm in ("pln", "nbln"):
-            # PLN and NBLN both produce log-rates ``y_log_rate = mu + W z``;
-            # softmax of those log-rates gives the compositional sample.
-            # The NB vs Poisson choice never enters here -- compositions
-            # are pre-observation-noise.
+        elif bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
+            # PLN-family (PLN / NBLN / TSLN-Rate) all produce log-rates
+            # ``y_log_rate = mu + W z``; softmax of those log-rates gives
+            # the compositional sample.  The count-noise layer (Poisson /
+            # NB / Poisson-Beta compound) never enters here — compositions
+            # are pre-observation-noise.  For TSLN-Rate the gene-level
+            # Beta concentration is an observation-noise layer too: in
+            # expectation ``⟨u_g | log_rate, p⟩ = exp(log_rate) · p`` and
+            # under softmax-of-log-rates the gene-level Beta noise
+            # averages out, so the compositional view is identical to
+            # PLN/NBLN.
             #
             # Use the gauge-invariant projection ``W_perp = W − mean(W, axis=0)``
             # via :meth:`get_W_compositional`.  Math note: ``softmax(mu + W z
@@ -703,12 +996,33 @@ class SamplingResultsMixin:
             # pre-softmax latent magnitudes smaller, which is friendlier to
             # floating-point precision.  For PLN where gauge contamination is
             # typically smaller this is functionally a no-op.
+            #
+            # Decoupled-layout branch (Commit 2b for NBLN; same pattern
+            # applies to PLN/TSLN-* once their math commits land): under
+            # ``correlate_other_column=False``, ``W`` and ``d`` live on
+            # the kept-gene axis (G_kept) while ``μ`` lives on the full
+            # observation axis (G_obs).  We sample ``x_dev`` on G_kept,
+            # scatter ``μ_kept + x_dev`` at kept positions, and use
+            # ``μ_other`` directly at ``other_idx`` (deterministic, no
+            # z modulation — matching the math-contract).
             mu = jnp.asarray(self.mu)
             W = jnp.asarray(self.get_W_compositional())
             d = self.d
             ref_idx = None
-            n_genes_full = int(W.shape[0])
+            n_genes_full = int(mu.shape[0])
             is_alr = False
+            _axis_layout = getattr(self, "axis_layout", None)
+            is_decoupled = _axis_layout is not None and getattr(
+                _axis_layout, "decoupled", False
+            )
+            if is_decoupled:
+                _kept_idx_dev = jnp.asarray(
+                    _axis_layout.kept_idx, dtype=jnp.int32
+                )
+                _other_idx_dev = int(_axis_layout.other_idx)
+            else:
+                _kept_idx_dev = None
+                _other_idx_dev = None
         else:
             raise NotImplementedError(
                 f"get_compositional_samples not implemented for "
@@ -721,7 +1035,18 @@ class SamplingResultsMixin:
             d = jnp.asarray(d)
         sqrt_d = jnp.sqrt(jnp.maximum(d, 0.0))
 
-        G_eff = int(mu.shape[0])
+        # Latent dimension for sampling ``z`` / ``ε``:
+        #   • PLN/NBLN legacy: ``G_eff = G_obs`` (mu axis).
+        #   • PLN/NBLN decoupled: ``G_eff = G_kept = W.shape[0]`` (since
+        #     ``W`` lives on the kept axis under decoupling).
+        #   • LNM/LNMVCP: ``G_eff = G_obs − 1`` (ALR latent), already
+        #     enforced via the ``n_genes_full = W.shape[0] + 1`` line.
+        if (not is_alr) and (
+            "_kept_idx_dev" in locals() and _kept_idx_dev is not None
+        ):
+            G_eff = int(W.shape[0])  # G_kept
+        else:
+            G_eff = int(W.shape[0])
         k = int(W.shape[1])
 
         n_total = int(n_samples)
@@ -735,7 +1060,20 @@ class SamplingResultsMixin:
             k_z, k_eps = jax.random.split(chunk_keys[i])
             z = jax.random.normal(k_z, (size, k), dtype=mu.dtype)
             eps = jax.random.normal(k_eps, (size, G_eff), dtype=mu.dtype)
-            latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
+            # Under decoupling, ``z @ W.T + sqrt_d * eps`` lives on
+            # G_kept and represents the per-draw ``x_dev``.  We add μ
+            # on the G_obs axis by scattering: μ_kept + x_dev at kept
+            # positions, μ_other unchanged at ``other_idx``.
+            # Under legacy / LNM, ``latent = μ + z @ W.T + sqrt_d * eps``
+            # directly on the full axis as before.
+            if (not is_alr) and (
+                "_kept_idx_dev" in locals() and _kept_idx_dev is not None
+            ):
+                x_dev = z @ W.T + sqrt_d[None, :] * eps  # (size, G_kept)
+                latent = jnp.broadcast_to(mu[None, :], (size, n_genes_full))
+                latent = latent.at[:, _kept_idx_dev].add(x_dev)
+            else:
+                latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
 
             if is_alr:
                 # ALR → simplex: augment with a zero at the reference
@@ -745,7 +1083,10 @@ class SamplingResultsMixin:
                 full = full.at[..., jnp.asarray(other)].set(latent)
                 simplex = jax.nn.softmax(full, axis=-1)
             else:
-                # PLN: softmax of log-rate; η cancels.
+                # PLN: softmax of log-rate; η cancels.  Under decoupled
+                # the latent is already on the full G_obs axis (scatter
+                # above), so softmax produces a proper simplex of size
+                # G_obs with ``_other`` participating deterministically.
                 simplex = jax.nn.softmax(latent, axis=-1)
 
             pieces.append(_np.asarray(simplex))

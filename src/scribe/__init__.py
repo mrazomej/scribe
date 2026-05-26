@@ -7,7 +7,13 @@ from single-cell RNA-sequencing data.
 
 # Suppress known warnings from dependencies BEFORE any imports
 import importlib
+import logging
 import warnings
+
+from ._logging import setup_logging
+
+# Configure colored scribe logging before other submodules emit messages.
+setup_logging()
 
 # Suppress FutureWarnings from scanpy/anndata about deprecated __version__ usage
 # Use a more general approach to catch all instances of this warning
@@ -44,33 +50,19 @@ from . import stats
 try:
     from .stats import _kl_betaprime  # side effect: decorator runs
 except Exception as _e:
-    import logging
-
-    logging.warning(
+    logging.getLogger(__name__).warning(
         "SCRIBE: Failed to register BetaPrime KL divergence with NumPyro. "
         "Analytic KL for BetaPrime distributions will not be available. "
         f"Error: {_e}"
-    )
-    warnings.warn(
-        "SCRIBE: Could not register BetaPrime KL divergence with NumPyro. "
-        f"Error: {_e}",
-        RuntimeWarning,
     )
 
 try:
     from .stats import _kl_lognormal  # side effect: decorator runs
 except Exception as _e:
-    import logging
-
-    logging.warning(
+    logging.getLogger(__name__).warning(
         "SCRIBE: Failed to register LogNormal KL divergence with NumPyro. "
         "Analytic KL for LogNormal distributions will not be available. "
         f"Error: {_e}"
-    )
-    warnings.warn(
-        "SCRIBE: Could not register LogNormal KL divergence with NumPyro. "
-        f"Error: {_e}",
-        RuntimeWarning,
     )
 
 # ------------------------------------------------------------------------------
@@ -81,16 +73,10 @@ try:
 
     apply_distribution_mode_patches()
 except Exception as _e:
-    import logging
-
-    logging.warning(
+    logging.getLogger(__name__).warning(
         "SCRIBE: Failed to apply distribution mode patches. "
         "Distribution mode properties will not be available. "
         f"Error: {_e}"
-    )
-    warnings.warn(
-        "SCRIBE: Could not apply distribution mode patches. " f"Error: {_e}",
-        RuntimeWarning,
     )
 
 # ------------------------------------------------------------------------------

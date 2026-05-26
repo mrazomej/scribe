@@ -430,6 +430,13 @@ class TwoStateLikelihood(Likelihood):
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate)
+        # Activation log-odds θ_g = log(k_on / k_off) = log(α / β).
+        # The downstream TSLN-Logit cascade adapter consumes this
+        # preferentially over re-deriving from (mu, burst_size, k_off),
+        # because the SVI reparameterization may have activated
+        # mean-preserving floors in _twostate_reparam that the raw
+        # params don't reflect.  See plan §4.C.1 (Rev 4).
+        numpyro.deterministic("eta_act", jnp.log(alpha) - jnp.log(beta))
         numpyro.deterministic("effective_burst_size", eff_burst_size)
         if is_mean_fano or is_moment_delta:
             numpyro.deterministic(

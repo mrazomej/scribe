@@ -15,7 +15,7 @@ FitContext writes: annotation_prior_logits, _label_map,
                    kwargs[expression_prior]
 """
 
-import warnings
+import logging
 
 from ...core.annotation_prior import (
     build_annotation_prior_logits,
@@ -25,6 +25,8 @@ from ...core.annotation_prior import (
 from ...models.config.enums import HierarchicalPriorType
 from ..helpers import _count_unique_labels, _normalize_prior_type_name
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def build_annotation_priors(ctx: FitContext) -> None:
@@ -92,13 +94,11 @@ def build_annotation_priors(ctx: FitContext) -> None:
         _suffix = (
             f"; {'; '.join(downgraded_msgs)}" if downgraded_msgs else ""
         )
-        warnings.warn(
+        _log.warning(
             "annotation_key/annotation_min_cells left <=1 surviving "
             "annotation class after filtering. "
             "Auto-downgrading to non-mixture mode "
-            f"(n_components=None, mixture_params ignored{_suffix}).",
-            UserWarning,
-            stacklevel=2,
+            f"(n_components=None, mixture_params ignored{_suffix})."
         )
         return
 

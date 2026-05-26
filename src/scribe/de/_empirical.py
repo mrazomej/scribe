@@ -34,7 +34,7 @@ References
 """
 
 import math
-import warnings
+import logging
 from functools import partial
 from typing import Optional, List, Callable, Sequence, TYPE_CHECKING, Union
 
@@ -42,6 +42,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import random
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
@@ -116,6 +118,24 @@ def _aggregate_genes(
     aggregate concentration that is appended as the last column.  This
     preserves the total Dirichlet concentration exactly so that the
     simplex constraint is maintained downstream.
+
+    .. note::
+       This aggregation uses a naive sum-of-rates formula
+       (``r_other = sum(r_g)``) that is only exact for Dirichlet
+       concentrations on a shared-``p`` NBDM (where the marginals
+       close under summation).  The principled NB moment-matching
+       aggregator used by the SVI-to-Laplace prior cascade lives in
+       :func:`scribe.laplace.priors._aggregate_other_nb` and applies
+       a different formula:
+
+       .. code-block:: text
+
+           r_other = (μ_other)² / Σ_g μ_g² / r_g
+
+       TODO(follow-up): audit whether the DE-side aggregation should
+       switch to the moment-matched formula for consistency with the
+       prior cascade, or whether the Dirichlet-simplex constraint
+       genuinely requires the additive form.
 
     Parameters
     ----------
@@ -496,11 +516,9 @@ def _drop_scalar_p(
 
     # Legacy fallback: ndim < 2 means no gene dimension.
     # Deprecated — callers should provide layout metadata.
-    warnings.warn(
+    _log.warning(
         "Calling _drop_scalar_p without layout metadata is deprecated. "
-        "Pass param_layouts explicitly.",
-        DeprecationWarning,
-        stacklevel=2,
+        "Pass param_layouts explicitly."
     )
     if p.ndim < 2:
         return None
@@ -1265,11 +1283,9 @@ def _slice_component(
 
     # --- Legacy ndim fallback (no layout provided) ---
     # Deprecated — callers should provide layout metadata.
-    warnings.warn(
+    _log.warning(
         "Calling _slice_component without layout metadata is deprecated. "
-        "Pass param_layouts explicitly.",
-        DeprecationWarning,
-        stacklevel=2,
+        "Pass param_layouts explicitly."
     )
     if r_samples.ndim == 3:
         if component is None:

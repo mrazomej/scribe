@@ -28,10 +28,14 @@ Expected configuration layout:
       svi.yaml
       mcmc.yaml
       vae.yaml
+      laplace.yaml
 
 Common examples:
   scribe-infer --config-path ./conf data=singer model=zinb
   scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
+  scribe-infer --config-path ./conf data=singer model=twostate parameterization=natural
+  scribe-infer --config-path ./conf data=singer model=pln inference=laplace latent_dim=16
+  scribe-infer --config-path ./conf data=singer model=nbln inference=laplace
   scribe-infer --slurm --config-path ./conf data=bleo_study01
 
 Initialize starter configs:

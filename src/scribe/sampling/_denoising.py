@@ -1,6 +1,6 @@
 """Bayesian denoising of observed counts."""
 
-import warnings
+import logging
 from typing import Dict, List, Optional, Tuple, Union
 
 from jax import random, vmap
@@ -21,6 +21,8 @@ from ._denoising_twostate import (
     _denoise_twostate_quadrature,
     _sample_p_posterior_twostate,
 )
+
+_log = logging.getLogger(__name__)
 
 
 # Allowed values for individual method elements
@@ -281,11 +283,9 @@ def denoise_counts(
     # The fallback infers layouts from tensor shapes and will be removed
     # in a future release.
     if param_layouts is None:
-        warnings.warn(
+        _log.warning(
             "Calling denoise_counts without param_layouts is deprecated. "
-            "Pass param_layouts explicitly.",
-            DeprecationWarning,
-            stacklevel=2,
+            "Pass param_layouts explicitly."
         )
         _expected_r_rank = 2 if is_mixture else 1
         _has_sd = r.ndim > _expected_r_rank

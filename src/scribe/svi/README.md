@@ -784,6 +784,12 @@ the fit-time `_label_map` and `_component_mapping` metadata. This guarantees
 that per-dataset visualization and component lookups reuse the original
 label-to-component assignment rather than reconstructing a dataset-local order.
 
+`get_dataset(i)` also forwards gene-coverage metadata (`_gene_coverage_mask`,
+`_gene_coverage`, `_excluded_gene_names`, `_original_n_genes`,
+`_total_count_max`) so that per-dataset visualization routines (e.g. PPC) can
+align raw counts from the original gene space back to the model's filtered
+gene space.
+
 **Posterior sample subsetting:** `get_dataset()` uses `derive_axis_membership`
 to resolve which posterior keys carry a dataset axis, then slices them via
 layout-aware indexing.  This ensures that **derived** posterior keys (e.g. `mu`
@@ -847,7 +853,7 @@ log_lik = results.log_likelihood(counts=count_data)
 # by chunking across posterior draws.  This replaces the old
 # ``batch_size`` argument (removed; it used a Python-level per-cell
 # loop).  ``sample_chunk_size=None`` keeps the fast
-# vmap-over-all-draws behaviour.
+# vmap-over-all-draws behavior.
 log_lik = results.log_likelihood(
     counts=count_data,
     sample_chunk_size=64,
@@ -1188,7 +1194,7 @@ ScribeVAEResults (extends ScribeSVIResults)
        Logistic-Normal distribution fitting
    - Both methods use **batched Dirichlet sampling** to process posterior
      samples in configurable chunks, reducing Python-to-JAX dispatches from
-     O(N) to O(ceil(N/batch_size)) for efficient GPU utilisation.
+     O(N) to O(ceil(N/batch_size)) for efficient GPU utilization.
    - `fit_logistic_normal` uses **randomized SVD** by default for the
      low-rank covariance fit (O(NDk) instead of O(N^2 D)).  Pass
      `svd_method="full"` for the complete eigenvalue spectrum.
@@ -1482,11 +1488,57 @@ sync on each iteration.  This reduces the number of synchronization points from
 - Check for NaN values in loss history
 - Progress-bar rolling mean loss ignores NaN/Inf values to keep reporting stable
 
+## MAP Method (`map_method` parameter)
+
+`ScribeSVIResults.get_map()` accepts a `map_method` keyword that controls
+Jacobian correction for transformed variational guides
+(`TransformedDistribution(<Normal-like>, f)`). For monotone non-linear `f`
+(Exp, Sigmoid, Softplus), the naive `f(loc)` returns the **median** of `Y`
+in constrained space — NOT the **mode** (MAP).
+
+### Values
+
+- **`"auto"`** (default): Jacobian-corrected MAP via the dispatch machinery
+  in `scribe.stats.jacobian_corrected_map`. Closed-form for `Exp+Normal`
+  and `Exp+LowRankMVN`; grid+Newton refinement for `Sigmoid/Softplus +
+  Normal`; autodiff fallback for other elementwise transforms; graceful
+  fallback to `f(loc)` (with warning) for unsupported pairs like
+  `LowRankMVN + Sigmoid`.
+- **`"transform"`**: Backward-compat path. Returns `f(loc)` (= the median
+  of `Y` for monotone `f`). Use this to reproduce pre-correction
+  numerical results byte-for-byte.
+- **`"jacobian"`**: Like `"auto"` but raises on unsupported `(transform,
+  base)` pairs rather than warning. Use for strict reproducibility.
+- **`"closed_form"`** / **`"newton"`** / **`"autodiff"`**: Force-specific
+  strategy gates; see `scribe.stats.jacobian_map`.
+
+### Example
+
+```python
+results = scribe.fit(counts, ...)
+
+# Default: corrected MAP (the constrained-space mode).
+map_corrected = results.get_map()
+
+# Legacy: f(loc) for backward-compat with pre-correction scripts.
+map_legacy = results.get_map(map_method="transform")
+```
+
+### Scope
+
+- Affects ONLY non-flow `TransformedDistribution` guides. Flow-guided
+  parameters (e.g., normalizing-flow MAP) are controlled by
+  `flow_map_method` (orthogonal).
+- `LowRankLogisticNormal` / `LowRankPoissonLogNormal` remain skipped
+  regardless of `map_method` — their multivariate transforms are out of
+  scope.
+
 ## Integration with Other Modules
 
 - **Models**: Automatically retrieves model/guide functions via registry
 - **Sampling**: Provides posterior and predictive sampling capabilities  
 - **Stats**: Integrates statistical analysis and divergence measures
+  (including `jacobian_corrected_map` for the MAP correction)
 - **Core**: Uses normalization and preprocessing utilities
 - **Viz**: Results can be visualized using the visualization module
 

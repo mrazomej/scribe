@@ -66,6 +66,8 @@ class LaplaceInferenceEngine:
         freeze_values: Optional[Dict[str, Dict[str, Any]]] = None,
         freeze_params: Tuple[str, ...] = (),
         w_prior: Optional[Dict[str, Any]] = None,
+        filtered_gene_names: Optional[Any] = None,
+        has_pooled_other: Optional[bool] = None,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -92,10 +94,14 @@ class LaplaceInferenceEngine:
         log_progress_lines : bool, default=False
         informative_priors : Optional[Dict]
             Empirical Gaussian priors derived from a previous SVI fit.
-            Keys are a subset of ``{"r", "mu", "eta"}``.  Only consumed
-            by the NBLN branch — other base models silently ignore.
-            See :mod:`scribe.laplace.priors` for the adapter that builds
-            these from a ``ScribeSVIResults`` object.
+            Keys depend on the target base model:
+            - NBLN: ``{"r", "mu", "eta"}`` (from an NBVCP-SVI source).
+            - twostate_ln_rate: ``{"mu", "burst_size", "k_off", "eta"}``
+              (from a TwoState-SVI source).
+            Other base models silently ignore the prior bundle.
+            See :mod:`scribe.laplace.priors` for the adapters that build
+            these from a ``ScribeSVIResults`` object
+            (``priors_from_results`` and ``priors_from_twostate_results``).
 
         Returns
         -------
@@ -125,6 +131,15 @@ class LaplaceInferenceEngine:
         # semantics that need a separate design pass.
         w_prior_strategy = build_w_prior_strategy(w_prior)
 
+        # As of Commit 5 of the harmonic-hare plan, ALL four affected
+        # models (NBLN, TSLN-Rate, TSLN-Logit, PLN) have AxisLayout-
+        # aware obs models that detect the decoupled layout and raise
+        # ``NotImplementedError`` from inside their own ``init_state``.
+        # The engine early-fail block that previously bridged the gap
+        # for not-yet-wired models has been retired entirely.  See
+        # ``_axis_layout.build_axis_layout`` for the unified detection
+        # contract each obs model uses.
+
         if bm == "pln":
             from ._obs_pln import PLNObservationModel
 
@@ -132,6 +147,8 @@ class LaplaceInferenceEngine:
                 capture_anchor=capture_anchor,
                 model_config=model_config,
                 w_prior_strategy=w_prior_strategy,
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm == "nbln":
             from ._obs_nbln import NBLNObservationModel
@@ -146,6 +163,50 @@ class LaplaceInferenceEngine:
                 max_step=float(
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
+            )
+        elif bm == "twostate_ln_rate":
+            from ._obs_twostate_ln_rate import TwoStateLNRateObservationModel
+
+            obs_model = TwoStateLNRateObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+                informative_priors=informative_priors,
+                freeze_values=freeze_values,
+                freeze_params=freeze_params,
+                w_prior_strategy=w_prior_strategy,
+                max_step=float(
+                    getattr(laplace_config, "newton_max_step", 5.0)
+                ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
+            )
+        elif bm == "twostate_ln_logit":
+            from ._obs_twostate_ln_logit import (
+                TwoStateLNLogitObservationModel,
+            )
+
+            # PR-2 capture restriction (Rev 4): the constructor
+            # accepts only no-capture and frozen-offset capture.  If
+            # the bridge built a non-None ``capture_anchor`` from a
+            # biology-informed prior, the constructor will raise
+            # NotImplementedError pointing the user at the cascade
+            # frozen-eta path or at dropping the anchor.  Validation
+            # is delegated to the constructor itself so the error
+            # message comes from one place.
+            obs_model = TwoStateLNLogitObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+                informative_priors=informative_priors,
+                freeze_values=freeze_values,
+                freeze_params=freeze_params,
+                w_prior_strategy=w_prior_strategy,
+                max_step=float(
+                    getattr(laplace_config, "newton_max_step", 5.0)
+                ),
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel
@@ -166,16 +227,26 @@ class LaplaceInferenceEngine:
             alr_reference_idx = int(
                 getattr(model_config, "alr_reference_idx", -1)
             )
+            # Harmonic-hare Commit 6: thread the same two axis-layout
+            # signals every other Laplace obs model receives so LNM's
+            # defensive ``correlate_other_column`` / ALR-reference
+            # consistency check has the same detection priority chain.
+            # Array-input fits (no AnnData → no ``filtered_gene_names``)
+            # rely on ``has_pooled_other`` from the gene-coverage stage
+            # to detect ``_other``.
             obs_model = LNMObservationModel(
                 d_mode=d_mode,
                 alr_reference_idx=alr_reference_idx,
                 capture_anchor=capture_anchor,
                 model_config=model_config,
+                gene_names=filtered_gene_names,
+                has_pooled_other=has_pooled_other,
             )
         else:
             raise NotImplementedError(
                 f"Laplace inference is supported for PLN, NBLN, LNM, "
-                f"and LNMVCP; got base_model={bm!r}."
+                f"LNMVCP, twostate_ln_rate, and twostate_ln_logit; "
+                f"got base_model={bm!r}."
             )
 
         return run_laplace_em(

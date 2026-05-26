@@ -1,6 +1,6 @@
 """Full-model posterior PPC sampling (NB / ZINB / VCP / mixtures)."""
 
-import warnings
+import logging
 from typing import Dict, Optional
 
 from jax import random, vmap
@@ -13,6 +13,8 @@ from scribe.models.components.likelihoods.beta_negative_binomial import (
 
 from ..core._array_dispatch import _vmap_chunk_size
 from ._helpers import _has_sample_dim
+
+_log = logging.getLogger(__name__)
 
 
 def sample_posterior_ppc(
@@ -132,11 +134,9 @@ def sample_posterior_ppc(
     # The fallback infers layouts from tensor shapes and will be removed
     # in a future release.
     if param_layouts is None:
-        warnings.warn(
+        _log.warning(
             "Calling sample_posterior_ppc without param_layouts is "
-            "deprecated. Pass param_layouts explicitly.",
-            DeprecationWarning,
-            stacklevel=2,
+            "deprecated. Pass param_layouts explicitly."
         )
         from ..core.axis_layout import infer_layout
 

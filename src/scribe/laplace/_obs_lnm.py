@@ -38,7 +38,7 @@ LNMVCP and None for plain LNM; ``globals`` exposes
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -48,6 +48,7 @@ from jax.scipy.special import gammaln
 from sklearn.utils.extmath import randomized_svd
 
 from ..models.config import ModelConfig
+from ._axis_layout import build_axis_layout
 from ._em import (
     FinalSweepResult,
     InitState,
@@ -185,7 +186,23 @@ class LNMObservationModel(LaplaceObservationModel):
     model_config : ModelConfig, optional
         Model configuration.  Used to resolve
         ``positive_transform`` for the totals parameters ``mu_T``
-        and ``r_T``.  Falls back to ``softplus`` when ``None``.
+        and ``r_T``, and (harmonic-hare Commit 6) the
+        ``correlate_other_column`` flag for the LNM ALR-reference
+        consistency check.
+    gene_names : Sequence[str], optional
+        Gene names in observation-axis order.  Used as a fallback
+        signal for the trailing ``"_other"`` detection in the
+        ``correlate_other_column=False`` consistency check.  When
+        the caller has constructed the obs model via the standard
+        engine path (``apply_gene_coverage_and_alr`` →
+        ``run_inference``), this is already populated.  Optional
+        for direct-construction users.
+    has_pooled_other : bool, optional
+        Primary signal that the trailing column is the pooled
+        ``"_other"`` aggregate (from the ``gene_coverage`` stage).
+        Used together with ``gene_names`` to detect ``"_other"``
+        for the consistency check; ``None`` defers to the names
+        check.  See ``scribe.laplace._axis_layout.build_axis_layout``.
     """
 
     def __init__(
@@ -194,6 +211,8 @@ class LNMObservationModel(LaplaceObservationModel):
         alr_reference_idx: int,
         capture_anchor: Optional[Tuple[float, float]] = None,
         model_config: Optional[ModelConfig] = None,
+        gene_names: Optional[Sequence[str]] = None,
+        has_pooled_other: Optional[bool] = None,
     ):
         if d_mode not in ("low_rank", "learned"):
             raise ValueError(
@@ -214,6 +233,19 @@ class LNMObservationModel(LaplaceObservationModel):
         # share the same coordinate system.
         self._pos_forward, self._pos_inverse = resolve_positive_fns(
             model_config
+        )
+
+        # Harmonic-hare Commit 6: defensive ALR-reference / decoupling
+        # consistency check.  Lives at obs-model construction time so
+        # callers that bypass ``apply_gene_coverage_and_alr`` (e.g.
+        # direct ``ModelConfig`` construction → engine) still get a
+        # loud failure rather than silently mis-laying out Σ.  Under
+        # legacy (``correlate_other_column=True``), this is a no-op so
+        # the bit-equal contract is preserved (auditor rev-3 #8).
+        self._model_config = model_config
+        self._gene_names_for_layout = gene_names
+        self._has_pooled_other_for_layout = (
+            None if has_pooled_other is None else bool(has_pooled_other)
         )
 
     @property
@@ -243,6 +275,71 @@ class LNMObservationModel(LaplaceObservationModel):
                 "LNM Laplace needs alr_reference_idx in [0, n_genes); "
                 f"got {self._alr_reference_idx} for n_genes={n_genes}."
             )
+
+        # Harmonic-hare Commit 6: defensive consistency check between
+        # ``model_config.correlate_other_column`` and the ALR reference
+        # position when the panel has a trailing pooled ``_other``.
+        # The standard engine path (``apply_gene_coverage_and_alr``)
+        # already pins this correctly, but a user who builds
+        # ``ModelConfig`` directly and skips that stage can land here
+        # with an inconsistent combination — fail loudly so they don't
+        # silently get a fit where ``_other`` is in Σ even though the
+        # flag asked for it to be decoupled.  The fallback default
+        # mirrors the user-facing default flipped in Commit 5b
+        # (``False``): a missing-attribute config triggers the
+        # decoupled validator, which is a no-op when no ``_other``
+        # column is present (``build_axis_layout`` returns a trivial
+        # layout) and catches real misconfigurations when one is.
+        # Explicit ``correlate_other_column=True`` (legacy opt-in)
+        # produces a trivial layout regardless of the signals, so the
+        # check below short-circuits and preserves the bit-equal
+        # contract.
+        _correlate_other_column = (
+            False
+            if self._model_config is None
+            else bool(
+                getattr(self._model_config, "correlate_other_column", False)
+            )
+        )
+        # Reuse the shared detection priority chain (has_pooled_other
+        # → gene_names → False) and contradictory-signal validation.
+        # Under legacy, the trivial layout is returned regardless of
+        # the signals so this is bit-equal-safe.
+        _layout = build_axis_layout(
+            n_genes=int(n_genes),
+            correlate_other_column=_correlate_other_column,
+            gene_names=self._gene_names_for_layout,
+            has_pooled_other=self._has_pooled_other_for_layout,
+        )
+        if _layout.decoupled:
+            # Layout says the trailing column is the pooled ``_other``
+            # and Σ must exclude it.  For LNM, that is realised by
+            # pinning the ALR reference to ``_other``'s position
+            # (last index in observation order).  Reject any other
+            # position with a message pointing the user at both flags
+            # so they can decide which to change.
+            _other_pos = int(_layout.other_idx)
+            if int(self._alr_reference_idx) != _other_pos:
+                raise ValueError(
+                    "Inconsistent LNM configuration: "
+                    "correlate_other_column=False requests that the "
+                    "pooled '_other' aggregate be excluded from the "
+                    "LNM latent covariance, but the configured "
+                    "alr_reference_idx is "
+                    f"{int(self._alr_reference_idx)} (not the "
+                    f"'_other' position {_other_pos}).  LNM realises "
+                    "this decoupling only when the ALR reference is "
+                    "pinned to '_other' (the ALR reference gene is "
+                    "excluded from Σ by construction).  Either pass "
+                    "alr_reference_idx pointing to '_other' (or drop "
+                    "the override entirely — the standard "
+                    "``apply_gene_coverage_and_alr`` stage will auto-"
+                    "pin it for you), or pass "
+                    "correlate_other_column=True to keep today's "
+                    "real-gene-reference behaviour.  See "
+                    "paper/_nb_lognormal.qmd §sec-nbln-decorrelate-"
+                    "other for the biophysical rationale."
+                )
 
         n_total_per_cell = count_data.sum(axis=-1)
         keep_mask = jnp.asarray(

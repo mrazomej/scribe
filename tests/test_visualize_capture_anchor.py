@@ -9,10 +9,15 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
-from omegaconf import OmegaConf
-from jax import random
-from numpyro.infer import SVI, Trace_ELBO
-from numpyro.optim import Adam
+import pytest
+
+# Hydra-based config tests depend on omegaconf (optional extra
+# [hydra] in pyproject.toml). Skip cleanly when absent.
+pytest.importorskip("omegaconf")
+from omegaconf import OmegaConf  # noqa: E402
+from jax import random  # noqa: E402
+from numpyro.infer import SVI, Trace_ELBO  # noqa: E402
+from numpyro.optim import Adam  # noqa: E402
 
 from scribe.viz import pipeline as visualize
 from scribe.inference.preset_builder import build_config_from_preset

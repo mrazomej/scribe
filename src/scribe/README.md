@@ -215,6 +215,27 @@ def plot_custom(results, counts, *, ctx, viz_cfg=None,
 result = plot_custom(results, counts, figs_dir="figs", cfg=cfg)
 ```
 
+## Logging
+
+SCRIBE routes user-facing status messages and cautions through Python's
+``logging`` module with a colored ``RichHandler`` (configured on import via
+``scribe._logging.setup_logging()``). Messages are tagged by module, e.g.
+``[scribe.laplace.priors] Building TSLN-rate priors...``.
+
+To suppress informational messages and show only warnings:
+
+```python
+import logging
+logging.getLogger("scribe").setLevel(logging.WARNING)
+```
+
+To increase verbosity:
+
+```python
+from scribe._logging import setup_logging
+setup_logging(level=logging.DEBUG)
+```
+
 ## Differential Expression Plotting
 
 SCRIBE includes mode-aware differential-expression plotting helpers in
