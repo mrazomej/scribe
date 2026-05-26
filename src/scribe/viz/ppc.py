@@ -38,6 +38,28 @@ from .ppc_rendering import (
 )
 
 
+def _has_flow_params(params) -> bool:
+    """Return True when a results param dict includes flow-guide weights.
+
+    Parameters
+    ----------
+    params : object
+        Results parameter mapping, typically ``results.params``.
+
+    Returns
+    -------
+    bool
+        ``True`` when flow-module parameter blocks are present.
+    """
+    if not isinstance(params, dict):
+        return False
+    return any(
+        key.endswith("$params")
+        and (key.startswith("flow_") or key.startswith("joint_flow_"))
+        for key in params
+    )
+
+
 def _requires_full_gene_sampling(results) -> bool:
     """Return whether PPC sampling should run on full results space.
 
@@ -50,7 +72,8 @@ def _requires_full_gene_sampling(results) -> bool:
     -------
     bool
         ``True`` when PPC sampling should run in full model gene space before
-        plotting subsetting.
+        plotting subsetting. This includes VAE-style inference and amortized
+        capture subsets.
     """
     model_config = getattr(results, "model_config", None)
     inference_method = (
@@ -91,10 +114,16 @@ def _resolve_ppc_sampling_counts(results, raw_counts, aligned_counts):
         Raised for amortized subset results when full original-gene counts are
         required but not provided.
     """
-    if not (
+    is_amortized = bool(
         hasattr(results, "_uses_amortized_capture")
         and results._uses_amortized_capture()
-    ):
+    )
+    is_flow_subset = bool(
+        getattr(results, "_original_n_genes", None) is not None
+        and int(getattr(results, "_original_n_genes")) > int(results.n_genes)
+        and _has_flow_params(getattr(results, "params", None))
+    )
+    if not (is_amortized or is_flow_subset):
         return aligned_counts
 
     original_n_genes = getattr(results, "_original_n_genes", None)
@@ -108,9 +137,9 @@ def _resolve_ppc_sampling_counts(results, raw_counts, aligned_counts):
     if int(aligned_counts.shape[1]) == int(original_n_genes):
         return aligned_counts
     raise ValueError(
-        "PPC sampling requires full original-gene counts for amortized "
-        "capture on gene-subset results. Pass the original counts matrix "
-        f"with {int(original_n_genes)} genes."
+        "PPC sampling requires full original-gene counts for amortized-capture "
+        "or flow-subset results. Pass the original counts matrix with "
+        f"{int(original_n_genes)} genes."
     )
 
 
@@ -206,7 +235,12 @@ def _prepare_ppc_data(
         sampling_counts = counts_for_sampling
     else:
         sampling_results = results[selected_idx]
-        sampling_counts = counts[:, selected_idx]
+        # Flow-guided subsets need full-width counts for posterior sampling,
+        # but can still sample/plot on the subset results object.
+        if _has_flow_params(getattr(results, "params", None)):
+            sampling_counts = counts_for_sampling
+        else:
+            sampling_counts = counts[:, selected_idx]
 
     if map_sampling:
         console.print(

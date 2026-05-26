@@ -38,6 +38,10 @@ plotting from raw `adata` counts against filtered model results.
 - For VAE PPC paths, generate predictive samples in full result-space first,
   then subset samples for plotting panels. This avoids rebuilding VAE
   model/guide callables with inconsistent decoder head widths.
+- For flow-guided SVI PPC paths, keep the **subset results object** for panel
+  sampling but pass **full original-gene counts** to posterior sampling.
+  Subsetting both results and counts can pass narrow `counts[:, idx]` matrices
+  into a full-width flow posterior path and trigger width mismatches.
 - For subset-sampling PPC paths (non-VAE / non-amortized), reuse the exact
   subset results object passed into predictive sampling when plotting panels.
   Reconstructing a fresh `results[selected_idx]` view can drop freshly cached

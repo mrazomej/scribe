@@ -36,18 +36,30 @@ def _coerce_counts_for_sampling(results, counts, *, context):
 
     Notes
     -----
-    Gene-subset results with amortized capture require full original-gene
-    counts when available. In that specific case this helper preserves the
-    full matrix and skips model-space realignment.
+    Gene-subset results with amortized capture, and flow-guided gene-subset
+    results, may require full original-gene counts. In those cases this helper
+    preserves the full matrix and skips model-space realignment when the caller
+    provided a full-width matrix.
     """
     counts_arr = _coerce_counts(counts)
     uses_amortized = bool(
         hasattr(results, "_uses_amortized_capture")
         and results._uses_amortized_capture()
     )
+    uses_flow_subset = bool(
+        getattr(results, "_original_n_genes", None) is not None
+        and int(getattr(results, "_original_n_genes")) > int(
+            getattr(results, "n_genes", 0)
+        )
+        and any(
+            k.endswith("$params")
+            and (k.startswith("flow_") or k.startswith("joint_flow_"))
+            for k in getattr(results, "params", {}).keys()
+        )
+    )
     original_n_genes = getattr(results, "_original_n_genes", None)
     if (
-        uses_amortized
+        (uses_amortized or uses_flow_subset)
         and original_n_genes is not None
         and int(original_n_genes) > int(getattr(results, "n_genes", 0))
         and counts_arr.ndim == 2

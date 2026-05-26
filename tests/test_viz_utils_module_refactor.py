@@ -1216,6 +1216,152 @@ def test_prepare_ppc_data_samples_full_space_for_vae(monkeypatch):
     assert prep["results_subset"].n_genes <= 3
 
 
+def test_prepare_ppc_data_samples_full_space_for_flow_results(monkeypatch):
+    """Flow PPC should sample full-space before panel subsetting.
+
+    Notes
+    -----
+    Even when starting from full-width results, ``plot_ppc`` internally
+    selects a small gene set for panel rendering. Flow-guided SVI should use
+    the subset results object but preserve full-width counts for sampling.
+    """
+    import scribe.viz.ppc as ppc_module
+
+    n_cells, n_genes = 6, 10
+    counts = np.arange(n_cells * n_genes, dtype=float).reshape(
+        n_cells, n_genes
+    ) + 1.0
+    seen = {}
+
+    class _FakeResults:
+        def __init__(self, n_genes_local):
+            self.n_genes = int(n_genes_local)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+            self.params = {"joint_flow_block$params": object()}
+
+        def __getitem__(self, index):
+            subset = _FakeResults(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_select_genes(counts_arr, n_rows, n_cols, *, exclude_idx=None):
+        _ = counts_arr, n_rows, n_cols, exclude_idx
+        selected = np.array([1, 4, 7], dtype=int)
+        mean_counts = counts.mean(axis=0)
+        return selected, mean_counts
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        seen["sampling_results_n_genes"] = int(sampling_results.n_genes)
+        seen["sampling_counts_n_genes"] = int(counts.shape[1])
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(ppc_module, "_select_genes", _fake_select_genes)
+    monkeypatch.setattr(
+        ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    assert not ppc_module._requires_full_gene_sampling(_FakeResults(n_genes))
+    prep = ppc_module._prepare_ppc_data(
+        _FakeResults(n_genes),
+        counts,
+        viz_cfg=None,
+        counts_for_sampling=counts,
+        n_rows=1,
+        n_cols=3,
+        n_samples=4,
+    )
+
+    assert seen["sampling_results_n_genes"] == 3
+    assert seen["sampling_counts_n_genes"] == n_genes
+    assert prep["results_subset"].n_genes == 3
+
+
+def test_prepare_ppc_data_samples_full_space_for_flow_subset(monkeypatch):
+    """Flow-guide subset PPC should sample in original full gene space.
+
+    Notes
+    -----
+    Flow-backed SVI subsets can still reconstruct at ``_original_n_genes``.
+    This test guards against the regression where PPC sampled a subset view
+    first (``counts[:, selected_idx]``), which then triggered posterior
+    sampling width mismatch errors for flow guides.
+    """
+    import scribe.viz.ppc as ppc_module
+
+    n_cells = 5
+    n_genes_full = 12
+    n_genes_subset = 4
+    counts = np.arange(n_cells * n_genes_full, dtype=float).reshape(
+        n_cells, n_genes_full
+    ) + 1.0
+    seen = {}
+
+    class _FakeResults:
+        def __init__(self, n_genes_local):
+            self.n_genes = int(n_genes_local)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+            self._original_n_genes = int(n_genes_full)
+            self.params = {"joint_flow_joint$params": object()}
+
+        def __getitem__(self, index):
+            idx = np.asarray(index, dtype=int)
+            subset = _FakeResults(len(idx))
+            subset._subset_gene_index = idx
+            if self.predictive_samples is not None:
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    # Select a small plotting subset so sampling/plot widths diverge.
+    def _fake_select_genes(counts_arr, n_rows, n_cols, *, exclude_idx=None):
+        _ = counts_arr, n_rows, n_cols, exclude_idx
+        selected = np.array([0, 1, 3], dtype=int)
+        mean_counts = counts.mean(axis=0)
+        return selected, mean_counts
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        seen["sampling_results_n_genes"] = int(sampling_results.n_genes)
+        seen["sampling_counts_n_genes"] = int(counts.shape[1])
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(ppc_module, "_select_genes", _fake_select_genes)
+    monkeypatch.setattr(
+        ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    assert not ppc_module._requires_full_gene_sampling(
+        _FakeResults(n_genes_subset)
+    )
+    prep = ppc_module._prepare_ppc_data(
+        _FakeResults(n_genes_subset),
+        counts[:, :n_genes_subset],
+        viz_cfg=None,
+        counts_for_sampling=counts,
+        n_rows=1,
+        n_cols=3,
+        n_samples=4,
+    )
+
+    assert seen["sampling_results_n_genes"] == 3
+    assert seen["sampling_counts_n_genes"] == n_genes_full
+    assert prep["results_subset"].n_genes == 3
+
+
 def test_prepare_ppc_data_reuses_subset_object_with_fresh_samples(monkeypatch):
     """Subset PPC sampling should keep the sampled subset instance."""
     import scribe.viz.ppc as ppc_module
@@ -1298,6 +1444,27 @@ def test_resolve_ppc_sampling_counts_prefers_full_counts_for_amortized_subset():
         _FakeResults(), raw_counts, aligned_counts
     )
     assert resolved.shape == (5, 7)
+
+
+def test_coerce_counts_for_sampling_preserves_full_counts_for_flow_subset():
+    """Flow-subset count coercion should preserve full original-gene counts."""
+    import scribe.viz.dispatch as dispatch_module
+
+    class _FakeFlowSubsetResults:
+        n_genes = 4
+        _original_n_genes = 7
+        params = {"joint_flow_block$params": object()}
+
+        @staticmethod
+        def _uses_amortized_capture():
+            return False
+
+    results = _FakeFlowSubsetResults()
+    counts_full = np.zeros((3, 7), dtype=float)
+    resolved = dispatch_module._coerce_counts_for_sampling(
+        results, counts_full, context="test_flow_subset"
+    )
+    assert resolved.shape == (3, 7)
 
 
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
