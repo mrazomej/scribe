@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.6"
 app = marimo.App()
 
 
@@ -72,10 +72,15 @@ def _(mo):
 
 @app.cell
 def _(Path, scribe):
-    # Define data directory
-    data_dir = Path(
-        "/path/to/jurkat_cells/"
-    )
+    # Load the local tutorial path configuration.
+    import json
+    with Path(__file__).with_name("tutorial_paths.local.json").open(
+        "r", encoding="utf-8"
+    ) as _f:
+        _data_root = json.load(_f)["SCRIBE_TUTORIAL_DATA_ROOT"]
+
+    # Build the dataset-specific path relative to the configured root.
+    data_dir = Path(_data_root).expanduser() / "jurkat_cells"
 
     # Load the data 
     adata = scribe.data_loader.load_and_preprocess_anndata(
@@ -727,7 +732,7 @@ def _(mo):
     mo.md(r"""
     So far, mean-field variational inference only gave us independent approximate marginals—there was no notion of “this gene’s parameter co-moves with that gene’s” inside the fit. A joint guide (here, low-rank structure across genes and parameters) is exactly where that becomes possible: the approximation can place non-negligible posterior correlation between gene-level parameters when the data support it.
 
-    `scribe.viz.plot_correlation_heatmap` visualizes a correlation matrix of posterior samples (clustered, focusing on a subset of the most variable genes for readability). It is a practical first pass at spotting putative co-regulation: genes whose fitted parameters co-vary under the current model and guide. These patterns are worth cross-checking with external biology, but they provide a useful way to go from a “better guide” to something that can suggest coordinated gene modules for follow-up.
+    `scribe.viz.plot_correlation_heatmap` visualizes a correlation matrix of posterior samples (clustered, focusing on a subset of the most variable genes for readability). We might think of this as a partical first pass at spotting putative co-regulation. However, the correlations shown here are correlated parameters on a model that assumes independent genes. It is not an explicit parameterization of the gene-gene correlations that the data might have. For that, `scribe` has a whole family of models that explicitly account for gene-gene correlation matrices.
     """)
     return
 
