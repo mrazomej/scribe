@@ -284,15 +284,21 @@ class LNMObservationModel(LaplaceObservationModel):
         # ``ModelConfig`` directly and skips that stage can land here
         # with an inconsistent combination — fail loudly so they don't
         # silently get a fit where ``_other`` is in Σ even though the
-        # flag asked for it to be decoupled.  Under legacy (``True``),
-        # this is a no-op: ``build_axis_layout`` returns a trivial
-        # layout (``decoupled=False``) and the check below short-
-        # circuits, preserving the bit-equal contract.
+        # flag asked for it to be decoupled.  The fallback default
+        # mirrors the user-facing default flipped in Commit 5b
+        # (``False``): a missing-attribute config triggers the
+        # decoupled validator, which is a no-op when no ``_other``
+        # column is present (``build_axis_layout`` returns a trivial
+        # layout) and catches real misconfigurations when one is.
+        # Explicit ``correlate_other_column=True`` (legacy opt-in)
+        # produces a trivial layout regardless of the signals, so the
+        # check below short-circuits and preserves the bit-equal
+        # contract.
         _correlate_other_column = (
-            True
+            False
             if self._model_config is None
             else bool(
-                getattr(self._model_config, "correlate_other_column", True)
+                getattr(self._model_config, "correlate_other_column", False)
             )
         )
         # Reuse the shared detection priority chain (has_pooled_other

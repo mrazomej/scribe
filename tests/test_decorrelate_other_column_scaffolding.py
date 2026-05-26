@@ -1,17 +1,17 @@
 """Tests for the harmonic-hare ``correlate_other_column`` ladder.
 
-Tracks the scaffolding (Commits 2–6) and the per-model math commits
-(2b/3b/4b/5b) for decoupling the pooled ``_other`` column from the
-latent low-rank covariance Σ.
+Covers the scaffolding (Commits 2–6) and the per-model math
+commits (2b/3b/4b/5b) for decoupling the pooled ``_other`` column
+from the latent low-rank covariance Σ.
 
-Landed so far:
+Landed:
 
 * :class:`scribe.laplace._axis_layout.AxisLayout` + factory
   (``build_axis_layout``) with explicit ``has_pooled_other`` primary
   signal, gene-names fallback, and contradictory-signal raise.
 * :class:`scribe.models.config.ModelConfig.correlate_other_column`
-  flag (runtime default ``True`` while the per-model math commits
-  finish landing — flips to ``False`` once 3b/4b/5b ship).
+  flag — runtime default ``False`` (legacy behaviour available via
+  ``True``).
 * All four count obs-models accept ``gene_names`` and
   ``has_pooled_other`` and build an ``AxisLayout`` at init.  W/d/
   latent_loc are sliced to the kept axis under decoupling and the
@@ -21,11 +21,10 @@ Landed so far:
 * :attr:`ScribeLaplaceResults.G_obs` / ``G_kept`` properties.
 * LNM real wiring (Commit 6): ALR auto-pin to ``_other`` when
   ``correlate_other_column=False`` and a pooled column exists.
-* NBLN deviation-form math (Commit 2b): loss, Newton, profiled-μ
-  Schur, compositional sampler all implemented under decoupling.
-  TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b) still raise
-  ``NotImplementedError`` under decoupling pending their math
-  commits.
+* NBLN (2b), TSLN-Rate (3b), TSLN-Logit (4b), and PLN (5b)
+  deviation-form math: loss, Newton, profiled-μ Schur (where
+  applicable), compositional sampler, and PPC paths all support
+  decoupling.
 
 These tests verify:
 
@@ -38,9 +37,11 @@ These tests verify:
 3. Legacy opt-in (``correlate_other_column=True`` with
    ``gene_coverage < 1.0``) produces a trivial layout and a working
    fit (auditor finding rev-3 #8: legacy passes through silently).
-4. NBLN decoupled fits run end-to-end with the deviation-form math
-   (Commit 2b); TSLN-Rate/TSLN-Logit/PLN decoupled still raise
-   ``NotImplementedError`` until 3b/4b/5b land.
+4. All four count models run end-to-end under decoupling with the
+   deviation-form math (NBLN 2b / TSLN-Rate 3b / TSLN-Logit 4b /
+   PLN 5b) and produce kept-axis ``W``/``d`` shapes plus full
+   ``G_obs`` PPC arrays and reconstructed ``get_map`` /
+   ``get_distributions`` outputs.
 5. ``ScribeLaplaceResults.G_obs`` / ``G_kept`` return the right
    numbers for both layouts.
 6. The ``correlate_other_column`` kwarg round-trips through

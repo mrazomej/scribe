@@ -782,7 +782,7 @@ harmonic-hare ladder landed):
 | Configuration | Behaviour |
 |---|---|
 | No `gene_coverage` filter (no `_other` column) | Trivial layout (`G_kept == G_obs`); bit-equal to today regardless of flag. |
-| `gene_coverage < 1.0` AND `correlate_other_column=True` (current default) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. |
+| `gene_coverage < 1.0` AND `correlate_other_column=True` (explicit legacy opt-in) | Legacy: `_other` participates in Σ; trivial layout; bit-equal to today. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — NBLN | **Decoupled math live (Commit 2b).** `x_dev ~ N(0, Σ_kept)` per cell; μ moves into NB likelihood; `_other`'s log-rate is deterministic (`μ_other − η`); compositional sampler scatters kept x_dev onto full G_obs simplex. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Rate | **Decoupled math live (Commit 3b).** Same deviation-form pattern as NBLN; Poisson-Beta data quadrature evaluates at the full G_obs log-rate, Woodbury solves on the kept axis, `a_min` floor applies to the kept slice.  PPC, `get_map`, and `get_distributions` all honour the kept-vs-obs split. |
 | `gene_coverage < 1.0` AND `correlate_other_column=False` (explicit opt-in) — TSLN-Logit | **Decoupled math live (Commit 4b).** Per-gene `rate` / `kappa` / `eta_anchor` stay on G_obs — only `W` / `d` / per-cell `z` shrink to G_kept.  Because TSLN-Logit's latent `z` is already zero-centred (no μ in the MVN prior), the deviation reparameterisation is a no-op — only 2 Newton paths (x-only, x-only-offset).  Activation log-odds for `_other` reduces to `θ[other_idx]` (no z modulation). |
@@ -840,12 +840,13 @@ the diagonal `d_other` term).  See
 `paper/_nb_lognormal.qmd` §sec-nbln-decorrelate-pln-caveat for the
 mathematical treatment.
 
-**Current default-flip schedule.** Commit 2 ships with the default
-held at `True` (legacy) so existing `gene_coverage < 1.0` fits do
-not break by routing through the not-yet-implemented decoupled
-math. When Commit 2b ships the math, the default flips to `False`
-and `True` becomes the explicit legacy opt-in. See
-`ModelConfig.correlate_other_column` docstring for the schedule.
+**Default flip — landed.** The harmonic-hare ladder is complete
+(Commits 2 → 6 + 2b/3b/4b/5b).  Commit 5b shipped the PLN math and
+flipped the user-facing default from `True` (legacy, `_other` in Σ)
+to `False` (decoupled, biologically cleaner).  `True` is now the
+explicit legacy opt-in for users who relied on the prior shape
+contract.  See `ModelConfig.correlate_other_column` docstring for
+the per-model implications.
 
 ### Phase-2: Cascade-parameter freeze
 

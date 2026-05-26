@@ -252,8 +252,13 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         # See ``scribe.laplace._axis_layout`` for the shape contract.
         self._gene_names = gene_names
         self._has_pooled_other = has_pooled_other
+        # Fallback default matches the user-facing default flipped in
+        # Commit 5b: when ``model_config`` is missing the attribute
+        # entirely (mocks, partial configs), behave as if the user
+        # accepted the new ``False`` default — decoupled when an
+        # ``_other`` column is present, trivial layout otherwise.
         self._correlate_other_column = bool(
-            getattr(model_config, "correlate_other_column", True)
+            getattr(model_config, "correlate_other_column", False)
         )
         self._axis_layout = None
 
