@@ -533,18 +533,32 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         # capture distribution under the frozen-eta cascade path.
         #
         # Under the **decoupled** layout the per-cell latent represents
-        # the deviation ``x_dev = log(u_kept + 1) − μ_kept`` (the
-        # absolute-log-rate prior centre is μ in the legacy
-        # parameterisation; in the deviation parameterisation it is 0
-        # and μ enters the NB log-mean directly).  We initialise at
-        # the deviation form so Newton starts near the MAP for both
-        # layouts.  See NBLN's ``init_state`` for the same pattern.
+        # the deviation ``x_dev`` with zero-centred prior.  In TSLN-
+        # Rate the absolute-log-rate prior centre is ``log(r_hat)``
+        # where ``r_hat = gene_mean + burst_size · k_off`` (the rate
+        # output of ``_twostate_reparam``) — NOT the positive gene
+        # mean alone.  Loss / Newton consume ``mu_x = log(rate)`` from
+        # ``_reparam_from_params``, so the warm start must subtract
+        # the same ``log(rate_kept)`` to start near the MAP (auditor
+        # finding on Commit 3b).  Without this, Newton starts further
+        # from the MAP whenever ``burst_size · k_off`` is non-
+        # negligible.
         if _layout.decoupled:
             kept_idx_jnp = jnp.asarray(_layout.kept_idx)
-            _log_u_kept = jnp.log(jnp.asarray(counts_np[:, kept_idx_jnp]) + 1.0)
-            # μ in unconstrained coord; convert to constrained log to subtract.
-            _mu_pos_kept = mu_pos[kept_idx_jnp]
-            latent_loc = _log_u_kept - jnp.log(jnp.maximum(_mu_pos_kept, 1e-30))[None, :]
+            _log_u_kept = jnp.log(
+                jnp.asarray(counts_np[:, kept_idx_jnp]) + 1.0
+            )
+            # Derive ``rate = gene_mean + burst_size · k_off`` at the
+            # init globals so the warm start matches the latent prior
+            # centre that loss_fn / Newton actually consume via
+            # ``_reparam_from_params``.
+            _, _, _rate_init, _ = _twostate_reparam(
+                mu_pos, bs_pos, ko_pos,
+            )
+            _log_rate_kept = jnp.log(
+                jnp.maximum(_rate_init[kept_idx_jnp], 1e-30)
+            )
+            latent_loc = _log_u_kept - _log_rate_kept[None, :]
         else:
             latent_loc = latent_loc_init_from_counts(counts_np)
         if eta_loc is not None:
@@ -1231,26 +1245,15 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         n_cells = counts.shape[0]
         n_quad_nodes = self._n_quad_nodes
 
-        # log_rate at the MAP on the full G_obs axis.  Under legacy,
-        # ``x_map_sg`` already lives on G_obs and the subtraction gives
-        # the conventional ``x − η``.  Under decoupling, ``x_map_sg`` is
-        # ``x_dev`` on G_kept; we scatter onto G_obs (μ_x + x_dev at
-        # kept positions, μ_x at ``_other``) so the data-side
-        # quadrature consumes a proper per-gene log-rate.  Note this
-        # uses the MAP value of μ_x via the live-globals reparam path
-        # below (``log_rate_at_map`` is rebuilt after ``log_rate_at_map_live``).
-        if eta_map_sg is None:
-            if _is_decoupled:
-                # Will rebuild below after we resolve the live mu_x.
-                log_rate_at_map = None
-            else:
-                log_rate_at_map = x_map_sg
-        else:
-            if _is_decoupled:
-                log_rate_at_map = None
-            else:
-                # eta_map is (C,); broadcast to (C, G).
-                log_rate_at_map = x_map_sg - eta_map_sg[:, None]
+        # The actual per-cell log-rate consumed by the data-side
+        # quadrature is rebuilt below:
+        #   • Under legacy: ``log_rate_full = x_map_sg − η`` (or
+        #     ``x_map_sg`` under no-capture) — computed at the
+        #     ``x_map_for_curv`` block.
+        #   • Under decoupling: ``log_rate_full`` is the scattered
+        #     version (``μ_x + x_dev`` at kept, ``μ_x`` at ``_other``,
+        #     minus η) — computed alongside ``x_map_for_curv``.
+        # No pre-computed ``log_rate_at_map`` is needed here.
 
         W_sg = jax.lax.stop_gradient(params_full["W"])
         d_sg = jax.lax.stop_gradient(self._d_fwd(params_full["d_loc"]))
@@ -1263,38 +1266,15 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 return jnp.zeros((mu_x.shape[0],), dtype=jnp.float32)
             return 1.0 / jnp.square(jnp.asarray(prior["scale"]))
 
-        # Recompute the latent prior centering (log r_hat) inside the
-        # closure so its dependence on (mu_loc, burst_size_loc, k_off_loc)
-        # is autodiffed.
-        def neg_log_post(mu_loc_v, burst_size_loc_v, k_off_loc_v):
-            mu_pos = self._mu_fwd(mu_loc_v)
-            bs_pos = self._bs_fwd(burst_size_loc_v)
-            ko_pos = self._ko_fwd(k_off_loc_v)
-            alpha_v, beta_v, rate_v, _eff = _twostate_reparam(
-                mu_pos, bs_pos, ko_pos
-            )
-            mu_x_v = jnp.log(rate_v)
-
-            # Data log-prob via the K-axis quadrature reduction at the
-            # stop_gradient'd MAP.
-            log_marg_per_gene, _ = _factors_batch(
-                log_rate_at_map, counts, alpha_v, beta_v, n_quad_nodes,
-            )
-            data_lp = jnp.sum(log_marg_per_gene)
-
-            # MVN prior on x at the MAP (prior center = mu_x_v).
-            diff = x_map_sg - mu_x_v[None, :]
-            quad = _woodbury_quadform(W_sg, d_sg, diff)
-            log_det_sigma = _woodbury_logdet_sigma(W_sg, d_sg)
-            n_genes = mu_x_v.shape[0]
-            mvn_lp = (
-                -0.5 * jnp.sum(quad)
-                - 0.5 * n_cells * (
-                    log_det_sigma + n_genes * jnp.log(2.0 * jnp.pi)
-                )
-            )
-
-            return -(data_lp + mvn_lp)
+        # NOTE: a ``neg_log_post`` closure used to live here as a
+        # historic reference implementation but was never called by
+        # the live curvature path (the hand-derived
+        # ``global_curvature_rate_summed`` + Faà di Bruno chain
+        # below).  Removed in rev-13 — it closed over
+        # ``log_rate_at_map`` (which is ``None`` under decoupling) and
+        # used the legacy MVN-prior centred at ``mu_x``, neither of
+        # which the live computation needs.  See the Faà di Bruno
+        # block below for the actual derivation.
 
         mu_loc = params_full["mu_loc"]
         bs_loc = params_full["burst_size_loc"]
