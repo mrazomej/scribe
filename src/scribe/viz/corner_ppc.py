@@ -346,6 +346,7 @@ def _resolve_gene_indices(
     gene_names_list,
     n_genes,
     *,
+    gene_selection="correlation_diverse",
     min_mean_umi_for_selection=5.0,
     subtract_direction=None,
     n_pcs_to_remove=1,
@@ -357,10 +358,14 @@ def _resolve_gene_indices(
     1. ``gene_indices`` — explicit integer column indices.
     2. ``gene_names_list`` — gene name strings matched against
        ``results.var.index``.
-    3. Correlation-diversity auto-selection via
-       :func:`_select_genes_by_correlation_diversity` — seeds with the
-       most positively and negatively correlated pairs, then greedily
-       fills remaining slots to maximise pairwise diversity.
+    3. Strategy-based auto-selection controlled by ``gene_selection``:
+
+       - ``"correlation_diverse"`` (default): use
+         :func:`_select_genes_by_correlation_diversity`, seeded by the
+         most positively and negatively correlated pairs and greedily
+         filled to maximise pairwise diversity.
+       - ``"abundance"``: use abundance-filtered log-spaced quantile
+         selection (same strategy family used by compositional PPC).
 
     Parameters
     ----------
@@ -375,6 +380,9 @@ def _resolve_gene_indices(
         Gene names to resolve via ``results.var.index``.
     n_genes : int
         Number of genes when auto-selecting.
+    gene_selection : {"correlation_diverse", "abundance"}
+        Auto-selection strategy used only when ``gene_indices`` and
+        ``gene_names_list`` are both ``None``.
     min_mean_umi_for_selection : float
         Lower threshold on per-gene mean UMI counts used to restrict
         auto-selection candidates. Ignored when ``gene_indices`` or
@@ -395,7 +403,8 @@ def _resolve_gene_indices(
     ------
     ValueError
         If ``gene_names_list`` contains names not found in ``results.var``.
-        Also raised when ``min_mean_umi_for_selection < 0``.
+        Also raised when ``min_mean_umi_for_selection < 0`` or
+        ``gene_selection`` is unknown.
     """
     # Validate threshold once so direct helper use fails early.
     if float(min_mean_umi_for_selection) < 0.0:
@@ -426,21 +435,43 @@ def _resolve_gene_indices(
             )
         return np.asarray(idx, dtype=int)
 
-    # Auto-select: correlation-diversity strategy
-    corr_matrix, _n_genes_counts = _get_correlation_matrix_for_selection(
-        results, counts,
-        subtract_direction=subtract_direction,
-        n_pcs_to_remove=n_pcs_to_remove,
-    )
+    # Resolve pooled "_other" once so both auto-selection strategies can
+    # exclude it from candidate pools when present.
     from .gene_selection import _resolve_pooled_other_idx
 
-    selected = _select_genes_by_correlation_diversity(
-        corr_matrix,
-        n_genes,
-        counts,
-        min_mean_umi_for_selection=min_mean_umi_for_selection,
-        exclude_idx=_resolve_pooled_other_idx(results),
-    )
+    exclude_idx = _resolve_pooled_other_idx(results)
+
+    # Auto-select via the requested strategy only after explicit selectors
+    # have had priority.
+    if gene_selection == "correlation_diverse":
+        corr_matrix, _n_genes_counts = _get_correlation_matrix_for_selection(
+            results, counts,
+            subtract_direction=subtract_direction,
+            n_pcs_to_remove=n_pcs_to_remove,
+        )
+        selected = _select_genes_by_correlation_diversity(
+            corr_matrix,
+            n_genes,
+            counts,
+            min_mean_umi_for_selection=min_mean_umi_for_selection,
+            exclude_idx=exclude_idx,
+        )
+    elif gene_selection == "abundance":
+        # Reuse compositional PPC's abundance quantile selector so both
+        # corner PPC entry points expose consistent strategy semantics.
+        from .compositional_ppc import _select_compositional_genes
+
+        selected = _select_compositional_genes(
+            counts, n_genes, min_mean_umi=min_mean_umi_for_selection,
+        )
+        if exclude_idx is not None:
+            selected = selected[selected != int(exclude_idx)]
+    else:
+        raise ValueError(
+            "gene_selection must be 'correlation_diverse' or 'abundance'; "
+            f"got {gene_selection!r}."
+        )
+
     if selected.size == 0:
         raise ValueError(
             "No genes passed auto-selection: "
@@ -797,6 +828,7 @@ def plot_corner_ppc(
     viz_cfg=None,
     gene_indices=None,
     gene_names_list=None,
+    gene_selection="correlation_diverse",
     n_genes=5,
     min_mean_umi_for_selection=5.0,
     subtract_direction=None,
@@ -849,6 +881,15 @@ def plot_corner_ppc(
         priority over ``gene_names_list`` and ``n_genes``.
     gene_names_list : list of str or None
         Gene names to display.  Resolved against ``results.var.index``.
+    gene_selection : {"correlation_diverse", "abundance"}
+        Auto-selection strategy used when neither ``gene_indices`` nor
+        ``gene_names_list`` is supplied:
+
+        - ``"correlation_diverse"`` (default): select genes spanning
+          strong positive, strong negative, and diverse near-zero
+          correlations.
+        - ``"abundance"``: select abundance-filtered log-spaced quantiles
+          of mean UMI counts.
     n_genes : int
         Number of genes when auto-selecting (default 5).  Ignored when
         ``gene_indices`` or ``gene_names_list`` is given.
@@ -966,6 +1007,7 @@ def plot_corner_ppc(
     # ------------------------------------------------------------------
     selected_idx = _resolve_gene_indices(
         results, counts, gene_indices, gene_names_list, n_genes,
+        gene_selection=gene_selection,
         min_mean_umi_for_selection=min_mean_umi_for_selection,
         subtract_direction=subtract_direction,
         n_pcs_to_remove=n_pcs_to_remove,

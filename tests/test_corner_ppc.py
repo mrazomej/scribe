@@ -148,6 +148,122 @@ class TestResolveGeneIndices:
         )
         np.testing.assert_array_equal(idx, [1, 2])
 
+    def test_abundance_strategy_uses_compositional_selector(
+        self, fake_results, synth_counts, monkeypatch
+    ):
+        """`gene_selection='abundance'` should route through the abundance path."""
+        # Patch the compositional selector so we can assert routing semantics
+        # without depending on the concrete quantile output.
+        import scribe.viz.compositional_ppc as compositional_ppc_module
+
+        seen = {"called": False}
+
+        def _fake_abundance_selector(counts, n_genes, min_mean_umi=5.0):
+            _ = counts, n_genes, min_mean_umi
+            seen["called"] = True
+            return np.array([0, 2, 4], dtype=int)
+
+        monkeypatch.setattr(
+            compositional_ppc_module,
+            "_select_compositional_genes",
+            _fake_abundance_selector,
+        )
+
+        idx = _resolve_gene_indices(
+            fake_results,
+            synth_counts,
+            gene_indices=None,
+            gene_names_list=None,
+            n_genes=3,
+            gene_selection="abundance",
+        )
+
+        assert seen["called"] is True
+        np.testing.assert_array_equal(idx, [0, 2, 4])
+
+    def test_correlation_diverse_strategy_uses_diversity_selector(
+        self, fake_results, synth_counts, monkeypatch
+    ):
+        """`gene_selection='correlation_diverse'` should use diversity path."""
+        # Patch both correlation dispatch and selector so this test checks only
+        # control-flow routing, not matrix algebra details.
+        monkeypatch.setattr(
+            corner_ppc_module,
+            "_get_correlation_matrix_for_selection",
+            lambda *args, **kwargs: (np.eye(synth_counts.shape[1]), synth_counts.shape[1]),
+        )
+        seen = {"called": False}
+
+        def _fake_diverse_selector(
+            corr_matrix,
+            n_genes,
+            counts,
+            *,
+            min_mean_umi_for_selection=None,
+            exclude_idx=None,
+        ):
+            _ = corr_matrix, n_genes, counts, min_mean_umi_for_selection, exclude_idx
+            seen["called"] = True
+            return np.array([1, 3, 5], dtype=int)
+
+        monkeypatch.setattr(
+            corner_ppc_module,
+            "_select_genes_by_correlation_diversity",
+            _fake_diverse_selector,
+        )
+
+        idx = _resolve_gene_indices(
+            fake_results,
+            synth_counts,
+            gene_indices=None,
+            gene_names_list=None,
+            n_genes=3,
+            gene_selection="correlation_diverse",
+        )
+
+        assert seen["called"] is True
+        np.testing.assert_array_equal(idx, [1, 3, 5])
+
+    def test_invalid_gene_selection_raises(self, fake_results, synth_counts):
+        """Unknown `gene_selection` should raise a clear ValueError."""
+        with pytest.raises(ValueError, match="gene_selection must be"):
+            _resolve_gene_indices(
+                fake_results,
+                synth_counts,
+                gene_indices=None,
+                gene_names_list=None,
+                n_genes=3,
+                gene_selection="unknown_strategy",
+            )
+
+    def test_explicit_indices_bypass_gene_selection_validation(
+        self, fake_results, synth_counts
+    ):
+        """Explicit indices should short-circuit before strategy validation."""
+        idx = _resolve_gene_indices(
+            fake_results,
+            synth_counts,
+            gene_indices=[2, 6],
+            gene_names_list=None,
+            n_genes=3,
+            gene_selection="unknown_strategy",
+        )
+        np.testing.assert_array_equal(idx, [2, 6])
+
+    def test_gene_names_bypass_gene_selection_validation(
+        self, fake_results, synth_counts
+    ):
+        """Name-based selection should short-circuit before strategy validation."""
+        idx = _resolve_gene_indices(
+            fake_results,
+            synth_counts,
+            gene_indices=None,
+            gene_names_list=["Gene_1", "Gene_4"],
+            n_genes=3,
+            gene_selection="unknown_strategy",
+        )
+        np.testing.assert_array_equal(idx, [1, 4])
+
 
 # ==============================================================================
 # Diagonal panel rendering
