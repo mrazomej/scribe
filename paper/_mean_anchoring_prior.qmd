@@ -18,8 +18,8 @@ The key idea was to anchor $\nu_c$ using the known relationship
 $\nu_c \approx L_c / M_0$, where $L_c$ is the observed library size and $M_0$
 is the expected total mRNA content per cell.
 
-In this section, we address a **second source of practical non-identifiability**
-that persists even after the capture prior has been applied: the degeneracy
+A **second source of practical non-identifiability** persists even after the
+capture prior has been applied: the degeneracy
 between the biological mean expression $\mu_g$ and the overdispersion parameter
 $\phi_g$ (or equivalently $p_g$) within the negative binomial distribution. We
 develop a data-informed prior on $\mu_g$ that resolves this degeneracy by

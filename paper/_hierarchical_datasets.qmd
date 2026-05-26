@@ -34,7 +34,7 @@ We resolve this by fitting a single **joint model** across all datasets, with a
 population level. This hierarchy provides adaptive shrinkage: parameters that
 should be shared across datasets (because the biology is the same) are pulled
 toward a common value, while parameters that genuinely differ (because of
-technical or biological variation) are free to deviate. Crucially, the degree of
+technical or biological variation) are free to deviate. The degree of
 shrinkage is learned from the data, not imposed a priori.
 
 ## Motivation: the parameter degeneracy problem {#sec-hdata-motivation}
@@ -117,7 +117,7 @@ $$
 \sigma(c) = d \quad \text{if cell } c \text{ belongs to dataset } d.
 $${#eq-hdata-assignment}
 
-Crucially, $\sigma(c)$ is **observed** and **fixed**---it is not a latent
+$\sigma(c)$ is **observed** and **fixed**---it is not a latent
 variable to be inferred. This distinguishes the multi-dataset model from a
 mixture model: in a mixture model, cell-to-cluster assignments are latent and
 must be integrated out (or approximated); here, assignments are known and
@@ -630,7 +630,7 @@ the key distinction from the gene-specific $p_g$ model of
 
 ### Posterior diagnostic: $\sigma_p$
 
-The posterior of $\sigma_p$ serves as a diagnostic for whether the datasets
+The posterior of $\sigma_p$ is a diagnostic for whether the datasets
 have systematically different technical characteristics:
 
 - If $\sigma_p \approx 0$: the datasets share the same $p$, and the technical
@@ -1197,8 +1197,8 @@ The multi-dataset DE procedure is fully backward compatible with the existing
 `compare()` function. When the joint model is fitted with `n_datasets > 1`, the
 posterior samples contain per-dataset parameters. The `compare_datasets()`
 helper extracts the relevant dataset slices and calls `compare()` with
-`paired=True`, producing a standard `ScribeDEResults` object that integrates
-seamlessly with all downstream analysis functions (gene-level statistics, PEFP
+`paired=True`, producing a standard `ScribeDEResults` object compatible
+with all downstream analysis functions (gene-level statistics, PEFP
 error control, gene-set analysis, threshold finding).
 
 Furthermore, when `n_datasets = 1`, the multi-dataset model degenerates to the

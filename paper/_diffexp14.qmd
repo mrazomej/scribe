@@ -4,11 +4,10 @@ csl: ieee.csl
 
 ## Summary and Conclusions
 
-In this work, we have developed a comprehensive mathematical framework for
-Bayesian differential expression analysis on compositional data. Our approach
-addresses the fundamental challenges posed by the compositional nature of
-normalized gene expression while maintaining computational tractability for
-high-dimensional single-cell datasets.
+We developed a mathematical framework for Bayesian differential expression
+analysis on compositional data. The approach addresses the challenges posed by
+the compositional nature of normalized gene expression while maintaining
+computational tractability for high-dimensional single-cell datasets.
 
 ### Key Results
 
@@ -58,8 +57,8 @@ assumed by normalization-based tests. This gap translates directly into false
 positive inflation under the multinomial: a test that ignores the overdispersion
 can inflate $z$-scores by $\sqrt{\omega}$, producing false positive rates up to
 $60\times$ the nominal level. The probabilistic model does not improve the
-composition point estimate; **it tells you how many decimal places you can
-trust**.
+composition point estimate; **it quantifies which digits are supported by
+the data**.
 
 **Biological-level metrics** (@sec-diffexp-biological). Three complementary
 metrics---biological log-fold change, log-variance ratio, and Gamma Jeffreys

@@ -198,13 +198,11 @@ $\underline{w}$ are estimated from the data. The weight $w_0$ on the null
 component is of particular scientific interest: it estimates the fraction of
 genes that are truly non-DE.
 
-This prior family has three important properties. First, it is **unimodal at
-zero**, encoding the symmetry assumption that up-regulation and down-regulation
-are equally likely a priori. Second, it is **conjugate** with the Gaussian
-observation model (@eq-diffexp-eb-observation), which means all posterior
-computations have closed-form solutions (as we will derive below). Third, it is
-**flexible**: by using a fine grid of scales, any unimodal symmetric
-distribution can be approximated to arbitrary accuracy.
+The prior is **unimodal at zero** (encoding symmetry between up- and
+down-regulation), **conjugate** with the Gaussian observation model
+(@eq-diffexp-eb-observation) so that all posterior computations have closed-form
+solutions, and **flexible**: a fine grid of scales can approximate any unimodal
+symmetric distribution to arbitrary accuracy.
 
 #### Marginal density of the observed effect
 

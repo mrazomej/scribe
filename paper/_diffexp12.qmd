@@ -366,8 +366,8 @@ structure, exactly as described for general contrasts in
 **Interpretational advantage.** Each ILR coordinate has a direct compositional
 interpretation as a balance. Saying "$\Delta_{\text{ILR},i} > 0$" means "the
 balance $i$ has shifted toward the positive group in condition A relative to
-condition B." This provides a richer and more nuanced view of differential
-expression than simply listing individual genes.
+condition B." This provides a more detailed view of differential expression
+than simply listing individual genes.
 
 ### Pathway Enrichment via Gene-Set Testing
 

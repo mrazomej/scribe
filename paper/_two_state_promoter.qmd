@@ -47,8 +47,8 @@ accumulates to a level near $r/\gamma$ (the maximal production rate divided by
 the degradation rate), while cells caught in the OFF state have mRNA pools near
 zero. The result is a bimodal distribution that the NB structurally cannot fit.
 
-In this section, we introduce the **non-bursty two-state promoter model** as
-the appropriate likelihood for these genes. For completeness, all algebraic
+The **non-bursty two-state promoter model** is the appropriate likelihood for
+these genes. For completeness, all algebraic
 steps are provided, with the intention that the reader can follow the derivation
 step by step and verify for themselves that each step is correct. We will show
 that:
@@ -70,8 +70,8 @@ that:
    convenient; the two-state model inherits it.
 
 4. The Negative Binomial is recovered as a special case in the fast-OFF limit
-   ($k^- \gg 1$). The two-state model is therefore a *generalization* of the NB,
-   not a competitor---it adds expressive capacity exactly where the NB fails.
+   ($k^- \gg 1$). The two-state model is a strict generalization of the NB
+   that adds expressive capacity where the NB fails.
 
 5. The natural rate parameters $(\hat{r}, k^+, k^-)$ suffer a well-known
    identifiability ridge, so we reparameterize in terms of quantities the data
@@ -253,8 +253,8 @@ $$ {#eq-twostate-thinning}
 
 In @sec-dirichlet-multinomial, we showed that composing a negative binomial
 with a binomial yields another negative binomial (with an adjusted $\hat{p}$
-parameter). A natural question is whether the Poisson-Beta compound has the same
-convenient closure property. The answer is yes, and the proof is immediate.
+parameter). The Poisson-Beta compound has the same closure property, and the
+proof is immediate.
 
 Marginalizing the latent mRNA count via the Poisson-Beta representation: since
 a Poisson random variable thinned by a binomial with probability $\nu_c$
@@ -1804,9 +1804,9 @@ nonlinearity---it is the Boltzmann distribution applied to a two-level system.
 Reparameterise the two-state model at the gene level in terms of three
 quantities that are natural for the activation-log-odds latent:
 
-- $\text{rate}_g \in \mathbb{R}_+$: gene-level ON-production rate. **Crucially
-  $z$-independent**---this is the property that makes the cross-gene mean
-  covariance non-zero.
+- $\text{rate}_g \in \mathbb{R}_+$: gene-level ON-production rate. **This is
+  $z$-independent**---the property that makes the cross-gene mean covariance
+  non-zero.
 - $\kappa_g \in \mathbb{R}_+$: total switching rate
   $\kappa_g = k^+_g + k^-_g$.
 - $\theta_g \in \mathbb{R}$: per-gene activation log-odds

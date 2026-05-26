@@ -36,7 +36,7 @@ the $\underline{r}$ parameters: compositions are drawn from
 $\text{Dirichlet}(\underline{r})$, and the shared $\hat{p}$ is irrelevant for
 compositional inference.
 
-In this section, we ask: **what happens if we relax this assumption?** That is,
+**What happens if we relax this assumption?** That is,
 what if each gene has its own success probability $p_g$, so that the true
 transcript count for gene $g$ follows
 
@@ -285,9 +285,8 @@ hierarchical model lets the data decide.
 
 ## Composition sampling with gene-specific $p_g$ {#sec-hier-gamma-sampling}
 
-Having introduced the hierarchical model, we now turn to the question of how to
-generate compositional samples $\underline{\rho}$ when the $p_g$ are
-gene-specific. As explained in @sec-diffexp-nonparametric, the empirical
+We next address how to generate compositional samples $\underline{\rho}$ when
+the $p_g$ are gene-specific. As explained in @sec-diffexp-nonparametric, the empirical
 differential expression pipeline requires drawing compositions from the
 posterior predictive distribution. Under the standard model with shared $p$,
 these compositions are drawn as
@@ -561,7 +560,7 @@ $\Delta_g^{(s)}$---has exactly the same structure as the output of the standard
 pipeline. All downstream functions (gene-level statistics, PEFP error control,
 gene-set analysis, threshold finding) operate on this matrix regardless of how
 it was generated. This modularity ensures that the hierarchical model integrates
-seamlessly with the existing analysis framework.
+directly with the existing analysis framework.
 
 ## Mathematical summary {#sec-hier-summary}
 

@@ -34,7 +34,7 @@ $$
 \text{diag}(\underline{d}_{\text{ALR}}). $${#eq-diffexp-alr-covariance}
 
 For differential expression analysis, we require Gaussian distributions in CLR
-and ILR spaces. In this section, we derive explicit formulas for transforming
+and ILR spaces. We derive explicit formulas for transforming
 the mean vector and covariance matrix from ALR space to these alternative
 coordinate systems. A critical result is the exact computation of the CLR
 covariance diagonal in $O(D)$ time—essential for accurate gene-level posterior

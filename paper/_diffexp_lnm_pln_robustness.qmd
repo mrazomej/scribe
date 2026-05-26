@@ -23,8 +23,8 @@ parameter $\underline{r}$ (and hence the Dirichlet conditional) untouched.
 The Logistic-Normal Multinomial (LNM) and Poisson-LogNormal (PLN) models
 introduced in @sec-lnm-logistic-normal-def and @sec-pln-distribution were
 designed for a different purpose — capturing gene-gene correlations that the
-DM cannot represent — but a natural follow-up question is whether the same
-robustness guarantee carries over. The answer depends on which model:
+DM cannot represent. Whether the same robustness guarantee carries over
+depends on which model:
 
 * **LNM(VCP) (@sec-diffexp-lnm-pln-robust-lnm)**: The composition is
   exactly invariant to capture misspecification, *by construction*. The
@@ -383,11 +383,11 @@ families. We discuss the practical mechanics of this in
 
 The rigid-translation theorem above (@sec-diffexp-lnmpln-pln-theorem)
 establishes that adding a constant to all $\mu_g$ while shifting every
-$\eta^{(c)}$ by the same amount leaves the likelihood unchanged. A
-natural follow-up question is whether the capture term $\eta^{(c)}$ is
-*doing useful work* in the PLN, or whether it is functionally redundant
-with some part of the latent prior already in the model. The answer is
-that it is **structurally redundant** with the leading direction of
+$\eta^{(c)}$ by the same amount leaves the likelihood unchanged. We
+now ask whether the capture term $\eta^{(c)}$ is *doing useful work*
+in the PLN, or whether it is functionally redundant with some part of
+the latent prior already in the model. It is **structurally redundant**
+with the leading direction of
 $\underline{\underline{W}}\, \underline{z}_c$ — and the choice of
 whether to include it amounts to a choice of *parameterization* of the
 same library-size axis, not a choice of model expressivity.
@@ -495,7 +495,7 @@ robustness theorem are *unchanged* by whether $\eta^{(c)}$ is included,
 but the interpretational claims (absolute units of $\mu_g$,
 prior-driven calibration, cross-protocol comparability) require
 $\eta^{(c)}$ together with a load-bearing prior. **The capture term in
-the PLN earns its keep through interpretation, not through fit.**
+the PLN justifies its inclusion through interpretation, not fit.**
 
 #### Contrast with the LNM(VCP) case
 
@@ -516,8 +516,7 @@ This asymmetry is consistent with the factorization comparison in
 @sec-diffexp-lnm-pln-robust-comparison: the LNM has *two*
 submodels that compose multiplicatively; the PLN has *one* unified
 log-rate model with a redundant per-cell scalar tacked on. The
-redundancy is not a bug of the PLN — it is a direct structural
-consequence of how the model is built.
+This redundancy is a direct structural consequence of how the model is built.
 
 #### Empirical signature of the weak-prior regime
 
@@ -703,8 +702,8 @@ parameterize the same one-dimensional library-size axis
 include $\eta^{(c)}$ is therefore a choice of *parameterization* of the
 library-size direction, not of model expressivity, and the inferential
 content of the model is unchanged either way. The capture term in the
-PLN earns its keep through *interpretation* (chemistry-informed
-absolute scale, cross-protocol comparability) and not through
+PLN contributes through *interpretation* (chemistry-informed
+absolute scale, cross-protocol comparability) rather than through
 goodness-of-fit. This redundancy does not exist in the LNM(VCP), where
 capture lives in a structurally non-redundant totals submodel
 disjoint from the composition.

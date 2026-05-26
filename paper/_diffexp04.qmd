@@ -15,9 +15,9 @@ distributional assumptions. With $D \approx 30{,}000$ genes, however, we need a
 principled approach to decide which genes to declare as differentially expressed
 while controlling the overall error rate.
 
-In this section, we develop the posterior expected false discovery proportion
-(PEFP), a Bayesian analog of the false discovery rate, and derive an efficient
-algorithm for finding lfsr thresholds that control PEFP at a specified level.
+The posterior expected false discovery proportion (PEFP) is a Bayesian analog
+of the false discovery rate. We derive an efficient algorithm for finding lfsr
+thresholds that control PEFP at a specified level.
 The PEFP framework operates exclusively on numerical lfsr values and is agnostic
 to how they were computed---whether by empirical counting over posterior
 samples, by evaluation of the Gaussian CDF in the parametric path, or by the

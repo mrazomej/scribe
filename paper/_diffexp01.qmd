@@ -80,14 +80,13 @@ changes in *relative abundance* rather than absolute expression.
 
 ### Our approach: Bayesian inference in log-ratio coordinates
 
-To address these challenges, we develop a comprehensive framework for Bayesian
+To address these challenges, we develop a framework for Bayesian
 differential expression analysis that respects the compositional nature of
-normalized gene expression. Our approach rests on three key principles:
+normalized gene expression. Our approach rests on three principles:
 
-**Principle 1: Work in appropriate coordinate systems.** Rather than analyzing
-proportions directly on the simplex, we transform to log-ratio coordinate
-systems where standard statistical methods apply. We employ two complementary
-systems:
+**Principle 1: Work in appropriate coordinate systems.** We transform to
+log-ratio coordinate systems where standard statistical methods apply,
+employing two complementary systems:
 
 - The *centered log-ratio* (CLR) transformation provides a reference-free
 representation suitable for gene-level inference, where each coordinate has a
@@ -106,12 +105,11 @@ and local false sign rates—by direct Monte Carlo counting. This empirical
 approach requires no distributional assumptions on the shape of the posterior
 predictive distribution and is the recommended default for all analyses.
 
-**Principle 3: Use Bayesian error control.** Rather than relying on p-values
-and false discovery rate (FDR) control from frequentist hypothesis testing, we
-employ fully Bayesian measures of evidence. The *local false sign rate* (lfsr)
-quantifies the posterior probability of incorrectly signing a gene's
-differential expression [@stephens2016], and the *posterior expected false
-discovery proportion* (PEFP) provides a Bayesian analog of the FDR.
+**Principle 3: Use Bayesian error control.** We employ Bayesian measures of
+evidence in place of p-values and frequentist FDR control. The *local false 
+sign rate* (lfsr) quantifies the posterior probability of incorrectly signing a 
+gene's differential expression [@stephens2016], and the *posterior expected 
+false discovery proportion* (PEFP) provides a Bayesian analog of the FDR.
 
 ### Preview of key results
 
@@ -154,10 +152,9 @@ argument rests on the thinning-invariance of the negative binomial shape
 parameter and the uniform cancellation of capture probability in compositional
 ratios.
 
-**Why the probabilistic model matters** (@sec-diffexp-why-model): After
-establishing the robustness of compositional point estimates, we address the
-natural counter-argument: if simple normalization recovers the same
-compositions, why use a probabilistic model at all? We show that the
+**Why the probabilistic model matters** (@sec-diffexp-why-model): If simple
+normalization recovers the same compositions, why use a probabilistic model at
+all? We show that the
 *point estimates* are indeed equivalent---both are determined by the ratio of
 expected counts, which the data pin at $O(1/\sqrt{C})$ precision. The critical
 difference lies in *uncertainty quantification*: the Dirichlet-Multinomial
@@ -191,9 +188,8 @@ coordinate systems, gene-level inference via the difference distribution, and
 pathway analysis via linear contrasts—as an efficient complement to the empirical
 approach.
 
-Throughout our development, we maintain complete mathematical rigor, showing
-every algebraic step explicitly. For datasets with $D \approx 30{,}000$ genes,
-these methods enable differential expression analysis that properly accounts for
-compositionality, posterior uncertainty, and gene-gene correlations—all within a
-fully Bayesian framework.
+Throughout, we show every algebraic step explicitly. For datasets with
+$D \approx 30{,}000$ genes, these methods enable differential expression
+analysis that properly accounts for compositionality, posterior uncertainty,
+and gene-gene correlations within a Bayesian framework.
 

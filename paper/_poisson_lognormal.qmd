@@ -33,9 +33,8 @@ total count, and (ii) independence between total count and composition given the
 model parameters. As discussed in @sec-grn-bio-observation-models, both of
 these are additional approximations beyond the LNA itself.
 
-In this section, we develop an alternative observation model---the
-**Poisson-LogNormal** (PLN) model---that avoids the total-composition
-factorization entirely. Each gene's count is modeled as a Poisson draw from the
+We develop an alternative observation model---the **Poisson-LogNormal** (PLN)
+model---that avoids the total-composition factorization entirely. Each gene's count is modeled as a Poisson draw from the
 exponentiated log-abundance, which is the most direct connection to the
 Poisson-Gamma mixture representation that underlies the birth-death process
 (@sec-grn-bio-bursty-gamma). The PLN model naturally couples total counts and
@@ -199,7 +198,7 @@ $${#eq-pln-low-rank}
 
 The columns of $\underline{\underline{W}}$ capture the $k$ dominant
 regulatory programs, and $\underline{d}$ captures gene-intrinsic residual
-variance. Crucially, the latent has dimension $G$ (not $G-1$ as in the LNM),
+variance. The latent has dimension $G$ (not $G-1$ as in the LNM),
 so $\underline{\underline{W}}$ is $G \times k$ and $\underline{d}$ is
 $G$-dimensional.
 

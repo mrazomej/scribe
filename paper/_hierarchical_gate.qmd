@@ -45,7 +45,7 @@ of genes that do not need zero inflation, degrading overall fit. If the prior
 is too tight, the few genes that genuinely need zero inflation cannot escape
 the prior's pull toward zero.
 
-In this section, we resolve this dilemma by placing a **hierarchical prior**
+We resolve this dilemma by placing a **hierarchical prior**
 on the gate parameter, following the same strategy used for the gene-specific
 success probability $p_g$ in @sec-hierarchical-p. The hierarchical gate
 provides adaptive shrinkage: genes with no evidence for structural zeros are
@@ -321,7 +321,7 @@ are shrunk toward the population mean $\mu_\pi$.
 
 ## Posterior diagnostic: $\sigma_\pi$ {#sec-hgate-diagnostic}
 
-The hyperparameter $\sigma_\pi$ serves as a **data-driven diagnostic** of
+The hyperparameter $\sigma_\pi$ is a **data-driven diagnostic** of
 whether gene-to-gene variation in zero-inflation probability is supported by
 the data. This is directly analogous to the role of $\sigma_p$ in
 @sec-hierarchical-p:
@@ -345,10 +345,10 @@ estimating which genes need zero inflation and how much.
 ## Interaction with composition sampling {#sec-hgate-composition}
 
 In @sec-hier-gamma-sampling, we derived a Gamma-based composition sampling
-procedure for the hierarchical gene-specific $p_g$ model. A natural question
-is whether the zero-inflation gate $\pi_g$ affects this procedure.
+procedure for the hierarchical gene-specific $p_g$ model. We now verify that
+the zero-inflation gate $\pi_g$ does not affect this procedure.
 
-The answer is no: **the gate does not enter the composition formula**. To see
+Indeed, **the gate does not enter the composition formula**. To see
 why, recall that the composition $\rho_g$ represents the fractional abundance
 of gene $g$ in the transcriptome. The zero-inflation gate modifies the
 **observed count distribution** by mixing in structural zeros, but it does
@@ -466,7 +466,7 @@ $$
 $${#eq-hgate-tpbn-gate}
 
 where $a$, $u$, and $\tau$ are scalar hyperparameters. The outer layer
-$\zeta_g$ serves as a per-gene rate for the inner Gamma, and $\psi_g$ acts
+$\zeta_g$ is a per-gene rate for the inner Gamma, and $\psi_g$ acts
 as the per-gene variance for the Normal. Different choices of $u$ and $a$
 recover different priors:
 

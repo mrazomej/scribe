@@ -23,11 +23,10 @@ excess probability mass at zero, or right-shifted spikes for
 high-variance genes, that no NB---regardless of parameterization---can
 accommodate.
 
-In this section, we introduce the **Beta Negative Binomial (BNB)**
-distribution as an optional extension that preserves the NB's mean
-structure (and therefore the entire normalization and compositional
-analysis pipeline) while admitting heavier tails on a per-gene basis.
-We will show that:
+The **Beta Negative Binomial (BNB)** distribution is an optional extension that
+preserves the NB's mean structure (and therefore the entire normalization and
+compositional analysis pipeline) while admitting heavier tails on a per-gene
+basis. We will show that:
 
 1. The BNB arises as a natural compound distribution: an NB whose
 success probability is itself random, drawn from a Beta distribution.
@@ -464,9 +463,9 @@ microscopic model assumed for transcription.
 
 ### Why $\kappa_g$ is biological, not technical
 
-A natural question is whether the extra dispersion captured by
-$\kappa_g$ could reflect technical artifacts rather than genuine
-biology. Three considerations argue against a technical interpretation:
+Could the extra dispersion captured by $\kappa_g$ reflect technical
+artifacts rather than genuine biology? Three considerations argue against
+a technical interpretation:
 
 1. **UMIs remove technical heavy tails.** The most common source of
 technical overdispersion in RNA-seq is PCR amplification bias (jackpot
@@ -639,7 +638,7 @@ $$
 $${#eq-bnb-recovery}
 
 recovering the standard NB model. The posterior of $\omega_g$ (or
-equivalently $\kappa_g$) serves as a **per-gene diagnostic** for the
+equivalently $\kappa_g$) is a **per-gene diagnostic** for the
 presence of extra overdispersion beyond what the NB can accommodate.
 
 ## Statistical risks of the mean-preserving constraint {#sec-bnb-risks}
@@ -847,8 +846,8 @@ distribution, potentially leading to smaller inferred $\pi_g$ values.
 The variable capture probability enters through $\hat{p}_{gc}$, which
 is a function of the gene-level $p_g$ and the cell-level $\nu_c$
 (@sec-capture-prior). Since $\alpha_{gc}$ in the BNB is a function of
-$\hat{p}_{gc}$ (@eq-bnb-alpha-from-kappa), the VCP framework integrates
-seamlessly:
+$\hat{p}_{gc}$ (@eq-bnb-alpha-from-kappa), the VCP framework applies
+directly:
 
 $$
 \hat{p}_{gc} = \frac{p_g}{\nu_c + p_g(1 - \nu_c)},
@@ -1244,7 +1243,7 @@ $$
 \tilde{\pi}(p_i \mid u_g)}.
 $${#eq-bnb-denoise-gl-mean}
 
-Crucially, this computation is fully **vectorizable**. The quadrature
+This computation is fully **vectorizable**. The quadrature
 nodes $\{p_i\}$ have shape $(N, 1, 1)$, and the gene/cell parameters
 $(r_g, \alpha_g, \kappa_g, \nu_c, u_{gc})$ broadcast along their
 natural dimensions. A single batched evaluation produces the denoised

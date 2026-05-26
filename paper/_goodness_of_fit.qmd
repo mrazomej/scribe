@@ -170,9 +170,9 @@ $${#eq-gof-rpit-qed}
 
 #### The normal-scale transform
 
-Having established that $V \sim \text{Uniform}(0, 1)$ under the true model, we
-apply the **standard normal quantile function** $\Phi^{-1}$ to obtain
-**randomized quantile residuals**:
+Since $V \sim \text{Uniform}(0, 1)$ under the true model, we apply the
+**standard normal quantile function** $\Phi^{-1}$ to obtain **randomized
+quantile residuals**:
 
 $$
 Q = \Phi^{-1}(V).

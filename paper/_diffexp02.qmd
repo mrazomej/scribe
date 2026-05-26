@@ -17,12 +17,11 @@ While the ALR transformation enables proper probability density calculations, it
 has a significant limitation: the choice of reference component is arbitrary,
 and different choices lead to different statistical inferences.
 
-In this section, we develop two alternative log-ratio coordinate systems that
-address this limitation. The *centered log-ratio* (CLR) transformation provides
-a symmetric, reference-free representation in $\mathbb{R}^{D}$, ideal for
-gene-level inference. The *isometric log-ratio* (ILR) transformation provides
-an orthonormal coordinate system in $\mathbb{R}^{D-1}$, ideal for gene-set and
-pathway analysis.
+Two alternative log-ratio coordinate systems address this limitation. The
+*centered log-ratio* (CLR) transformation provides a symmetric, reference-free
+representation in $\mathbb{R}^{D}$, ideal for gene-level inference. The
+*isometric log-ratio* (ILR) transformation provides an orthonormal coordinate
+system in $\mathbb{R}^{D-1}$, ideal for gene-set and pathway analysis.
 
 ### The Centered Log-Ratio (CLR) Transformation
 

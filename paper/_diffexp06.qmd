@@ -22,8 +22,8 @@ external information (the biology-informed prior on total mRNA,
 @sec-capture-prior). If that anchor is imperfect, one might worry that all
 downstream inferences are compromised.
 
-In this section, we show that CLR-based differential expression is exactly
-invariant to capture probability misspecification. The argument rests on a
+CLR-based differential expression is exactly invariant to capture probability
+misspecification. The argument rests on a
 single structural property of the generative model: binomial thinning preserves
 the shape parameter of the negative binomial distribution, and the compositional
 distribution depends on these shape parameters in a way that is immune to the
@@ -131,10 +131,10 @@ $$
 r_g, $${#eq-diffexp-rob-r-cancel}
 
 where $f(\mu, \phi)$ denotes the parameterization-specific formula relating
-$r_g$ to $\mu_g$ and $\phi$. This cancellation is not a coincidence---it is a
-necessary consequence of the thinning invariance @eq-diffexp-rob-thinned-gamma:
-the data determine $r_g$ through the likelihood, and no amount of $\nu_c$
-misspecification can change what the data require.
+$r_g$ to $\mu_g$ and $\phi$. This cancellation follows necessarily from the
+thinning invariance @eq-diffexp-rob-thinned-gamma: the data determine $r_g$
+through the likelihood, and no amount of $\nu_c$ misspecification can change
+what the data require.
 
 Since the Dirichlet parameters are exactly preserved, **the entire distribution
 of normalized expression is identical** under the true and misspecified models.
@@ -310,8 +310,8 @@ $$
 $${#eq-diffexp-rob-uniform-cancel}
 
 The uniform factor $1/\alpha$ appears in every term of both the numerator and
-denominator and cancels identically. This is not an approximation---it is an
-algebraic identity. Compositions are, by construction, insensitive to the
+denominator and cancels identically---an exact algebraic identity.
+Compositions are, by construction, insensitive to the
 overall scale of the rate parameters. Since the capture degeneracy can only move
 the model along a direction that rescales all $\theta_g$ uniformly, and since
 compositions annihilate uniform rescalings, the degeneracy is structurally
@@ -378,9 +378,9 @@ for the differential expression framework developed in @sec-diffexp through
 
 In short, **every quantity in the compositional DE pipeline is perfectly
 robust to capture probability misspecification**. This holds under both the
-shared-$p$ model and the gene-specific $p_g$ generalization. It is not an
-approximate result that holds only for small perturbations or in the
-large-$r_T$ limit---it is an exact structural property of the model.
+shared-$p$ model and the gene-specific $p_g$ generalization, as an exact
+structural property of the model rather than an approximation valid only for
+small perturbations or in the large-$r_T$ limit.
 
 #### Contrast with biological-level metrics
 

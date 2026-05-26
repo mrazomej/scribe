@@ -21,7 +21,7 @@ DNA methylation). Rather than seeing uniform expression across cells, they
 discovered striking heterogeneity - some cells had high mRNA counts while others
 had low counts for the same genes.
 
-The experimental approach was elegantly direct: fix ESCs in suspension,
+The experimental approach was direct: fix ESCs in suspension,
 hybridize fluorescent probes to specific mRNAs, image individual cells, and use
 automated analysis to count transcripts. Across ~400 cells per sample and 36
 ESC-related genes, this revealed distinct patterns---*Rex1* and *Nanog* showed
@@ -29,7 +29,7 @@ bimodal distributions suggesting two discrete cellular states, while genes like
 *Prdm14* exhibited "long-tailed" distributions with rare bursts of high
 expression.
 
-This dataset serves as an exceptionally valuable testing ground for our models
+This dataset is well suited as a testing ground for our models
 for several reasons. First, it focuses on just four carefully chosen genes
 rather than attempting to measure an entire transcriptome, allowing us to deeply
 understand the behavior of each gene without the complexity of thousands of

@@ -18,12 +18,10 @@ values produced here feed into the same PEFP error control machinery
 @sec-diffexp-empirical, enabling a hybrid workflow where each gene is analyzed
 by the most appropriate method.
 
-Having developed the machinery for transforming Gaussian distributions between
-coordinate systems, we now turn to the central question: how do we quantify
-differential expression between two experimental conditions? In this section, we
-derive the posterior distribution of gene-level differences and show how to
-compute key statistics—posterior means, standard deviations, tail probabilities,
-and the local false sign rate.
+With the machinery for transforming Gaussian distributions between coordinate
+systems in place, we derive the posterior distribution of gene-level differences
+and show how to compute key statistics—posterior means, standard deviations,
+tail probabilities, and the local false sign rate.
 
 ### Posterior Distribution of Differences
 

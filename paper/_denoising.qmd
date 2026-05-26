@@ -362,9 +362,8 @@ $$
 \hat{p} = \frac{p}{\nu_c + p(1-\nu_c)} = \frac{p}{p'}.
 $${#eq-denoising-phat-connection}
 
-This is not a coincidence---the same algebraic structure that relates the
-biological and observed NB parameters also governs the posterior distribution of
-uncaptured transcripts.
+The same algebraic structure that relates the biological and observed NB
+parameters also governs the posterior distribution of uncaptured transcripts.
 
 ## The denoised count distribution
 
@@ -768,11 +767,10 @@ $(r_g, p, \nu_c, g)$ associated with gene $g$. When these parameters are fixed
 at their maximum a posteriori (MAP) estimates, the denoised counts for
 different genes are statistically independent. However, in a fully Bayesian
 treatment, the model parameters are themselves random variables with a joint
-posterior distribution. A natural question arises: **does the posterior
-uncertainty in the model parameters induce correlations between the denoised
-counts of different genes?** We will show that the answer is yes, and that the
-structure of these correlations is both analytically tractable and
-computationally efficient to exploit.
+posterior distribution. **Does the posterior uncertainty in the model
+parameters induce correlations between the denoised counts of different
+genes?** Yes---and the structure of these correlations is both analytically
+tractable and computationally efficient to exploit.
 
 ### Conditional independence of genes given parameters
 

@@ -151,7 +151,7 @@ fig/supplementary/figSI_singer_svi_odds-ratio_nbdm_ppc_ecdf){#fig-SI_singer_svi_
 
 ## Conclusion
 
-In this section, we have seen how to reparameterize the model in a way that
-allows us to capture the correlation between the $p$ and $\underline{r}$
-parameters, while being numerically more stable. This parameterization will be
+We have shown how to reparameterize the model in a way that captures the
+correlation between the $p$ and $\underline{r}$ parameters, while being
+numerically more stable. This parameterization will be
 very powerful when applying it to larger full-transcriptome datasets.

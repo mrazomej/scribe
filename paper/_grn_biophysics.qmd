@@ -584,11 +584,9 @@ $${#eq-grn-bio-log-def}
 
 ### Why log-abundances? {#sec-grn-bio-why-log}
 
-Before proceeding with the mathematical transformation, it is worth pausing to
-ask: why work in log-abundance space at all? Is this a biophysical necessity, or
-merely a mathematical convenience? The answer is that it is a highly principled
-mathematical convenience---one that allows us to model complex gene-gene
-interactions while respecting the fundamental physical constraints of the cell.
+Why work in log-abundance space at all? It is a well-motivated mathematical
+convenience---one that allows us to model complex gene-gene interactions while
+respecting the fundamental physical constraints of the cell.
 
 If we were to apply the Linear Noise Approximation directly to the linear
 abundances $\underline{\lambda}$, we would obtain a multivariate Gaussian
@@ -893,11 +891,11 @@ $${#eq-grn-bio-central-result}
 
 This result holds independently of how one subsequently models the observation
 process (i.e., how discrete counts are generated from these latent
-abundances). The covariance $\underline{\underline{\Sigma}}$ is not an
-arbitrary statistical object---it is the Lyapunov solution to the OU process
-governing the GRN, and its entries are direct consequences of the regulatory
-interactions encoded in $\underline{\underline{J}}$ and the
-bursty-transcription noise encoded in $\underline{\underline{D}}$.
+abundances). The covariance $\underline{\underline{\Sigma}}$ is the Lyapunov
+solution to the OU process governing the GRN, and its entries are direct
+consequences of the regulatory interactions encoded in
+$\underline{\underline{J}}$ and the bursty-transcription noise encoded in
+$\underline{\underline{D}}$.
 
 Different statistical observation models can be constructed atop this
 biophysical foundation. Each constitutes a different choice for how to connect
@@ -1146,9 +1144,9 @@ counts---through a compositional model (LNM) or a direct count model
 
 The derivation above started from the one-state bursty promoter because it
 provides the cleanest path: the Gamma on $\lambda_g$ is exact, the mass-balance
-ODE is self-evident, and the Dirichlet recovery is exact. A natural question
-is whether the multivariate Gaussian result depends on this particular choice of
-microscopic model, or whether it is more general.
+ODE is self-evident, and the Dirichlet recovery is exact. We now ask whether the
+multivariate Gaussian result depends on this particular choice of microscopic
+model, or whether it is more general.
 
 ### A deductive argument for universality {#sec-grn-bio-deductive}
 

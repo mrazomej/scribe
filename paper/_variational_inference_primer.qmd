@@ -75,7 +75,7 @@ with most evaluations contributing little to the integral
 value.](./fig/supplementary/figSI_gaussian_peak){#fig-SI_gaussian_peak} -->
 
 While sophisticated sampling methods like Hamiltonian Monte Carlo---method used
-in @sec-singer_mcmc_nbdm---can exploit gradient information to navigate
+in @sec-singer_mcmc_nbdm---can exploit gradient information to traverse
 high-dimensional probability landscapes more efficiently @betancourt2017, these
 approaches can become computationally prohibitive when dealing with large-scale
 datasets or complex model architectures, unless we have access to sophisticated
@@ -250,7 +250,7 @@ $D_{KL}(q_\phi(\underline{\theta}) \vert \vert \pi(\underline{\theta}))$ that
 quantifies how much the approximate posterior deviates from the prior.
 Maximizing the ELBO therefore balances data fidelity against prior adherence.
 
-Crucially, since the ELBO provides a lower bound on the log evidence, maximizing
+Since the ELBO provides a lower bound on the log evidence, maximizing
 the ELBO with respect to the variational parameters $\phi$ yields the tightest
 possible bound within the chosen family of approximate distributions. As the
 bound becomes tighter, the approximate posterior $q_\phi(\underline{\theta})$

@@ -171,8 +171,7 @@ variational distribution.
 
 ## Conclusion
 
-In this section, we have seen how to reparameterize the model in a way that
-allows us to capture the correlation between the $p$ and $\underline{r}$
-parameters. This leads to a significant improvement in the performance of the
+We have shown how to reparameterize the model in a way that captures the
+correlation between the $p$ and $\underline{r}$ parameters. This leads to a significant improvement in the performance of the
 variational approximation when predicting the data, as we have seen in the
 posterior predictive checks.

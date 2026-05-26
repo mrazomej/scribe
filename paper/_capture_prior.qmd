@@ -26,9 +26,8 @@ must assign a prior to $\nu_c$. A common default is the uninformative
 $\nu_c \sim \text{Beta}(1, 1)$, which treats all capture efficiencies as equally
 likely a priori.
 
-In this section, we show that this flat prior is a source of **practical
-non-identifiability** in the VCP model, and we develop a principled
-biology-informed prior that resolves it. The key idea is to exploit the
+This flat prior is a source of **practical non-identifiability** in the VCP
+model. We develop a principled biology-informed prior that resolves it. The key idea is to exploit the
 relationship between the capture probability, the observed library size, and the
 total mRNA content of the cell---a quantity for which reliable prior information
 exists.
@@ -301,13 +300,13 @@ for this model---$f_{\text{genes}} = 1$ and no adjustment is needed.
 ## Deterministic anchoring: fixing $M_0$ as a known constant {#sec-cap-deterministic}
 
 The biology-informed prior of @sec-cap-biology-prior treats $M_c$ as a random
-variable with cell-to-cell variation controlled by $\sigma_M$. A natural question
-is: can we simply **fix** $M_0$ as a known constant, setting $\sigma_M \to 0$?
-In other words, can we declare that every cell contains exactly $M_0$ mRNA
-molecules and let the model infer $\nu_c$ deterministically as $L_c / M_0$?
+variable with cell-to-cell variation controlled by $\sigma_M$. Can we simply
+**fix** $M_0$ as a known constant, setting $\sigma_M \to 0$? That is, can we
+declare that every cell contains exactly $M_0$ mRNA molecules and let the
+model infer $\nu_c$ deterministically as $L_c / M_0$?
 
-Perhaps surprisingly, the answer is **yes**---and the justification comes
-directly from the negative binomial model itself.
+Yes---and the justification comes directly from the negative binomial model
+itself.
 
 ### The law of large numbers for total mRNA {#sec-cap-lln}
 
@@ -587,9 +586,8 @@ $\sim 1.5$--$2 \times$ fold variation in total mRNA content.
 ## Variational approximation for the capture probability {#sec-cap-variational}
 
 The preceding sections define the **model**: the prior on $\eta_c$ and its exact
-transformations to $\nu_c$ and $\phi_c$. In this section, we turn to the
-**variational guide**---the approximate posterior used for stochastic variational
-inference. The model is unchanged; what follows is a choice of variational
+transformations to $\nu_c$ and $\phi_c$. We now turn to the **variational
+guide**---the approximate posterior used for stochastic variational inference. The model is unchanged; what follows is a choice of variational
 family that better approximates the true posterior of $\eta_c$.
 
 ### The variational problem
@@ -706,7 +704,7 @@ limits are handled by smooth Gaussian tails, with no boundary artifacts.
 **Unconstrained optimization.** The variational parameters
 $(\tilde{\mu}_c, \tilde{\sigma}_c)$ are unconstrained (aside from
 $\tilde{\sigma}_c > 0$, which is standard). In the truncated-normal guide, the
-optimizer must navigate the interaction between the variational mean and the
+optimizer must handle the interaction between the variational mean and the
 truncation point: when $\mu_c$ decreases toward zero, the effective distribution
 shape changes qualitatively (from approximately Gaussian to half-normal). In the
 softplus-normal guide, the shape varies smoothly with $\tilde{\mu}_c$, with no

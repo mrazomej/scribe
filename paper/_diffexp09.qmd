@@ -6,11 +6,33 @@ csl: ieee.csl
 
 ## Gaussianity Diagnostics and the Analytical Alternative {#sec-diffexp-gaussianity}
 
-The empirical CLR framework developed in the preceding sections---from the direct Monte Carlo pipeline through Bayesian error control, pathway enrichment, and biological-level metrics---constitutes the primary and recommended differential expression workflow. It requires no distributional assumptions on the posterior predictive distribution: the lfsr is computed by counting, the PEFP threshold is found by sorting, and all results are valid regardless of skewness, heavy tails, or multimodality in the underlying posteriors.
+The empirical CLR framework developed in the preceding sections---from the
+direct Monte Carlo pipeline through Bayesian error control, pathway enrichment,
+and biological-level metrics---constitutes the primary and recommended
+differential expression workflow. It requires no distributional assumptions on
+the posterior predictive distribution: the lfsr is computed by counting, the
+PEFP threshold is found by sorting, and all results are valid regardless of
+skewness, heavy tails, or multimodality in the underlying posteriors.
 
-However, this generality comes at a computational cost. The empirical pipeline requires $O(ND)$ operations, where $N$ is the number of posterior samples and $D$ is the number of genes. When the posterior CLR marginals happen to be well-approximated by Gaussians---as is often the case for genes with moderate to high expression in the large-count regime---a parametric approach provides closed-form inference at $O(kD)$ cost, where $k \ll N$ is the rank of the low-rank covariance approximation. The speedup factor $N/k$ (typically $\approx 200$--$600$) can be significant for interactive exploration or when analysing many condition pairs.
+However, this generality comes at a computational cost. The empirical pipeline
+requires $O(ND)$ operations, where $N$ is the number of posterior samples and
+$D$ is the number of genes. When the posterior CLR marginals happen to be
+well-approximated by Gaussians---as is often the case for genes with moderate to
+high expression in the large-count regime---a parametric approach provides
+closed-form inference at $O(kD)$ cost, where $k \ll N$ is the rank of the
+low-rank covariance approximation. The speedup factor $N/k$ (typically $\approx
+200$--$600$) can be significant for interactive exploration or when analysing
+many condition pairs.
 
-The question, then, is: **when is the Gaussian approximation adequate?** In this section, we develop per-gene diagnostics that quantify the degree to which the ALR marginals deviate from Gaussianity. These diagnostics serve as quality control, flagging genes for which the parametric framework may produce miscalibrated lfsr values. When the diagnostics indicate that the Gaussian approximation is adequate for a sufficient fraction of genes, the analyst may opt for the parametric DE path developed in the sections that follow. Both the parametric and empirical paths produce lfsr values on the same scale, so they can be freely combined in a hybrid workflow where each gene is analysed by the most appropriate method.
+The question, then, is: **when is the Gaussian approximation adequate?** We
+develop per-gene diagnostics that quantify the degree to which the ALR marginals
+deviate from Gaussianity. These diagnostics serve as quality control, flagging
+genes for which the parametric framework may produce miscalibrated lfsr values.
+When the diagnostics indicate that the Gaussian approximation is adequate for a
+sufficient fraction of genes, the analyst may opt for the parametric DE path
+developed in the sections that follow. Both the parametric and empirical paths
+produce lfsr values on the same scale, so they can be freely combined in a
+hybrid workflow where each gene is analysed by the most appropriate method.
 
 ### Gaussianity Diagnostics
 
@@ -163,7 +185,7 @@ Gaussianity.
 
 These thresholds are conservative and reflect conventional guidelines in
 applied statistics. Genes failing either criterion are flagged as potentially
-non-Gaussian. The JB statistic itself serves as a useful continuous score for
+non-Gaussian. The JB statistic is a useful continuous score for
 ranking genes by the severity of non-Gaussianity; the larger the JB value, the
 more suspect the Gaussian approximation.
 

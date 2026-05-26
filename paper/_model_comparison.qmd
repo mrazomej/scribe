@@ -10,10 +10,10 @@ format:
 
 # Bayesian Model Comparison {#sec-model-comparison}
 
-Having established the Dirichlet-Multinomial (NBDM) model in
-@sec-dirichlet-multinomial and its hierarchical extension in @sec-hierarchical-p,
-we now address a fundamental question: given two or more competing models, which
-one should we prefer for predictive inference? In this section we develop the
+With the Dirichlet-Multinomial (NBDM) model from @sec-dirichlet-multinomial
+and its hierarchical extension from @sec-hierarchical-p in hand, we address a
+fundamental question: given two or more competing models, which one should we
+prefer for predictive inference? In this section we develop the
 mathematical framework for **Bayesian model comparison based on out-of-sample
 predictive accuracy**, culminating in two complementary criteria---WAIC and
 PSIS-LOO---along with methods for computing model comparison uncertainty and
@@ -212,7 +212,7 @@ The **shape parameter $k$** governs the heaviness of the tail:
 - $k \geq 0.7$: the IS estimator has infinite variance; LOO approximation is
   unreliable.
 
-The fitted value $\hat{k}$ therefore serves as a **per-observation reliability
+The fitted value $\hat{k}$ is therefore a **per-observation reliability
 diagnostic**.
 
 ### PSIS smoothing algorithm {#sec-mc-psis-algorithm}

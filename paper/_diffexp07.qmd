@@ -153,8 +153,8 @@ identically to @sec-diffexp-bio-lfc with the obvious substitutions.
 
 ### Metric 3: Gamma Jeffreys divergence {#sec-diffexp-bio-kl}
 
-The LFC and LVR each capture one moment of the distribution. A more holistic
-measure asks: **how different are the two NB distributions in total?**
+The LFC and LVR each capture one moment of the distribution. A joint measure
+asks: **how different are the two NB distributions in total?**
 
 #### The Poisson–Gamma representation
 
@@ -326,8 +326,8 @@ There is no directional decomposition because $J_g$ is always non-negative.
 
 ### Why the Gamma KL and not the NB KL? {#sec-diffexp-bio-why-gamma}
 
-A natural question is: why not compute the KL divergence between the NB
-distributions directly? The NB KL divergence between $\text{NB}(r_P, p_P)$ and
+Why not compute the KL divergence between the NB distributions directly? The
+NB KL divergence between $\text{NB}(r_P, p_P)$ and
 $\text{NB}(r_Q, p_Q)$ is
 
 $$
@@ -379,7 +379,7 @@ The recommended workflow is:
    small LFC but high Jeffreys divergence — these genes have undergone a change
    in expression noise (e.g., a switch from tight regulation to bursty
    transcription) that the mean-based metrics miss.
-4. **Flag distributional shifts**: the Jeffreys divergence serves as a catch-all
+4. **Flag distributional shifts**: the Jeffreys divergence is a catch-all
    for any change in the NB distribution. Genes with high $J_g$ but low CLR
    $|\Delta_g|$ are candidates for further investigation.
 

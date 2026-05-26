@@ -27,8 +27,8 @@ where $\underline{\theta}_1$ and $\underline{\theta}_2$ denote the two
 per-gene parameter vectors in a given parameterization (e.g.,
 $\underline{\mu}$ and $\underline{\phi}$ in the mean-odds parameterization).
 
-In this section, we ask: **can we do better by introducing cross-parameter
-correlations into the variational guide?** We will show that:
+**Can we do better by introducing cross-parameter correlations into the
+variational guide?** We show that:
 
 1. The posterior of the hierarchical model from @sec-hierarchical-p exhibits
 genuine cross-parameter correlations that a factorized guide cannot capture.

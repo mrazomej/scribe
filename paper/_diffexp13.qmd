@@ -9,9 +9,9 @@ csl: ieee.csl
 
 The methods developed in this work are designed for scalability to
 high-dimensional single-cell transcriptomics datasets with tens of thousands of
-genes. In this section, we summarize the computational complexity of each major
-operation and discuss numerical stability considerations that ensure robust
-performance in practice.
+genes. Below, we summarize the computational complexity of each major operation
+and discuss numerical stability considerations that ensure robust performance
+in practice.
 
 ### Scalability to High Dimensions
 

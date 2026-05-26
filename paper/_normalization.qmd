@@ -23,8 +23,8 @@ $${#eq-norm-dirichlet-conditional}
 When performing Bayesian inference on this model, we obtain a posterior
 distribution over the parameters $\pi(\underline{r}, \hat{p} \mid
 \underline{\underline{U}})$, where $\underline{\underline{U}}$ represents the
-observed UMI count matrix. In this section, we address a fundamental question:
-how do we characterize the distribution of normalized expression proportions
+observed UMI count matrix. The fundamental question is: how do we characterize
+the distribution of normalized expression proportions
 $\underline{\rho}$ when accounting for posterior uncertainty in $\underline{r}$?
 
 ## Posterior Predictive Distribution of Normalized Expression
@@ -84,8 +84,8 @@ variance through the second term in @eq-norm-variance-decomposition.
 
 ### Why not fit a single Dirichlet distribution?
 
-A natural question arises: why not simply fit a single Dirichlet distribution to
-the mean normalized expression $\bar{\underline{\rho}}$? Let us define
+Why not simply fit a single Dirichlet distribution to the mean normalized
+expression $\bar{\underline{\rho}}$? Let us define
 
 $$
 \bar{\underline{\rho}} = \frac{1}{S} \sum_{s=1}^{S} \underline{\rho}^{(s)},
@@ -405,7 +405,7 @@ where $z_i = \log(\rho_i) - \log(\rho_G)$ for $i = 1, \ldots, G-1$.
 
 ### Relationship to the Dirichlet distribution
 
-The logistic-normal distribution serves as a flexible approximation to the
+The logistic-normal distribution is a flexible approximation to the
 Dirichlet distribution. While the Dirichlet distribution is the natural choice
 for modeling compositional data when conjugacy with the multinomial is desired,
 it has limited flexibility in modeling covariance structure. Specifically, the
@@ -727,7 +727,7 @@ $$
 $${#eq-norm-eigenvalues-from-svd}
 
 and the corresponding eigenvectors are the columns of
-$\underline{\underline{V}}$. Crucially, we obtain these eigenvalues and
+$\underline{\underline{V}}$. We obtain these eigenvalues and
 eigenvectors without ever forming the $(G-1) \times (G-1)$ matrix
 $\hat{\underline{\underline{\Sigma}}}$.
 
@@ -1066,8 +1066,8 @@ $\left\langle \text{Var}(\rho_g \mid \underline{r})
 
 ## Computational Considerations
 
-The computational efficiency of our approach relies on several key algorithmic
-choices. In this section, we quantify the memory and runtime advantages.
+The computational efficiency of our approach relies on several algorithmic
+choices. Below, we quantify the memory and runtime advantages.
 
 ### Memory complexity
 

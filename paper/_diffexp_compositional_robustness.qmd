@@ -18,14 +18,13 @@ composition estimates, a natural question arises:
 > them correctly, why do we need a probabilistic model at all? Is the entire
 > framework just an elaborate way to compute $u_g / u_T$?*
 
-This section addresses this question head-on. We show that the robustness of
-compositional *point estimates* is a mathematical inevitability---a consequence
-of compositions being ratios of expected counts, which are tightly constrained
-by the data regardless of the model. But we then demonstrate that point
-estimates without calibrated uncertainty are scientifically useless for
-differential expression, and that the gap between naive normalization and the
-Dirichlet-Multinomial model is precisely the *overdispersion structure* that
-makes single-cell biology interesting.
+This section shows that the robustness of compositional *point estimates* is a
+mathematical inevitability---a consequence of compositions being ratios of
+expected counts, which are tightly constrained by the data regardless of the
+model. We then demonstrate that point estimates without calibrated uncertainty
+are insufficient for differential expression, and that the gap between naive
+normalization and the Dirichlet-Multinomial model is precisely the
+*overdispersion structure* that makes single-cell biology interesting.
 
 ### Compositions are ratios of expected counts {#sec-diffexp-why-model-means}
 
@@ -156,10 +155,9 @@ capture, the multinomial conditioning on $u_T$ automatically integrates out
 $\nu_c$, so $\hat{\rho}_g^{\text{norm}}$ is robust to variable capture for the
 same structural reason as the model-based estimate.
 
-**We therefore concede the point**: for *point estimation* of compositions,
-simple normalization and the full probabilistic model produce the same answer.
-This is not an accident or an approximation---it is a mathematical necessity
-flowing from the mean calibration constraint.
+For *point estimation* of compositions, simple normalization and the full
+probabilistic model produce the same answer. This equality is exact: it follows
+from the mean-calibration constraint.
 
 ### The gap: overdispersion and the variance of compositions {#sec-diffexp-why-model-gap}
 
@@ -406,16 +404,16 @@ the full probabilistic model:
 | Capture efficiency estimation | No | Yes |
 | Gene-specific $p_g$ detection | No | Yes (hierarchical model, $\sigma_p$ diagnostic) |
 
-The value of the probabilistic model is not in producing better composition
-point estimates---both approaches get these right. **The value is in
-everything that comes after**: calibrated uncertainty quantification,
-overdispersion-aware differential expression, principled error control, and
-the full suite of downstream inferences (denoising, gene-set analysis, capture
-estimation) that require a generative model of the measurement process.
+The probabilistic model's contribution is not better composition point
+estimates---both approaches get these right. Its contribution is calibrated
+uncertainty quantification, overdispersion-aware differential expression,
+principled error control, and the full suite of downstream inferences
+(denoising, gene-set analysis, capture estimation) that require a generative
+model of the measurement process.
 
-Compositions being robust is not a threat to the scribe framework---it is a
-*feature*. It means that the core quantity of interest (gene compositions) is
-well-identified and stable across model variants, providing a solid foundation
-on which to build reliable differential expression analysis. The probabilistic
-model does not improve the first decimal place of the composition estimate;
-it tells you how many decimal places you can trust.
+Robust compositions are a *consequence* of the framework: the core quantity of
+interest (gene compositions) is well-identified and stable across model
+variants, providing a solid foundation on which to build reliable differential
+expression analysis. The probabilistic model does not improve the first decimal
+place of the composition estimate; it quantifies which digits are supported by
+the data.
