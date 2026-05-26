@@ -820,6 +820,35 @@ def _prepare_calibration_data(
             if x_loc_np.ndim == 2 and x_loc_np.shape[0] > 1:
                 x_arr = x_loc_np
 
+        # Decoupled layout (Commit 2b / 5b): ``x_loc`` stores the
+        # kept-axis deviation ``x_dev`` on ``(n_cells, G_kept)``, not
+        # the absolute log-rate on ``(n_cells, G_obs)``.  Reconstruct
+        # the full ``G_obs`` log-rate before averaging:
+        #
+        #   log_rate[c, kept[k]] = μ[kept[k]] + x_dev[c, k]
+        #   log_rate[c, other_idx] = μ[other_idx]   (deterministic)
+        #
+        # Same scatter pattern as ``_results_sampling_helpers.
+        # _scatter_x_dev_into_full`` used by the PPC sampler.
+        axis_layout = getattr(results, "axis_layout", None)
+        if (
+            x_arr is not None
+            and axis_layout is not None
+            and getattr(axis_layout, "decoupled", False)
+            and x_arr.shape[1] == int(axis_layout.G_kept)
+        ):
+            mu_full = np.asarray(results.mu, dtype=float).reshape(-1)
+            kept_idx_np = np.asarray(axis_layout.kept_idx)
+            n_cells_arr = x_arr.shape[0]
+            G_obs = int(axis_layout.G_obs)
+            log_rate_full = np.broadcast_to(
+                mu_full[None, :], (n_cells_arr, G_obs)
+            ).copy()
+            log_rate_full[:, kept_idx_np] = (
+                log_rate_full[:, kept_idx_np] + x_arr
+            )
+            x_arr = log_rate_full
+
         if x_arr is not None:
             # Per-cell MAP path: directly evaluate
             #    pred_g = mean_c[ exp(x_g^(c) - eta_c) ].

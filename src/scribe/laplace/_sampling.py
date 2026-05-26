@@ -37,6 +37,54 @@ from ._results_sampling_helpers import (
 from ._results_shared import _base_model
 
 
+def _resolve_decoupled_kept_idx(results) -> Optional[jnp.ndarray]:
+    """Return the kept-axis index array when decoupled + shape-consistent.
+
+    Returns the layout's ``kept_idx`` as a JAX array when the result's
+    ``axis_layout`` is decoupled AND the stored ``W`` / ``d`` shapes
+    match ``axis_layout.G_kept``.  Returns ``None`` for legacy/trivial
+    layouts (no decoupling needed).
+
+    Raises ``ValueError`` with a constructive message when the layout
+    is decoupled but the stored ``W`` / ``d`` shapes disagree — this
+    usually indicates a fit-vs-result inconsistency that the user
+    should resolve by re-fitting (e.g. a stale pickle saved against an
+    incompatible code version).
+    """
+    layout = getattr(results, "axis_layout", None)
+    if layout is None or not getattr(layout, "decoupled", False):
+        return None
+
+    g_kept = int(layout.G_kept)
+
+    W = getattr(results, "W", None)
+    if W is not None and int(W.shape[0]) != g_kept:
+        raise ValueError(
+            f"Decoupled-layout shape mismatch: axis_layout.G_kept="
+            f"{g_kept} but result.W has shape "
+            f"{tuple(int(s) for s in W.shape)} (expected first axis "
+            f"= G_kept = {g_kept}).  The PPC sampler expects "
+            f"``W: (G_kept, K)`` and ``d: (G_kept,)`` under the "
+            f"decoupled layout.  This usually indicates either a "
+            f"pickle saved against an incompatible code version, or "
+            f"an internal inconsistency in the fit.  Re-fit on the "
+            f"current code, or pass ``correlate_other_column=True`` "
+            f"to ``scribe.fit(...)`` if you want the legacy layout "
+            f"with ``_other`` participating in Σ."
+        )
+
+    d = getattr(results, "d", None)
+    if d is not None and int(d.shape[0]) != g_kept:
+        raise ValueError(
+            f"Decoupled-layout shape mismatch: axis_layout.G_kept="
+            f"{g_kept} but result.d has shape "
+            f"{tuple(int(s) for s in d.shape)} (expected (G_kept,)). "
+            f"See the W-shape diagnostic above for context."
+        )
+
+    return jnp.asarray(layout.kept_idx)
+
+
 # =====================================================================
 # Phase-2 R5-2: cascade-aware NBLN PPC array resolver.
 # =====================================================================
@@ -415,12 +463,7 @@ class SamplingResultsMixin:
                     mu_samples = arrays["mu_samples"]
                 # Commit 2b: decoupled NBLN scatters x_dev (G_kept) into
                 # the full G_obs simplex; ``_other`` is deterministic.
-                _layout = getattr(self, "axis_layout", None)
-                _kept_idx_jx = (
-                    jnp.asarray(_layout.kept_idx)
-                    if _layout is not None and _layout.decoupled
-                    else None
-                )
+                _kept_idx_jx = _resolve_decoupled_kept_idx(self)
                 return _ppc_pln_library_anchored(
                     rng_key,
                     n_samples,
@@ -446,12 +489,7 @@ class SamplingResultsMixin:
             )
 
         if bm == "pln":
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_pln_marginal(
                 rng_key,
                 n_samples,
@@ -480,12 +518,7 @@ class SamplingResultsMixin:
             # Commit 2b: thread kept_idx through to the marginal kernel
             # so the latent ``W`` / ``d`` (G_kept) get scattered onto
             # the full G_obs axis under decoupling.
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_nbln_marginal(
                 rng_key,
                 n_samples,
@@ -526,12 +559,7 @@ class SamplingResultsMixin:
                     "TSLN-Rate PPC requires the derived 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_rate_marginal(
                 rng_key,
                 n_samples,
@@ -553,12 +581,7 @@ class SamplingResultsMixin:
                     "TSLN-Logit PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_logit_marginal(
                 rng_key,
                 n_samples,
@@ -629,12 +652,7 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_pln_per_cell_laplace(
                 rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d,
                 mu=self.mu if _kept_idx_jx is not None else None,
@@ -661,12 +679,7 @@ class SamplingResultsMixin:
             # so the per-cell kernel reconstructs full G_obs log-rate
             # from kept-axis ``x_dev`` (which is what ``x_loc`` carries
             # under decoupling).
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -709,12 +722,7 @@ class SamplingResultsMixin:
                     "TSLN-Rate per-cell PPC requires 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_rate_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -737,12 +745,7 @@ class SamplingResultsMixin:
                     "TSLN-Logit per-cell PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_logit_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -796,12 +799,7 @@ class SamplingResultsMixin:
             rng_key = jax.random.PRNGKey(0)
         bm = _base_model(self.model_config)
         if bm == "pln":
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_pln_per_cell(
                 rng_key, n_samples, self.x_loc, self.eta_loc,
                 mu=self.mu if _kept_idx_jx is not None else None,
@@ -815,12 +813,7 @@ class SamplingResultsMixin:
             # Commit 2b: under decoupling, ``x_loc`` is ``x_dev`` on
             # G_kept; the kernel needs ``mu`` + ``kept_idx`` to
             # reconstruct the full G_obs per-cell log-rate.
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_nbln_per_cell(
                 rng_key,
                 n_samples,
@@ -851,12 +844,7 @@ class SamplingResultsMixin:
                     "TSLN-Rate map PPC requires 'alpha' / 'beta' "
                     "Beta-shape fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_rate_per_cell(
                 rng_key,
                 n_samples,
@@ -877,12 +865,7 @@ class SamplingResultsMixin:
                     "TSLN-Logit map PPC requires 'rate' / 'kappa' / "
                     "'eta_anchor' fields on the result."
                 )
-            _layout = getattr(self, "axis_layout", None)
-            _kept_idx_jx = (
-                jnp.asarray(_layout.kept_idx)
-                if _layout is not None and _layout.decoupled
-                else None
-            )
+            _kept_idx_jx = _resolve_decoupled_kept_idx(self)
             return _ppc_twostate_ln_logit_per_cell(
                 rng_key,
                 n_samples,

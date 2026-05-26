@@ -8,7 +8,11 @@ from ._interactive import (
     _create_or_validate_single_axis,
     plot_function,
 )
-from .gene_selection import _coerce_counts, _select_genes_simple
+from .gene_selection import (
+    _coerce_counts,
+    _resolve_pooled_other_idx,
+    _select_genes_simple,
+)
 
 
 _ECDF_DEFAULT_N_GENES = 25
@@ -67,7 +71,9 @@ def plot_ecdf(
             )
         else:
             n_genes = _ECDF_DEFAULT_N_GENES
-    selected_idx, _ = _select_genes_simple(counts, n_genes)
+    selected_idx, _ = _select_genes_simple(
+        counts, n_genes, exclude_idx=_resolve_pooled_other_idx(results)
+    )
     selected_idx = np.sort(selected_idx)
 
     fig, ax = _create_or_validate_single_axis(

@@ -212,7 +212,12 @@ def _get_correlation_matrix_for_selection(
 
 
 def _select_genes_by_correlation_diversity(
-    corr_matrix, n_genes, counts, *, min_mean_umi_for_selection=None
+    corr_matrix,
+    n_genes,
+    counts,
+    *,
+    min_mean_umi_for_selection=None,
+    exclude_idx=None,
 ):
     """Select genes that span the correlation spectrum for corner PPC.
 
@@ -258,6 +263,11 @@ def _select_genes_by_correlation_diversity(
         candidate_pool = np.arange(g_eff)
     else:
         candidate_pool = np.arange(n_genes_counts)
+
+    # Drop the pooled '_other' aggregate when present — it is not a
+    # real gene and would skew the diversity score.
+    if exclude_idx is not None:
+        candidate_pool = candidate_pool[candidate_pool != int(exclude_idx)]
 
     # Optionally drop low-expression genes before diversity scoring.
     if min_mean_umi_for_selection is not None:
@@ -422,11 +432,14 @@ def _resolve_gene_indices(
         subtract_direction=subtract_direction,
         n_pcs_to_remove=n_pcs_to_remove,
     )
+    from .gene_selection import _resolve_pooled_other_idx
+
     selected = _select_genes_by_correlation_diversity(
         corr_matrix,
         n_genes,
         counts,
         min_mean_umi_for_selection=min_mean_umi_for_selection,
+        exclude_idx=_resolve_pooled_other_idx(results),
     )
     if selected.size == 0:
         raise ValueError(

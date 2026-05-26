@@ -336,9 +336,12 @@ def _select_compositional_correlation_diverse_genes(
     # source is smaller (LNM ALR has G-1 dims).
     # The selector handles this via candidate_pool sizing, but we
     # need to expose a square matrix of consistent dimension.
+    from .gene_selection import _resolve_pooled_other_idx
+
     selected = _select_genes_by_correlation_diversity(
         corr, int(n_genes), counts_arr,
         min_mean_umi_for_selection=float(min_mean_umi),
+        exclude_idx=_resolve_pooled_other_idx(results),
     )
     if selected.size == 0:
         raise ValueError(

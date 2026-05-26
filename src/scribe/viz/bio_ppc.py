@@ -32,6 +32,7 @@ from .dispatch import (
 from .gene_selection import (
     _coerce_and_align_counts_to_results,
     _get_gene_names,
+    _resolve_pooled_other_idx,
     _select_genes,
 )
 from .ppc_rendering import (
@@ -129,7 +130,12 @@ def plot_bio_ppc(
         f"[dim]Using n_rows={n_rows}, n_cols={n_cols} "
         "for bio-PPC plot (log-spaced binning)[/dim]"
     )
-    selected_idx, mean_counts = _select_genes(counts, n_rows, n_cols)
+    selected_idx, mean_counts = _select_genes(
+        counts,
+        n_rows,
+        n_cols,
+        exclude_idx=_resolve_pooled_other_idx(results),
+    )
 
     selected_means = mean_counts[selected_idx]
     sort_order = np.argsort(selected_means)

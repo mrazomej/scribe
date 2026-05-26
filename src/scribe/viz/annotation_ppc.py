@@ -10,6 +10,7 @@ from .dispatch import _get_map_like_predictive_samples_for_plot
 from .gene_selection import (
     _coerce_and_align_counts_to_results,
     _get_gene_names,
+    _resolve_pooled_other_idx,
     _select_genes,
 )
 from .mixture_ppc import _plot_ppc_figure
@@ -170,7 +171,12 @@ def plot_annotation_ppc(
         )
 
     gene_names = _get_gene_names(results)
-    selected_idx, _mean_counts = _select_genes(counts, n_rows, n_cols)
+    selected_idx, _mean_counts = _select_genes(
+        counts,
+        n_rows,
+        n_cols,
+        exclude_idx=_resolve_pooled_other_idx(results),
+    )
     counts_selected = counts[:, selected_idx]
     n_genes_selected = len(selected_idx)
     console.print(

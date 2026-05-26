@@ -1,9 +1,46 @@
 """Gene selection utilities for ECDF and PPC plots."""
 
+from typing import Optional
+
 import numpy as np
 import logging
 
 _log = logging.getLogger(__name__)
+
+
+def _resolve_pooled_other_idx(results) -> Optional[int]:
+    """Position-in-model-gene-space of the pooled ``_other`` aggregate.
+
+    Returns the index of the trailing pooled ``_other`` column for fits
+    where ``gene_coverage<1.0`` was applied, regardless of the
+    ``correlate_other_column`` setting.  The pooled aggregate is not a
+    real gene and should not be selected for per-gene viz panels.
+
+    Priority order:
+
+    1. ``axis_layout.other_idx`` — present only under the decoupled
+       layout (``correlate_other_column=False``).
+    2. ``_excluded_gene_names`` non-empty — gene-coverage filtering ran,
+       and the trailing model-space column is the pooled aggregate
+       even under the legacy ``correlate_other_column=True`` layout.
+    3. ``var.index[-1] == "_other"`` — manually-pre-filtered AnnData;
+       last-resort literal-name match.
+
+    Returns ``None`` when no pooled ``_other`` column is present.
+    """
+    layout = getattr(results, "axis_layout", None)
+    if layout is not None and getattr(layout, "other_idx", None) is not None:
+        return int(layout.other_idx)
+    excluded = getattr(results, "_excluded_gene_names", None)
+    if excluded:
+        n_genes = int(getattr(results, "n_genes", 0))
+        if n_genes > 0:
+            return n_genes - 1
+    var = getattr(results, "var", None)
+    if var is not None and hasattr(var, "index") and len(var.index) > 0:
+        if str(var.index[-1]) == "_other":
+            return int(len(var.index)) - 1
+    return None
 
 
 def _get_gene_names(results):
@@ -92,22 +129,51 @@ def _coerce_and_align_counts_to_results(counts, results, *, context="viz"):
     )
 
 
-def _select_genes_simple(counts, n_genes):
-    """Simple gene selection for ECDF plots (linear spacing)."""
+def _select_genes_simple(counts, n_genes, *, exclude_idx=None):
+    """Simple gene selection for ECDF plots (linear spacing).
+
+    Parameters
+    ----------
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    n_genes : int
+        Number of genes to select.
+    exclude_idx : int, optional
+        Gene-axis position to exclude from selection (e.g., the pooled
+        ``_other`` aggregate column).  Pass
+        :func:`_resolve_pooled_other_idx` from the call site.
+    """
     counts = _coerce_counts(counts)
     mean_counts = np.median(counts, axis=0)
     nonzero_idx = np.where(mean_counts > 0)[0]
+    if exclude_idx is not None:
+        nonzero_idx = nonzero_idx[nonzero_idx != int(exclude_idx)]
     sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
     spaced_indices = np.linspace(0, len(sorted_idx) - 1, num=n_genes, dtype=int)
     selected_idx = sorted_idx[spaced_indices]
     return selected_idx, mean_counts
 
 
-def _select_genes(counts, n_rows, n_cols):
-    """Select genes for plotting using log-spaced binning."""
+def _select_genes(counts, n_rows, n_cols, *, exclude_idx=None):
+    """Select genes for plotting using log-spaced binning.
+
+    Parameters
+    ----------
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    n_rows, n_cols : int
+        Target grid dimensions (selection produces ``n_rows * n_cols``
+        genes).
+    exclude_idx : int, optional
+        Gene-axis position to exclude from selection (e.g., the pooled
+        ``_other`` aggregate column).  Pass
+        :func:`_resolve_pooled_other_idx` from the call site.
+    """
     counts = _coerce_counts(counts)
     mean_counts = np.median(counts, axis=0)
     nonzero_idx = np.where(mean_counts > 0)[0]
+    if exclude_idx is not None:
+        nonzero_idx = nonzero_idx[nonzero_idx != int(exclude_idx)]
 
     if len(nonzero_idx) == 0:
         return np.array([], dtype=int), mean_counts
