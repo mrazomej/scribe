@@ -887,8 +887,21 @@ def main(cfg: DictConfig) -> None:
 
     # When annotation_key or dataset_key is set we need the full AnnData
     # (for adata.obs); otherwise a plain JAX array is sufficient.
+    #
+    # We also force the full AnnData when a cascade source is configured
+    # (``informative_priors_from``): the SVI→Laplace identity check needs
+    # ``var_names`` on the target side to detect a strict-subset panel
+    # relationship.  Without ``var_names``, ``gene_coverage<1.0`` cascades
+    # silently fall through to the count-only path in
+    # ``_check_gene_identity`` and raise on the (n_src, n_tgt) mismatch.
+    _cascade_source_configured = (
+        cfg.get("informative_priors_from") is not None
+        or cfg.data.get("informative_priors_from") is not None
+    )
     needs_adata = (
-        cfg.get("annotation_key") is not None or dataset_key is not None
+        cfg.get("annotation_key") is not None
+        or dataset_key is not None
+        or _cascade_source_configured
     )
     counts = load_and_preprocess_anndata(
         data_path,
