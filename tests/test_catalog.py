@@ -12,6 +12,7 @@ from scribe.catalog import (
     ExperimentCatalog,
     ExperimentRun,
     _expand_catalog_root_paths,
+    pick_preferred_experiment_run,
 )
 
 
@@ -96,7 +97,9 @@ def test_expand_catalog_root_paths_nonexistent_literal_raises(tmp_path):
         _expand_catalog_root_paths(str(missing))
 
 
-def test_expand_catalog_root_paths_file_literal_raises_not_a_directory(tmp_path):
+def test_expand_catalog_root_paths_file_literal_raises_not_a_directory(
+    tmp_path,
+):
     """A literal path that is a file raises NotADirectoryError.
 
     Returns
@@ -139,7 +142,9 @@ def test_experiment_catalog_init_dedupes_glob_roots(monkeypatch, tmp_path):
     assert catalog.base_dir == shared.resolve()
 
 
-def _build_catalog_with_experiments(experiments: list[ExperimentRun]) -> ExperimentCatalog:
+def _build_catalog_with_experiments(
+    experiments: list[ExperimentRun],
+) -> ExperimentCatalog:
     """Create a catalog instance without triggering filesystem scanning.
 
     Parameters
@@ -251,6 +256,97 @@ def test_parse_override_dirname_supports_leading_bare_boolean_tokens():
     assert parsed["expression_dataset_prior"] == "gaussian"
     assert parsed["guide_rank"] == 256
     assert parsed["mixture_params"] == "phi,mu,gate"
+
+
+def test_find_none_filter_skips_key_as_wildcard():
+    """Passing None as a filter value skips that metadata key entirely.
+
+    Returns
+    -------
+    None
+        Asserts both mixture and non-mixture runs match when n_components is None.
+    """
+    single_component = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/param=canonical",
+        metadata={"model": "nbvcp", "n_components": None},
+    )
+    mixture = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/ncomp=3,param=canonical",
+        metadata={"model": "nbvcp", "n_components": 3},
+    )
+    catalog = _build_catalog_with_experiments([single_component, mixture])
+
+    matches = catalog.find(model="nbvcp", n_components=None)
+
+    assert matches == [single_component, mixture]
+
+
+def test_find_string_null_requires_unset_n_components():
+    """Filter string "null" matches YAML-null metadata, not mixture runs.
+
+    Returns
+    -------
+    None
+        Asserts only the single-component experiment is returned.
+    """
+    single_component = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/param=canonical",
+        metadata={"model": "nbvcp", "n_components": None},
+    )
+    mixture = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/ncomp=3,param=canonical",
+        metadata={"model": "nbvcp", "n_components": 3},
+    )
+    catalog = _build_catalog_with_experiments([single_component, mixture])
+
+    matches = catalog.find(model="nbvcp", n_components="null")
+
+    assert matches == [single_component]
+
+
+def test_find_string_none_alias_requires_unset_metadata():
+    """Filter string "none" is treated the same as "null" for unset fields.
+
+    Returns
+    -------
+    None
+        Asserts mixture runs with explicit n_components are excluded.
+    """
+    single_component = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/param=canonical",
+        metadata={"model": "nbvcp"},
+    )
+    mixture = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/ncomp=3,param=canonical",
+        metadata={"model": "nbvcp", "n_components": 3},
+    )
+    catalog = _build_catalog_with_experiments([single_component, mixture])
+
+    matches = catalog.find(model="nbvcp", n_components="none")
+
+    assert matches == [single_component]
+
+
+def test_pick_preferred_experiment_run_prefers_no_ncomp_dirname():
+    """Prefer non-mixture dirname tokens when multiple runs match filters.
+
+    Returns
+    -------
+    None
+        Asserts the path without ``ncomp=`` wins over the mixture directory.
+    """
+    mixture_first = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/ncomp=3,param=canonical",
+        metadata={"model": "nbvcp"},
+    )
+    single_component = ExperimentRun(
+        path="/tmp/pair/nbvcp/svi/param=canonical,probprior=gaussian",
+        metadata={"model": "nbvcp"},
+    )
+
+    chosen = pick_preferred_experiment_run([mixture_first, single_component])
+
+    assert chosen is single_component
 
 
 def test_find_matches_singleton_comma_list_filter_to_metadata_list():
@@ -384,8 +480,7 @@ def test_filter_with_lambda_over_run_name():
 
     # Path(exp.path).name isolates the run directory name string.
     filtered = catalog.filter(
-        lambda exp: "mixture_params=phi,mu,gate"
-        in Path(exp.path).name
+        lambda exp: "mixture_params=phi,mu,gate" in Path(exp.path).name
     )
 
     assert filtered == [experiments[0]]

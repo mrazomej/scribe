@@ -11,6 +11,122 @@ from typing import Dict, List, Optional, Any, Union, Callable
 import yaml
 from dataclasses import dataclass
 
+# Filter strings that require unset Hydra metadata (YAML ``null`` → Python None).
+_UNSET_METADATA_FILTER_STRINGS = frozenset({"null", "none"})
+
+
+def _filter_value_requests_unset_metadata(value: Any) -> bool:
+    """Return whether a find() filter value requests unset metadata.
+
+    Parameters
+    ----------
+    value : Any
+        Raw filter value passed to ``ExperimentCatalog.find()``.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``value`` is the string ``"null"`` or ``"none"``
+        (case-insensitive), meaning "match experiments where this config
+        field was not set in the saved Hydra YAML."
+    """
+    return (
+        isinstance(value, str)
+        and value.strip().lower() in _UNSET_METADATA_FILTER_STRINGS
+    )
+
+
+def _metadata_value_is_unset(value: Any) -> bool:
+    """Return whether a metadata value represents an unset config field.
+
+    Parameters
+    ----------
+    value : Any
+        Value from experiment metadata (after ``yaml.safe_load``).
+
+    Returns
+    -------
+    bool
+        ``True`` for ``None``, empty strings, and literal ``"null"`` / ``"none"``.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip().lower() in (
+        *_UNSET_METADATA_FILTER_STRINGS,
+        "",
+    ):
+        return True
+    return False
+
+
+def _lookup_metadata_value(metadata: Dict[str, Any], key: str) -> Any:
+    """Read one metadata field, supporting dotted keys.
+
+    Parameters
+    ----------
+    metadata : dict
+        Flattened experiment metadata.
+    key : str
+        Top-level or dot-notated metadata key.
+
+    Returns
+    -------
+    Any
+        Resolved value, or ``None`` when the key is absent or traversal fails.
+    """
+    if key in metadata:
+        return metadata[key]
+    if "." not in key:
+        return metadata.get(key)
+    current: Any = metadata
+    try:
+        for part in key.split("."):
+            current = current[part]
+    except (KeyError, TypeError):
+        return None
+    return current
+
+
+def pick_preferred_experiment_run(
+    runs: List["ExperimentRun"],
+    *,
+    prefer_no_mixture_dirname: bool = True,
+) -> Optional["ExperimentRun"]:
+    """Pick one experiment when several runs match the same feature filters.
+
+    When ``prefer_no_mixture_dirname`` is enabled, runs whose path does not
+    contain an ``ncomp=`` override token are ranked ahead of mixture runs.
+    Remaining ties break lexicographically on ``path`` for determinism.
+
+    Parameters
+    ----------
+    runs : list of ExperimentRun
+        Candidate runs, typically the output of ``ExperimentCatalog.find()``.
+    prefer_no_mixture_dirname : bool, default=True
+        Prefer output directories that omit the compact ``ncomp=`` dirname token.
+
+    Returns
+    -------
+    ExperimentRun or None
+        Selected run, or ``None`` when ``runs`` is empty.
+    """
+    if not runs:
+        return None
+    if len(runs) == 1:
+        return runs[0]
+
+    def _sort_key(run: "ExperimentRun") -> tuple[int, str]:
+        path = str(run.path)
+        mixture_rank = (
+            1
+            if prefer_no_mixture_dirname and "ncomp=" in path
+            else 0
+        )
+        return (mixture_rank, path)
+
+    return sorted(runs, key=_sort_key)[0]
+
+
 # ==============================================================================
 # ExperimentRun class
 # ==============================================================================
@@ -796,7 +912,10 @@ class ExperimentCatalog:
             list of ``ExperimentRun`` objects.
         **filters
             Key-value pairs to filter experiments by. Supports nested keys with
-            dot notation (e.g., inference.batch_size=512)
+            dot notation (e.g., inference.batch_size=512). Pass Python ``None``
+            to skip a key (wildcard). Pass the string ``"null"`` or ``"none"``
+            to require that the field is unset in the saved Hydra config (YAML
+            ``null``, missing metadata key, or equivalent).
 
         Returns
         -------
@@ -814,26 +933,25 @@ class ExperimentCatalog:
                 if value is None:
                     continue
 
+                # String "null" / "none" means unset in Hydra config (YAML null).
+                if _filter_value_requests_unset_metadata(value):
+                    current = _lookup_metadata_value(exp.metadata, key)
+                    if not _metadata_value_is_unset(current):
+                        matches = False
+                    continue
+
                 normalized_filter_value = self._normalize_comma_delimited_value(
                     value
                 )
 
-                # Prefer exact-key lookup first so flattened metadata keys like
-                # "inference.enable_x64" match directly. If not present, fall
-                # back to nested dict traversal for true hierarchical metadata.
-                if key in exp.metadata:
-                    current = exp.metadata[key]
-                elif "." in key:
-                    parts = key.split(".")
-                    current = exp.metadata
-                    try:
-                        for part in parts:
-                            current = current[part]
-                    except (KeyError, TypeError):
-                        matches = False
-                        break
-                else:
-                    current = exp.metadata.get(key)
+                current = _lookup_metadata_value(exp.metadata, key)
+                if (
+                    current is None
+                    and "." in key
+                    and key not in exp.metadata
+                ):
+                    matches = False
+                    break
 
                 normalized_current = self._normalize_comma_delimited_value(
                     current
