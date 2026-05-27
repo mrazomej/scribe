@@ -50,6 +50,10 @@ from .annotation_ppc import plot_annotation_ppc
 from .capture_anchor import plot_capture_anchor, plot_p_capture_scaling
 from .mean_calibration import plot_mean_calibration
 from .mu_pairwise import plot_mu_pairwise
+from .corner_ppc import plot_corner_ppc
+from .compositional_ppc import plot_compositional_ppc
+from .compositional_corner_ppc import plot_compositional_corner_ppc
+from .w_shrinkage import plot_w_shrinkage_spectrum
 from .memory import cleanup_plot_memory
 
 console = Console()
@@ -238,12 +242,42 @@ Examples:
         "hierarchical multi-dataset runs.",
     )
     parser.add_argument(
+        "--corner-ppc",
+        action="store_true",
+        default=None,
+        dest="corner_ppc",
+        help="Enable count-space N×N corner posterior predictive check.",
+    )
+    parser.add_argument(
+        "--compositional-ppc",
+        action="store_true",
+        default=None,
+        dest="compositional_ppc",
+        help="Enable 1-D compositional posterior predictive check grid.",
+    )
+    parser.add_argument(
+        "--compositional-corner-ppc",
+        action="store_true",
+        default=None,
+        dest="compositional_corner_ppc",
+        help="Enable compositional N×N corner posterior predictive check.",
+    )
+    parser.add_argument(
+        "--w-shrinkage",
+        action="store_true",
+        default=None,
+        dest="w_shrinkage",
+        help="Enable W-perp column-norm shrinkage spectrum diagnostic "
+        "(Laplace fits with w_prior only).",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
-        "p-capture-scaling, mean-calibration, mean-pairwise)",
+        "p-capture-scaling, mean-calibration, mean-pairwise, corner PPC, "
+        "compositional PPC, compositional corner PPC, w-shrinkage)",
     )
 
     # Recursive mode
@@ -305,6 +339,12 @@ Examples:
         default=None,
         help="Number of PPC samples for UMAP overlay (default: 50)",
     )
+    parser.add_argument(
+        "--corner-genes",
+        type=int,
+        default=None,
+        help="Number of genes for corner PPC plots (default: 5)",
+    )
 
     return parser.parse_args(argv)
 
@@ -345,6 +385,10 @@ def _load_default_viz_config():
                 "p_capture_scaling": False,
                 "mean_calibration": False,
                 "mu_pairwise": False,
+                "corner_ppc": False,
+                "compositional_ppc": False,
+                "compositional_corner_ppc": False,
+                "w_shrinkage": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {
@@ -409,6 +453,16 @@ def _load_default_viz_config():
                     "point_size": 5.0,
                     "pseudocount": 1.0,
                 },
+                "corner_ppc_opts": {
+                    "n_genes": 5,
+                    "gene_selection": "correlation_diverse",
+                    "min_mean_umi": 5.0,
+                },
+                "w_shrinkage_opts": {
+                    "show_sigma_k": True,
+                    "show_threshold": True,
+                    "threshold_fraction": 0.05,
+                },
             }
         )
 
@@ -441,6 +495,10 @@ def _build_viz_config(args):
         viz_cfg.p_capture_scaling = True
         viz_cfg.mean_calibration = True
         viz_cfg.mu_pairwise = True
+        viz_cfg.corner_ppc = True
+        viz_cfg.compositional_ppc = True
+        viz_cfg.compositional_corner_ppc = True
+        viz_cfg.w_shrinkage = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -469,6 +527,14 @@ def _build_viz_config(args):
         viz_cfg.mean_calibration = True
     if args.mu_pairwise:
         viz_cfg.mu_pairwise = True
+    if args.corner_ppc:
+        viz_cfg.corner_ppc = True
+    if args.compositional_ppc:
+        viz_cfg.compositional_ppc = True
+    if args.compositional_corner_ppc:
+        viz_cfg.compositional_corner_ppc = True
+    if args.w_shrinkage:
+        viz_cfg.w_shrinkage = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -483,6 +549,8 @@ def _build_viz_config(args):
         viz_cfg.ppc_opts.n_samples = args.ppc_samples
     if args.umap_ppc_samples is not None:
         viz_cfg.umap_opts.n_ppc_samples = args.umap_ppc_samples
+    if args.corner_genes is not None:
+        viz_cfg.corner_ppc_opts.n_genes = args.corner_genes
 
     return viz_cfg
 
@@ -544,6 +612,38 @@ def _is_vcp_model(cfg, results):
             return True
 
     return False
+
+
+def _supports_compositional_ppc(results):
+    """Return whether ``results`` exposes compositional predictive sampling.
+
+    Parameters
+    ----------
+    results : object
+        Loaded inference results object.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``get_compositional_samples`` is available.
+    """
+    return hasattr(results, "get_compositional_samples")
+
+
+def _has_w_shrinkage_diagnostics(results):
+    """Return whether ``results`` has W-prior shrinkage diagnostics.
+
+    Parameters
+    ----------
+    results : object
+        Loaded inference results object.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``w_prior_diagnostics`` is populated.
+    """
+    return getattr(results, "w_prior_diagnostics", None) is not None
 
 
 # ------------------------------------------------------------------------------
@@ -960,6 +1060,41 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 _cleanup_after_plot()
 
     # ------------------------------------------------------------------
+    # W-shrinkage spectrum is a global Laplace diagnostic (no counts).
+    # ------------------------------------------------------------------
+    if viz_cfg.w_shrinkage:
+        if not _has_w_shrinkage_diagnostics(results):
+            console.print(
+                "[yellow]  Skipping W-shrinkage spectrum "
+                "(w_prior_diagnostics not available)[/yellow]"
+            )
+        elif not overwrite and _plot_exists(figs_dir, "_w_shrinkage", fmt):
+            plots_skipped.append("W-shrinkage")
+            console.print(
+                "[yellow]  Skipping W-shrinkage spectrum "
+                "(already exists)[/yellow]"
+            )
+        else:
+            console.print(
+                "[dim]Generating W-shrinkage spectrum diagnostic...[/dim]"
+            )
+            try:
+                plot_w_shrinkage_spectrum(
+                    results, figs_dir, orig_cfg, viz_cfg
+                )
+                plots_generated.append("W-shrinkage")
+                console.print(
+                    "[green]  W-shrinkage spectrum saved[/green]"
+                )
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate W-shrinkage spectrum: "
+                    f"{e}[/red]"
+                )
+            finally:
+                _cleanup_after_plot()
+
+    # ------------------------------------------------------------------
     # p_capture scaling is a global diagnostic over all cells.
     # This runs independently of eta-parameterization and only requires VCP.
     # ------------------------------------------------------------------
@@ -1160,6 +1295,126 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 except Exception as e:
                     console.print(
                         f"[red]  Failed to generate PPC plots: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        if viz_cfg.corner_ppc:
+            if not overwrite and _plot_exists(
+                ds_figs_dir, "_corner_ppc", fmt
+            ):
+                plots_skipped.append(f"corner PPC{ds_label}")
+                console.print(
+                    "[yellow]  Skipping corner PPC "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating count-space corner PPC...[/dim]"
+                )
+                try:
+                    plot_corner_ppc(
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                        n_genes=viz_cfg.corner_ppc_opts.n_genes,
+                        gene_selection=viz_cfg.corner_ppc_opts.gene_selection,
+                        min_mean_umi_for_selection=(
+                            viz_cfg.corner_ppc_opts.min_mean_umi
+                        ),
+                    )
+                    plots_generated.append(f"corner PPC{ds_label}")
+                    console.print("[green]  Corner PPC saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate corner PPC: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        if viz_cfg.compositional_ppc:
+            if not _supports_compositional_ppc(ds_results):
+                console.print(
+                    "[yellow]  Skipping compositional PPC "
+                    "(get_compositional_samples not available)[/yellow]"
+                )
+            elif not overwrite and _plot_exists(
+                ds_figs_dir, "_compositional_ppc", fmt
+            ):
+                plots_skipped.append(f"compositional PPC{ds_label}")
+                console.print(
+                    "[yellow]  Skipping compositional PPC "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating compositional PPC...[/dim]"
+                )
+                try:
+                    plot_compositional_ppc(
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                        gene_selection=viz_cfg.corner_ppc_opts.gene_selection,
+                        min_mean_umi=viz_cfg.corner_ppc_opts.min_mean_umi,
+                    )
+                    plots_generated.append(f"compositional PPC{ds_label}")
+                    console.print(
+                        "[green]  Compositional PPC saved[/green]"
+                    )
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate compositional PPC: "
+                        f"{e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        if viz_cfg.compositional_corner_ppc:
+            if not _supports_compositional_ppc(ds_results):
+                console.print(
+                    "[yellow]  Skipping compositional corner PPC "
+                    "(get_compositional_samples not available)[/yellow]"
+                )
+            elif not overwrite and _plot_exists(
+                ds_figs_dir, "_compositional_corner_ppc", fmt
+            ):
+                plots_skipped.append(
+                    f"compositional corner PPC{ds_label}"
+                )
+                console.print(
+                    "[yellow]  Skipping compositional corner PPC "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating compositional corner PPC...[/dim]"
+                )
+                try:
+                    plot_compositional_corner_ppc(
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                        n_genes=viz_cfg.corner_ppc_opts.n_genes,
+                        gene_selection=viz_cfg.corner_ppc_opts.gene_selection,
+                        min_mean_umi=viz_cfg.corner_ppc_opts.min_mean_umi,
+                    )
+                    plots_generated.append(
+                        f"compositional corner PPC{ds_label}"
+                    )
+                    console.print(
+                        "[green]  Compositional corner PPC saved[/green]"
+                    )
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate compositional "
+                        f"corner PPC: {e}[/red]"
                     )
                 finally:
                     _cleanup_after_plot()
@@ -1498,6 +1753,14 @@ def main(argv: list[str] | None = None) -> None:
         enabled_plots.append("mixture composition")
     if viz_cfg.annotation_ppc:
         enabled_plots.append("annotation PPC")
+    if viz_cfg.corner_ppc:
+        enabled_plots.append("corner PPC")
+    if viz_cfg.compositional_ppc:
+        enabled_plots.append("compositional PPC")
+    if viz_cfg.compositional_corner_ppc:
+        enabled_plots.append("compositional corner PPC")
+    if viz_cfg.w_shrinkage:
+        enabled_plots.append("W-shrinkage")
     if viz_cfg.mean_calibration:
         enabled_plots.append("mean calibration")
     if viz_cfg.mu_pairwise:

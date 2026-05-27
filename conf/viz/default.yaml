@@ -19,6 +19,10 @@ viz:
   mean_calibration: false  # Log-log scatter of observed vs predicted per-gene means
   # Pairwise dataset-level mean comparison (multi-dataset only); figure suffix _mean_pairwise.
   mu_pairwise: false
+  corner_ppc: false  # Count-space N×N corner PPC grid
+  compositional_ppc: false  # 1-D compositional PPC grid; requires get_compositional_samples
+  compositional_corner_ppc: false  # Compositional N×N corner PPC; requires get_compositional_samples
+  w_shrinkage: false  # W-perp column-norm spectrum; requires w_prior_diagnostics
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
@@ -100,3 +104,15 @@ viz:
     point_alpha: 0.25  # Alpha for pairwise scatter points
     point_size: 5.0  # Marker size for pairwise scatter points
     pseudocount: 1.0  # Additive constant c used in log10(mu + c)
+
+  # Corner PPC options (count-space and compositional corner plots)
+  corner_ppc_opts:
+    n_genes: 5
+    gene_selection: correlation_diverse
+    min_mean_umi: 5.0
+
+  # W-shrinkage spectrum options
+  w_shrinkage_opts:
+    show_sigma_k: true
+    show_threshold: true
+    threshold_fraction: 0.05

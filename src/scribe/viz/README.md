@@ -132,6 +132,12 @@ The default `hist2d` estimator is designed for speed on large pooled PPC
 samples.  When `density_method="kde"`, pooled samples are subsampled to at most
 50 000 points and tiny jitter is added to break integer ties for KDE stability.
 
+### CLI usage
+
+```bash
+scribe-visualize outputs/my_run --corner-ppc --corner-genes 5 --ppc-samples 2048
+```
+
 ## Compositional PPCs (`plot_compositional_ppc`, `plot_compositional_corner_ppc`)
 
 `plot_compositional_ppc` and `plot_compositional_corner_ppc` render
@@ -174,6 +180,12 @@ filters auto-selected genes above this noise floor; lower it explicitly
 only when the dataset has uniformly low expression and you understand
 the caveat.
 
+### CLI usage
+
+```bash
+scribe-visualize outputs/my_run --compositional-ppc --compositional-corner-ppc
+```
+
 ## W-shrinkage spectrum (`plot_w_shrinkage_spectrum`)
 
 Renders the per-factor compositional-loading spectrum from a Phase-3
@@ -211,6 +223,12 @@ Requires `result.w_prior_diagnostics is not None` — raises
 integration in v1) and for fits without a `w_prior` configured. See
 [`src/scribe/laplace/README.md`](../laplace/README.md) for the strategy
 catalog and calibration workflow.
+
+### CLI usage
+
+```bash
+scribe-visualize outputs/my_run --w-shrinkage
+```
 
 ## `plot_ppc` conditioning levels
 

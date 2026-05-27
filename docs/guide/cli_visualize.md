@@ -70,6 +70,10 @@ ECDF); the rest are opt-in via flags or `--all`.
 | **p_capture scaling**                | `--p-capture-scaling`   | Capture probability vs. library size                                                  | VCP model                           |
 | **Mean calibration**                 | `--mean-calibration`    | Log-log scatter of observed vs. predicted per-gene means                              | ---                                 |
 | **Mean pairwise**                    | `--mean-pairwise`       | Pairwise dataset-level mean comparison                                                | Multi-dataset model                 |
+| **Corner PPC**                       | `--corner-ppc`          | Count-space N×N corner posterior predictive check                                     | ---                                 |
+| **Compositional PPC**                | `--compositional-ppc`   | 1-D compositional posterior predictive check grid                                     | `get_compositional_samples`         |
+| **Compositional corner PPC**         | `--compositional-corner-ppc` | Compositional N×N corner posterior predictive check                            | `get_compositional_samples`         |
+| **W-shrinkage spectrum**             | `--w-shrinkage`         | Per-factor W-perp column-norm shrinkage diagnostic                                    | Laplace fit with `w_prior`          |
 
 Use `--all` to enable every plot at once.
 
@@ -172,6 +176,7 @@ Many plots accept fine-tuning parameters via CLI flags:
 | `--ppc-rows` | `5` | Rows in the PPC grid |
 | `--ppc-cols` | `5` | Columns in the PPC grid |
 | `--ppc-samples` | `512` | Number of posterior predictive samples for PPC |
+| `--corner-genes` | `5` | Number of genes for corner PPC plots |
 | `--umap-ppc-samples` | `50` | PPC samples for the UMAP overlay |
 | `--overwrite` | off | Re-generate plots even if output files already exist |
 
@@ -264,6 +269,11 @@ same conventions as [`scribe-infer`](cli_infer.md#slurm-integration).
 | `--p-capture-scaling`   | off        | Enable capture probability vs. library size                                                                 |
 | `--mean-calibration`    | off        | Enable mean calibration scatter                                                                             |
 | `--mean-pairwise`       | off        | Enable dataset-level mean comparison                                                                        |
+| `--corner-ppc`          | off        | Enable count-space corner PPC                                                                               |
+| `--compositional-ppc`   | off        | Enable compositional PPC grid                                                                               |
+| `--compositional-corner-ppc` | off   | Enable compositional corner PPC                                                                             |
+| `--w-shrinkage`         | off        | Enable W-shrinkage spectrum diagnostic                                                                      |
+| `--corner-genes`        | `5`        | Number of genes for corner PPC plots                                                                        |
 | `--recursive [PATTERN]` | off        | Recursively search directories for result files; defaults to `scribe_results.pkl` when used without PATTERN |
 | `--overwrite`           | off        | Regenerate existing plots                                                                                   |
 | `--format`              | `png`      | Output format (`png`, `pdf`, `svg`, `eps`)                                                                  |
