@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.6"
 app = marimo.App()
 
 
@@ -26,7 +26,7 @@ def _(mo):
     mo.md(r"""
     ## The question we want to answer
 
-    In the previous tutorial we ended at a low-rank-Gaussian variational guide over $(\underline{\mu}, \phi)$ and looked at the resulting correlation heatmap. That heatmap is *useful* — it shows which gene-level parameters are coupled in the variational posterior — but it is **not** a correlation between gene expressions. It is a correlation between *parameters of a model whose generative story emits independent counts gene by gene* given the per-cell capture and the shared $\phi$. Two genes look correlated there because their NB parameters are pulled by the same data, not because the model has any built-in mechanism for one gene's expression to track another.
+    In the previous tutorial we ended at a low-rank-Gaussian variational guide over $(\underline{\mu}, \phi)$ and looked at the resulting correlation heatmap. That heatmap is *useful* — it shows which gene-level parameters are coupled in the variational posterior — but it is **not** a correlation between gene expressions. It is a correlation between *parameters of a model whose generative story emits independent counts gene by gene* given the per-cell capture and the shared $\phi$. Two genes look correlated there because their NB parameters are pulled by the same data, not necessarily because the model has any built-in mechanism for one gene's expression to track another.
 
     For the question *"which genes covary biologically?"* we need a generative model that lets gene expression vary jointly across cells. That is the move we make in this tutorial: from NB-with-shared-$p$ models (NBDM / NBVCP) to the **Negative-Binomial LogNormal** (NBLN), where the per-cell rates live in a correlated log-normal space:
 
@@ -36,7 +36,7 @@ def _(mo):
     u_{c,g} \mid \underline{x}_c \;\sim\; \mathrm{NB}\!\left(r_g,\; \mathrm{logit}^{-1}\!(x_{c,g} - \eta_c)\right).
     $$
 
-    Now gene-gene correlation is a **property of the model itself** — encoded in the loadings matrix $\underline{\underline{W}} \in \mathbb{R}^{G\times k}$ — not a byproduct of a richer variational guide. Asking "do these two genes covary?" becomes asking "what does $\underline{\underline{W}}\underline{\underline{W}}^{\!\top}$ say?", which has a clean answer.
+    Now gene-gene correlation is a **property of the model itself** — encoded in the loadings matrix $\underline{\underline{W}} \in \mathbb{R}^{G\times k}$ — not a byproduct of a richer variational guide. Asking "do these two genes covary?" becomes asking "what does $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ say?", which has a clean answer.
 
     But NBLN is not a free lunch. It introduces a per-cell *rigid-translation gauge* that creates a numerical and conceptual hazard, and the loadings matrix $\underline{\underline{W}}$ has many more columns than the data can support — so without care, the "principled" correlations we extract will be polluted by gauge slop and noise. The rest of this tutorial walks through how `scribe` deals with both problems using three composable pieces:
 
@@ -54,11 +54,11 @@ def _(mo):
     mo.md(r"""
     ## Why NBLN needs a per-cell latent layer (and NBDM doesn't)
 
-    A practical question often comes up at this point: *the previous tutorial worked entirely with NBDM / NBVCP models, where each cell's biology was just a vector of NB draws — no extra "latents per cell" to fit. Why does NBLN suddenly need one?* The answer is the most important conceptual difference between the two model families, and it explains a lot of NBLN's complexity. Let us take it slowly.
+    A practical question often comes up at this point: *the [previous tutorial](jurkat_cells.md) worked entirely with NBDM / NBVCP models, where each cell's biology was just a vector of NB draws — no extra "latents per cell" to fit. Why does NBLN suddenly need one?* The answer is the most important conceptual difference between the two model families, and it explains a lot of NBLN's complexity. Let us take it slowly.
 
     ### NBDM: the per-cell composition integrates out over the simplex in closed form
 
-    In NBDM / NBVCP, the per-cell generative process is grounded in the Poisson-Gamma-Dirichlet hierarchy. As shown in the paper, when all genes share the same success probability $p$, the joint distribution of independent negative binomial UMI counts admits a two-level decomposition:
+    In NBDM / NBVCP under a globally-shared success probability $p$, the per-cell generative process is grounded in the Poisson-Gamma-Dirichlet hierarchy. As shown in the paper, when all genes share the same success probability, the joint distribution of independent negative binomial UMI counts admits a two-level decomposition:
 
     $$
     \pi(\underline{u}_c \mid \underline{r}, p) =
@@ -70,7 +70,7 @@ def _(mo):
     \underbrace{
     \pi(\Lambda \mid r_T, \theta)
     }_{\text{Gamma}}
-    \int d^{G-1} \underline{\rho} \,
+    \int_{\Delta^{G-1}} d^{G-1} \underline{\rho} \,
     \overbrace{
     \pi(\underline{\rho} \mid \underline{r})
     }^{\text{Dirichlet}}
@@ -82,7 +82,7 @@ def _(mo):
 
     where $\underline{\rho} \in \Delta^{G-1}$ is the per-cell gene-expression composition on the $(G-1)$-simplex (the space of "fractions of the transcriptome occupied by each gene"), $u_{T,c} = \sum_g u_{c,g}$ is the total UMI count, $r_T = \sum_g r_g$, and $\theta = p/(1-p)$.
 
-    In principle, each cell "samples" a value for the two continuous latent quantities: a total rate $\Lambda_c$ and a composition $\underline{\rho}_c$. However, part of the beauty of the NBDM problem is that **both integrals collapse to closed forms**, freeing us from having to determine on a per-cell basis the value of either of these variables. The inner simplex integral (Dirichlet $\times$ Multinomial) evaluates to the Dirichlet-Multinomial ($\mathrm{DM}$) distribution, and the outer total integral (Gamma $\times$ Poisson) evaluates to the Negative Binomial ($\mathrm{NB}$). The result is
+    In principle, each cell "samples" a value for the two continuous latent quantities: a total rate $\Lambda_c$ and a composition $\underline{\rho}_c$. However, part of the beauty of the shared-$p$ NBDM problem is that **both integrals collapse to closed forms**, freeing us from having to determine on a per-cell basis the value of either of these variables. The inner simplex integral (Dirichlet $\times$ Multinomial) evaluates to the Dirichlet-Multinomial ($\mathrm{DM}$) distribution, and the outer total integral (Gamma $\times$ Poisson) evaluates to the Negative Binomial ($\mathrm{NB}$). The result is
 
     $$
     \pi(\underline{u}_c \mid \underline{r}, p) =
@@ -90,6 +90,20 @@ def _(mo):
     $$
 
     Neither $\Lambda_c$ nor $\underline{\rho}_c$ survives as a leftover latent to be fitted or approximated per cell — the model is fully tractable, with no per-cell numerical work required.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Relaxing the shared-$p$ assumption: hierarchical gene-specific $p_g$
+
+    As shown in the [previous tutorial](jurkat_cells.md), `scribe` pipelines (including the SVI cascade source we fit in Stage 1 below) allow us to relax this restriction and fit gene-specific success probabilities ($p_g$).
+
+    Strictly speaking, when $p_g$ varies across genes, the exact Dirichlet-Multinomial factorization **breaks down**. Thererfore, compositions are no longer strictly Dirichlet. To draw posterior predictive samples under gene-specific success probabilities, we must rely on **Gamma-based composition sampling** (which scales independent Gamma draws $\gamma_g \sim \text{Gamma}(r_g, 1)$ by $(1-p_g)/p_g$ before normalizing) rather than simple Dirichlet draws. This Gamma-based sampler serves as a strict generalization that reduces exactly to the Dirichlet distribution if all $p_g$ are equal.
+
+    However, even with gene-specific $p_g$, the model is still **uncorrelated**. There is no correlated high-dimensional latent vector $\underline{x}_c \in \mathbb{R}^G$ per cell. Genes remain conditionally independent given the scalar per-cell capture efficiency, completely avoiding the expensive $G$-dimensional integration that makes NBLN so demanding.
     """)
     return
 
@@ -129,7 +143,13 @@ def _(mo):
     $$
 
     This integral has **no closed form**. The Gaussian wants to be conjugate to a Gaussian likelihood; the NB likelihood, parameterized through a logit transform of the latent, is not Gaussian. There is no magic cancellation that removes $\underline{x}_c$. We are stuck with a $G$-dimensional integral that has to be approximated ***for every cell***.
+    """)
+    return
 
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### What "Laplace inference" actually does about it
 
     `scribe`'s NBLN-Laplace path handles each cell's integral by approximating the integrand around its mode:
@@ -145,13 +165,13 @@ def _(mo):
     The per-cell Laplace step above is only the inner half of the picture. NBLN-Laplace alternates between **two** optimization problems, in the spirit of the classical [Expectation-Maximization (EM)](https://en.wikipedia.org/wiki/Expectation%E2%80%93maximization_algorithm) algorithm — fix one block of unknowns, solve the other, swap, repeat:
 
     - **E-step ("expectation"):** with the global parameters $\theta = (\underline{\mu}, \underline{\underline{W}}, \underline{d}, \ldots)$ held fixed, find each cell's per-cell latent MAP $\underline{x}_c^\ast$ (and the Hessian needed for the `log-det` term) via the Newton iteration described above. `laplace_config` (`n_newton_steps`, `damping`, `newton_max_step`, …) controls this inner step.
-    - **M-step ("maximization"):** with the per-cell MAPs held fixed, take optimizer steps on the global parameters $\theta$ using the Laplace-approximated ELBO as the objective — the same kind of stochastic-gradient loop as a regular SVI fit. `n_steps`, `optimizer_config`, and `early_stopping` control this outer step.
+    - **M-step ("maximization"):** with the per-cell MAPs held fixed, take optimizer steps on the global parameters $\theta$ using the Laplace-approximated [ELBO](https://en.wikipedia.org/wiki/Evidence_lower_bound) as the objective — the same kind of stochastic-gradient loop as a regular SVI fit. `n_steps`, `optimizer_config`, and `early_stopping` control this outer step.
 
     The two halves take turns: refresh the per-cell MAPs, run a chunk of M-step gradient updates, refresh the MAPs again, run more M-step updates, and so on until the loss envelope settles.
 
     The reason this split is necessary goes back to the identifiability story above. The per-cell latents $\underline{x}_c$ are "annoying" — there are $C \times G$ of them, they have no closed-form posterior, and they tangle non-linearly with the global parameters through the NB-logit. Holding them fixed at their current MAPs lets the M-step look like a familiar SVI/Adam loop on a few global parameters. Holding the global parameters fixed lets each cell's E-step look like an isolated, well-conditioned Newton problem. Doing both at once is intractable; alternating between them is what makes NBLN-Laplace tick.
 
-    This is why NBLN-Laplace explicitly **owns a per-cell $\underline{x}_c$ MAP** as a stored field on the result (`x_loc`) and why the Newton iterations show up in the loss accounting. It is not a quirk of the implementation — it is the inevitable cost of moving from a model whose per-cell integral is closed-form (NBDM) to one whose per-cell integral is not (NBLN). The reward is the joint correlation structure encoded in $\underline{\underline{W}}\underline{\underline{W}}^{\!\top}$, which is the only thing NBDM cannot give us no matter how clever the variational guide is.
+    This is why NBLN-Laplace explicitly **owns a per-cell $\underline{x}_c$ MAP** as a stored field on the result (`x_loc`) and why the Newton iterations show up in the loss accounting. It is not a quirk of the implementation — it is the inevitable cost of moving from a model whose per-cell integral is closed-form (NBDM) to one whose per-cell integral is not (NBLN). The reward is the joint correlation structure encoded in $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$, which is the only thing NBDM cannot give us no matter how clever the variational guide is.
 
     Keep this picture in mind throughout the rest of the tutorial: every time you see a "per-cell Newton" or a "latent $\underline{x}_c$", that is the price of replacing "independent NB per gene" with "correlated log-rates across genes".
     """)
@@ -192,10 +212,15 @@ def _(mo):
 
 @app.cell
 def _(Path, scribe):
-    # Define data directory
-    data_dir = Path(
-        "/path/to/jurkat_cells/"
-    )
+    # Load the local tutorial path configuration.
+    import json
+    with Path(__file__).with_name("tutorial_paths.local.json").open(
+        "r", encoding="utf-8"
+    ) as _f:
+        _data_root = json.load(_f)["SCRIBE_TUTORIAL_DATA_ROOT"]
+
+    # Build the dataset-specific path relative to the configured root.
+    data_dir = Path(_data_root).expanduser() / "jurkat_cells"
 
     # Load the data
     adata = scribe.data_loader.load_and_preprocess_anndata(
@@ -213,15 +238,15 @@ def _(mo):
 
     The first ingredient is a converged NBVCP-SVI fit on the same data. Why bother fitting an "old" model first — and what makes its parameters trustworthy as a seed for NBLN?
 
-    The real reason is **structural identifiability**. NBLN couples three quantities — the per-gene dispersion $r_g$, the per-cell capture $\eta_c$, and the per-cell latent log-rate $\underline{x}_c$ — through a likelihood that cannot pin them all down at once. The three knobs trade off against each other: shift $\eta_c$ and you can compensate with $\underline{x}_c$; rescale $r_g$ and you change how the NB curvature reads the latent; and the gene-gene covariance $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d})$ leaks into all of it through the per-cell Gaussian prior on $\underline{x}_c$. Cold-starting NBLN-Laplace on the full parameter set is asking the optimizer to disentangle several near-equivalent answers from one likelihood surface; what survives is gauge slop rather than biology.
+    The real reason is **structural identifiability**. NBLN couples three quantities — the per-gene dispersion $r_g$, the per-cell capture efficienty $\eta_c$ (reparameterization of the capture probability), and the per-cell latent log-rate $\underline{x}_c$ — through a likelihood that cannot pin them all down at once. The three knobs trade off against each other: shift $\eta_c$ and you can compensate with $\underline{x}_c$; rescale $r_g$ and you change how the NB curvature reads the latent; and the gene-gene covariance $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d})$ leaks into all of it through the per-cell Gaussian prior on $\underline{x}_c$. Cold-starting NBLN-Laplace on the full parameter set is asking the optimizer to disentangle several near-equivalent answers from one likelihood surface; what survives is gauge slop rather than biology.
 
     The cascade trick exploits a **structural fact about the model family**: NBVCP is exactly the limit of NBLN as $\underline{\underline{\Sigma}} \to 0$. When the gene-gene covariance vanishes, the per-cell log-rate prior collapses to a point, the latent $\underline{x}_c$ drops out as a free parameter, and the NBLN likelihood reduces gene-by-gene to the variable-capture NB you fit in the previous tutorial.
 
-    The crucial observation is that **$r_g$ plays the same role in both models** and does not depend on $\underline{\underline{\Sigma}}$. It is the per-gene dispersion of the NB observation channel — a property of how counts are generated *given* a log-rate — not of how log-rates covary across genes. So the value of $r_g$ that best explains a gene's marginal count distribution under NBVCP is also the value that best explains it under NBLN. In NBVCP the identifiability landscape is dramatically friendlier (no $\underline{\underline{\Sigma}}$-mediated coupling, no per-cell latent layer, the Dirichlet-multinomial story works out cleanly), so the data pins $r_g$ down sharply. We fit there, and carry $r_g$ forward.
+    The crucial observation is that **$r_g$ plays the same role in both models** and does not depend on $\underline{\underline{\Sigma}}$. It is the per-gene dispersion of the NB observation channel — a property of how counts are generated *given* a log-rate — not of how log-rates covary across genes. So the value of $r_g$ that best explains a gene's marginal count distribution under NBVCP is also the value that best explains it under NBLN. In NBVCP the identifiability landscape is dramatically friendlier: because there is no $\underline{\underline{\Sigma}}$-mediated coupling and genes are conditionally independent, there is no high-dimensional per-cell latent layer to marginalize, allowing the data to pin $r_g$ down sharply. We fit there, and carry $r_g$ forward.
 
-    Per-cell capture $\eta_c$ is the harder case. Even in NBVCP it is only partly identified by the data — we need a biology-informed prior (`priors={"capture_efficiency": ...}`) to break the residual ambiguity. And in NBLN there is an additional, exact *rigid-translation gauge*: shift every $x_{c,g}$ up by some per-cell constant $\Delta_c$ and shift $\eta_c$ down by the same $\Delta_c$, and the observed counts are unchanged because the likelihood only sees $x_{c,g} - \eta_c$. So the $\eta_c$ we extract from NBVCP is not the "true" $\eta_c$ in any absolute sense, and we should not pretend it is.
+    Per-cell capture $\eta_c$ is the harder case. Even in NBVCP it is only partly identified by the data. For a simple NBVCP fit you can use for a biology-informed prior (`priors={"capture_efficiency": (np.log(M_0), \sigma_M)}`) to break the residual ambiguity. The cascade source we use below is the most flexible NBVCP variant from the previous tutorial — gene-specific $p_g$ with the joint low-rank variational guide — which has enough parametric structure to pin $\eta_c$ to a sensible scale without an explicit anchor; adding the capture-efficiency prior on top is harmless if you want a tighter result. And in NBLN there is an additional, exact *rigid-translation gauge*: shift every $x_{c,g}$ up by some per-cell constant $\Delta_c$ and shift $\eta_c$ down by the same $\Delta_c$, and the observed counts are unchanged because the likelihood only sees $x_{c,g} - \eta_c$. So the $\eta_c$ we extract from NBVCP is not the "true" $\eta_c$ in any absolute sense, and we should not pretend it is.
 
-    Here is the payoff that makes the cascade defensible: **downstream compositional inference is robust to misspecification of $\eta_c$**. The compositional-robustness theorem (worked out in the paper) shows that the per-cell composition $\underline{\rho}_c = \mathrm{softmax}(\underline{x}_c)$ is invariant under the rigid translation. Any biologically interesting question that can be phrased compositionally — differential expression in CLR/ILR coordinates, gene-gene correlations from $\underline{\underline{W}}_\perp \underline{\underline{W}}_\perp^{\!\top}$, pathway enrichment on ALR balances — is invariant to whatever per-cell constant the gauge picked up. So when we hand $\eta_c$ to NBLN as a fixed quantity, we are fixing it in a coordinate system where the questions we care about don't see the error.
+    Here is the payoff that makes the cascade defensible: **downstream compositional inference is robust to misspecification of $\eta_c$**. The compositional-robustness theorem (worked out in the paper) shows that the per-cell composition $\underline{\rho}_c = \mathrm{softmax}(\underline{x}_c)$ is invariant under the rigid translation. Any biologically interesting question that can be phrased compositionally — differential expression in CLR/ILR coordinates, gene-gene correlations from $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ — is invariant to whatever per-cell constant the gauge picked up. So when we hand $\eta_c$ to NBLN as a fixed quantity, we are fixing it in a coordinate system where the questions we care about don't see the error.
 
     The cascade is therefore not "use a richer model's posterior to seed NBLN". It is sharper than that:
 
@@ -235,63 +260,62 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We use:
+    We use the deepest NBVCP variant from the previous tutorial:
 
-    - `model="nbvcp"` with `parameterization="mean_odds"` — the same combination that gave clean PPCs in the first tutorial.
-    - `priors={"capture_efficiency": (np.log(100_000), 0.1)}` — the **biology-informed capture-efficiency prior**. The two numbers are the mean and standard deviation of $\log(M_c\,\nu_c) = x_{c,g} - \eta_c$ on a reasonable mRNA scale: `log(100,000)` says "this cell sample's true mRNA count is around $10^5$ molecules" (a typical mammalian-cell ballpark) and `0.1` says "we are quite confident in that scale". The number is not a precise measurement — it just has to break the gauge degeneracy.
-    - `gene_coverage=0.99` — pool low-coverage genes into one "other" pseudo-gene. Reduces dimensionality without throwing data away.
-    - `early_stopping={...checkpoint_dir...}` — Orbax checkpoints let us interrupt and resume the (long) SVI fit without losing progress.
+    - `variable_capture=True` with `parameterization="canonical"` — variable-capture NB in $(r_g, p_g)$ coordinates.
+    - `guide_rank=128` + `joint_params="biological"` + `dense_params="mean"` — the joint low-rank variational guide. Rich enough to pin posterior coupling between $r_g$, $p_g$, and per-cell capture without an explicit capture-efficiency anchor.
+    - `prob_prior="gaussian"` — gene-specific $p_g$ from a hierarchical Gaussian-on-logit prior. The most flexible NBVCP variant in `scribe`.
+    - **No `gene_coverage` filter at this stage.** The cascade source's job is to estimate $r_g$ for every transcript that has signal at all. Pooling low-coverage genes here would conflate dispersion across many heterogeneous transcripts, weakening exactly the parameter we are going to inherit. Coverage filtering kicks in at the NBLN stage — we explain why when we get there.
+    - `early_stopping={"enabled": True, "patience": 1000}` — let the optimizer stop when the loss plateau is reliable.
 
-    The block below either loads a previously-fit cached pickle or runs SVI from scratch. On first run, expect this stage to take some time.
+    The block below either loads a previously-fit cached pickle — this is the same pickle produced by the deepest fit in the first tutorial, so if you have already worked through that notebook the SVI cascade source is already on disk and just loads here — or runs SVI from scratch. On first run, expect this stage to take some time.
     """)
     return
 
 
 @app.cell
-def _(adata, data_dir, np, pickle, scribe):
+def _(adata, clear_caches, data_dir, gc, pickle, scribe):
+    # Clear GPU memory from previous fits
+    clear_caches()
+    gc.collect()
+
     # Define output directory
     out_dir = data_dir / "scribe_results"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Cascade-stage knobs (named exactly as in the companion EDA script).
-    _gene_coverage = 0.99
-    _model_type_svi = "nbvcp"
-    _parameterization_svi = "mean_odds"
-    _capture_efficiency_prior = (np.log(100_000), 0.1)
+    # Define parameterization
+    _parameterization = "canonical"
 
-    _out_path_svi = out_dir / (
-        f"scribe_results_{_model_type_svi}-"
-        f"{_parameterization_svi}-vcp-"
-        f"{_gene_coverage}gene_coverage-"
-        f"anchor_svi.pkl"
-    )
-    _svi_checkpoint_dir = out_dir / (
-        f"checkpoints_{_model_type_svi}-"
-        f"{_parameterization_svi}-vcp-"
-        f"{_gene_coverage}gene_coverage-"
-        f"anchor_svi"
+    # Define output file path — match the companion ``jurkat_cells.py``
+    # tutorial's deepest SVI fit so the same pickle is reused if you have
+    # already worked through that notebook.
+    _out_path = out_dir / (
+        f"scribe_results_nbvcp-low-rank-prob_{_parameterization}.pkl"
     )
 
-    if _out_path_svi.exists():
-        with open(_out_path_svi, "rb") as _f:
+    if _out_path.exists():
+        # Load model from pkl file
+        with open(_out_path, "rb") as _f:
             svi_results = pickle.load(_f)
     else:
-        _svi_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # Fit the rich NBVCP variant on ALL genes — no gene_coverage filter
+        # at this stage.  The cascade source needs faithful per-gene r_g
+        # and per-cell eta_c; coverage filtering happens at the NBLN-Laplace
+        # stage where it actually matters (covariance estimates from
+        # sparsely-sampled genes are unreliable).
         svi_results = scribe.fit(
             adata,
-            model=_model_type_svi,
-            parameterization=_parameterization_svi,
-            inference_method="svi",
-            gene_coverage=_gene_coverage,
-            n_steps=500_000,
-            unconstrained=True,
-            priors={"capture_efficiency": _capture_efficiency_prior},
-            early_stopping={
-                "enabled": True,
-                "checkpoint_dir": str(_svi_checkpoint_dir),
-            },
+            variable_capture=True,
+            parameterization=_parameterization,
+            guide_rank=128,
+            joint_params="biological",
+            dense_params="mean",
+            prob_prior="gaussian",
+            n_steps=100_000,
+            early_stopping={"enabled": True, "patience": 1000},
         )
-        with open(_out_path_svi, "wb") as _f:
+        # Save the fitted model
+        with open(_out_path, "wb") as _f:
             pickle.dump(svi_results, _f)
 
     svi_results
@@ -307,7 +331,7 @@ def _(mo):
 
     1. **Training converged.** The ELBO curve should drop fast and then flatten. If the SVI source has not converged, neither will the cascade.
     2. **Marginal PPCs look right.** Per-gene UMI histograms should overlap with the model's predictive band across the abundance range.
-    3. **Per-cell capture behaves sensibly.** With a tight prior on $\log(M_c\nu_c)$, the inferred per-cell $\nu_c$ should be a monotone function of library size and saturate near 1 only for the deepest cells.
+    3. **Per-cell capture behaves sensibly.** The inferred per-cell $\nu_c$ should be a monotone function of library size and saturate near 1 only for the deepest cells.
 
     Skipping any of these is a recipe for cascade contamination — garbage in, garbage out.
     """)
@@ -346,7 +370,7 @@ def _(mo):
     mo.md(r"""
     The PPC panels track the observed histograms well across abundance — the cascade source has a coherent marginal story.
 
-    Now we look at the per-cell capture diagnostic. With the biology-informed prior, $\nu_c$ should rise gently with library size and asymptote near 1 only for cells with very deep coverage.
+    Now we look at the per-cell capture diagnostic. $\nu_c$ should rise gently with library size and asymptote near 1 only for cells with very deep coverage.
     """)
     return
 
@@ -360,7 +384,7 @@ def _(adata, scribe, svi_results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Capture saturates near $\sim$ 30K UMIs — the deepest Jurkat cells in this dataset are interpreted as essentially fully-captured, while the shallowest cells are routed through a lower effective $\nu_c$. This is the model's account of "library size as a technical channel" rather than "library size as biology". This per-cell $\eta_c$ posterior is what we will hand to NBLN-Laplace as a frozen anchor.
+    Capture saturates near $\sim$ 40K UMIs — the deepest Jurkat cells in this dataset are interpreted as essentially fully-captured, while the shallowest cells are routed through a lower effective $\nu_c$. This is the model's account of "library size as a technical channel" rather than "library size as biology". This per-cell $\eta_c$ posterior is what we will hand to NBLN-Laplace as a frozen anchor.
     """)
     return
 
@@ -372,7 +396,7 @@ def _(mo):
 
     Marginal PPCs ask "does the model reproduce the histogram of UMI counts gene by gene?". That is necessary but not sufficient. The other thing we care about is *whether the joint distribution of expression across genes within a cell is right* — what fraction of a cell's transcriptome is gene A versus gene B versus gene C? This is the **compositional** question, and it is the natural object for downstream differential expression.
 
-    `scribe.viz.plot_compositional_ppc` overlays the empirical distribution of per-cell *fractions* $u_{c,g} / \sum_{g'} u_{c,g'}$ on the model's compositional predictive distribution, for an automatically chosen set of well-expressed genes. If the model has the marginal counts right but the joint structure wrong, this is where you would see it.
+    `scribe.viz.plot_compositional_ppc` overlays the empirical distribution of per-cell *fractions* $\hat{\rho}_{c,g} = u_{c,g} / \sum_{g'} u_{c,g'}$ on the model's compositional predictive distribution, for an automatically chosen set of well-expressed genes. If the model has the marginal counts right but the joint structure wrong, this is where you would see it.
     """)
     return
 
@@ -384,7 +408,7 @@ def _(adata, scribe, svi_results):
         adata,
         n_genes=16,
         n_rows=4,
-        n_samples=2048,
+        n_samples=1024,
         min_mean_umi=5.0,
         figsize=(10, 10),
     )
@@ -394,29 +418,11 @@ def _(adata, scribe, svi_results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    The marginal compositional fractions look fine — but there is a striking visual feature in these panels that is worth pausing on: **the empirical (data) distribution is much wider than the model's predictive distribution.** It looks like the model is "underconfident" about how much spread there should be in each gene's fraction across cells. Is the model wrong?
+    The marginal compositional fractions look excellent — model and empirical overlap closely across the abundance range. That is a non-trivial result: the empirical fraction $\hat{\rho}_{c,g} = u_{c,g} / \sum_{g'} u_{c,g'}$ carries multinomial sampling noise on top of whatever biological variability the cell has, so we might naively expect the empirical histograms to be visibly wider than any "honest" model's predictive. That they roughly coincide tells us the cascade source has enough per-gene compositional flexibility to absorb each gene's spread into the latent distribution.
 
-    No — the *empirical fraction itself* is a noisy estimate, and that is exactly the noise the model is trying to look through.
+    A residual mismatches are worth a quick look: HIST1H4C is wider in the model than in the empirical, which is sharp and apparently zero-inflated. This is a histone gene, expressed almost exclusively during S phase, with bursty bimodal expression that the NB family does not have a two-state knob for. The model smears a continuous distribution across what the data presents as bimodal mass.
 
-    Consider what goes into the empirical fraction $\hat{\rho}_{c,g} = u_{c,g} / \sum_{g'} u_{c,g'}$ that we plot for the data. To get one of those numbers we:
-
-    1. Started with a true biological mRNA composition $\underline{\rho}_c$ for cell $c$.
-    2. Captured a fraction $\nu_c$ of those molecules (the *technical capture noise*).
-    3. Sequenced and counted the survivors — a finite-sample multinomial draw from a finite library (the *multinomial sampling noise*).
-    4. Divided counts by total counts, which propagates both noise sources into the resulting fraction.
-
-    The empirical fraction $\hat{\rho}_{c,g}$ is therefore $\rho_{c,g}$ plus *all the noise that happened between cell and FASTQ*. For a gene at fraction $10^{-3}$ in a cell that ended up with 10,000 UMIs, the empirical fraction has roughly $\sqrt{10/10{,}000^2} \approx 3 \times 10^{-4}$ of sampling noise on top of whatever the true biological fraction is — a 30% relative noise floor that has nothing to do with biology.
-
-    What the **model** plots as its predictive distribution, on the other hand, is the *posterior over the true biological $\rho_{c,g}$* — the thing the data is a noisy view of. Of course it is narrower. That gap between empirical and predicted is not the model being overconfident; it is the model correctly distinguishing biological signal from observation noise, and reporting the signal alone. **That distillation is exactly the value-add of having a probabilistic model in the first place.**
-
-    Two consequences worth flagging for downstream analysis:
-
-    - **Naive composition estimators** ($\hat{\rho}_{c,g} = u_{c,g} / \text{total}_c$) are not "the truth" — they are a particular estimator with known noise properties, mostly dominated by sampling at low UMI counts. Differential-expression methods that use $\hat{\rho}$ directly inherit that noise floor.
-    - **Size-factor normalization** (divide by a per-cell scalar) does not fix this either. It treats the total UMI count as a single fixed number per cell, when in fact that number is itself a draw from a distribution; and once divided, the per-cell variance of the result is still dominated by multinomial sampling at low counts. A *model* that owns both the biology and the technical noise gets to integrate over both — and that is what produces the narrow predictive bands here.
-
-    Now, compositional **marginals** can still hide a multitude of sins even when the noise gap looks reasonable. What if gene A and gene B individually look right, but when you look at the *joint* distribution of $(\rho_A, \rho_B)$ across cells, the model produces a round blob while the data clearly shows a tilted ellipse? That is a gene-gene correlation the model is missing, and a marginal check will never reveal it.
-
-    The right tool for this question is a compositional **corner plot** — a grid of pairwise 2D projections plus marginals — comparing data and predictive samples panel by panel.
+    A model that passes marginal compositional PPCs can still hide a multitude of sins. What if gene A and gene B individually look right but their joint distribution across cells shows a tilted ellipse while the model produces a round blob? That would be a gene-gene correlation the model is missing, invisible to any marginal check. The compositional corner plot below is the right tool for that question.
     """)
     return
 
@@ -438,9 +444,23 @@ def _(adata, scribe, svi_results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Diagonals (1D marginals) match. Off-diagonals (2D joint compositions) do not. The data shows tilted ridges in several panels — pairs of genes whose compositional fractions covary across cells — that the SVI model's predictive contours render as round blobs. **The model's generative story does not encode that joint structure.** It cannot: NBVCP emits counts independently across genes given the per-cell capture, so the only cross-gene "correlation" available is what flows through the shared $\phi$ (or the shared posterior on cell-level quantities). That is fundamentally a *marginal* coupling, not a joint one.
+    Diagonals (1D marginals) match. Off-diagonals are more nuanced than a quick scan suggests. The bulk of each 2D distribution lines up well — model contours and empirical density occupy the same region in compositional space, and there is no dramatic visual mismatch in the densely-populated centers. The tails are where the model fails. Look at the panels pairing PTTG1 (a mitotic-spindle gene) and HIST1H4C (an S-phase histone) with the housekeeping ribosomal proteins RPS19 and RPS16: the empirical shows scattered cells at high cell-cycle gene fraction and low ribosomal fraction, a coordinated anti-correlation the model's predictive does not generate. Even more dramatic, look at the correlation betweenRPS19 and RPS16. The empirical fractions shows some correlation that the model smears out as a completely uncorrelated blob.
 
-    This is the gap NBLN closes. Its log-rate prior $\mathcal{N}(\underline{\mu}, \underline{\underline{W}}\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d}))$ is a **joint** model for cell-level expression, so the same picture above is the criterion we will use to judge whether NBLN succeeds: do the compositional corner panels move from round blobs to tilted ellipses that match the data?
+    Why does the bulk match? Compositional space is forgiving. Given a model that gets per-gene marginals right — and the diagonals confirm it does — the simplex constraint $\sum_g \rho_g = 1$ structurally determines the bulk shape of each 2D off-diagonal: when one gene goes up, every other gene must go down on average. That is cross-gene anti-correlation any compositional model gets for free, without believing in cross-gene structure generatively. The cascade source therefore passes a "soft" version of the joint test on bulk geometry alone, even though its generative likelihood emits gene counts independently given per-cell capture.
+
+    What it cannot pass is the tails. NBVCP has exactly one per-cell knob — the scalar capture $\nu_c$ — and it scales every gene uniformly. So NBVCP cannot generate "this cell happens to be in S phase: histones up, ribosomal proteins down, mitotic genes also up". The cell-state-driven anti-correlation we see in the scattered outliers requires a generative model where the per-cell expression *vector* can move jointly across genes.
+
+    This is the gap NBLN closes, and the way it closes the gap is conceptually as important as the closure itself. NBLN's per-cell log-rate prior
+
+    $$
+    \underline{x}_c \sim \mathcal{N}\!\left(\underline{\mu},\, \underline{\underline{W}}\,\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d})\right)
+    $$
+
+    makes the cross-gene structure a **first-class, explicit parameter of the generative model**. The matrix $\underline{\underline{W}}$ is the model's answer to "which directions in gene space are cells allowed to move along jointly", and $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ is the implied gene-gene covariance — a single object you can inspect, project gauge-invariantly, regularize with a sparsity prior, and read as a correlation matrix.
+
+    The reason this matters is downstream. Asking "which gene pairs covary?", "which gene programs does the data support?", or "is this DE contrast confounded by another gene's expression?" only has a well-defined answer at the parameter level when the model carries an explicit object for the gene-gene structure. NBLN's $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ is that object. Under NBVCP — even with the joint low-rank variational guide — those same questions have no model-level answer: the apparent joint structure in PPC samples comes from the simplex constraint plus per-cell capture scaling, not from a parameter that names the cross-gene coupling. You can compute a posterior correlation matrix from the guide, but it is a diagnostic of how the data couples parameter estimates under a count-independent likelihood — not a model statement about which genes covary biologically.
+
+    The diagnostic we will use to judge whether NBLN succeeds is whether the same compositional corner panels, refit under NBLN with the cascade and the loadings shrinkage, extend their predictive contours into the tails that the empirical actually populates — and whether the inferred $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ is a structurally clean object after the gauge is killed and the noise columns are shrunk away.
 
     Before fitting NBLN, one more useful preview from the SVI cascade source.
     """)
@@ -452,7 +472,7 @@ def _(adata, scribe, svi_results):
     scribe.viz.plot_corner_ppc(
         svi_results,
         adata,
-        n_genes=5,
+        n_genes=6,
         n_samples=512,
         figsize=(8, 8),
         n_contour_levels=3,
@@ -492,13 +512,13 @@ def _(mo):
 
     Why are we comfortable doing it here?
 
-    1. **The parameters we are turning into priors are the ones the correlated model has the most trouble pinning down on its own.** Per-cell capture $\eta_c$ is gauge-degenerate in NBLN; per-gene dispersion $r_g$ couples nonlinearly to the latent log-rate through the NB. Estimating these in the *uncorrelated* model (NBVCP), where the per-cell log-rates collapse into a tidy Dirichlet-multinomial story with no extra latent layer, is dramatically easier and more stable. We are using the easy fit to inform the hard fit, not running two copies of the same fit on the same data.
+    1. **The parameters we are turning into priors are the ones the correlated model has the most trouble pinning down on its own.** Per-cell capture $\eta_c$ is gauge-degenerate in NBLN; per-gene dispersion $r_g$ couples nonlinearly to the latent log-rate through the NB. Estimating these in the *uncorrelated* model (NBVCP), where the per-cell log-rates remain independent per-gene given the capture efficiency and require no extra $G$-dimensional latent layer, is dramatically easier and more stable. We are using the easy fit to inform the hard fit, not running two copies of the same fit on the same data.
 
     2. **In the large-data limit, empirical-Bayes double-dipping has a vanishing cost.** With ~3,200 cells and tens of thousands of UMIs each, the prior hyperparameters we learn are pinned down to a fraction of their plausible range — far tighter than the residual uncertainty in the NBLN posterior. So when NBLN-Laplace re-uses these priors, the "data was already used to inform the prior" effect is statistically dominated by the much larger amount of data being explained by the new model parameters. This is a property of large-N empirical Bayes that is worked out in detail in the Bayesian statistics literature; a useful intuition is that the priors are informative on a subset of nuisance parameters whose posterior the new model's data would barely sharpen anyway.
 
     3. **The alternative — uninformative priors on $r_g$ and $\eta_c$ — is genuinely worse.** Without the cascade, NBLN-Laplace has to estimate the gauge-vulnerable parameters and the new correlation parameters at the same time, and the optimizer wanders along the gauge axis because the likelihood is flat there. The empirical-Bayes step gives the optimizer a non-flat objective to follow. The (small) statistical cost of double-dipping is paid for many times over by the (large) numerical-stability gain.
 
-    The right mental model is "we are doing maximum-likelihood estimation of certain nuisance parameters under a simpler, well-identified model, and then conditioning on those estimates as we move to a richer, less-identified model." This is a well-trodden Bayesian workflow — much like using a converged SVI fit to initialize MCMC for fields where MCMC alone would not mix.
+    The right mental model is "we are doing MAP estimation of certain nuisance parameters under a simpler, well-identified model, and then conditioning on those estimates as we move to a richer, less-identified model." This is a well-trodden Bayesian workflow — much like using a converged SVI fit to initialize MCMC for fields where MCMC alone would not mix.
     """)
     return
 
@@ -530,6 +550,20 @@ def _(mo):
     A column-wise horseshoe prior says: *each column of $\underline{\underline{W}}$ has its own scale $\lambda_k$, and that scale is drawn from a hierarchical prior that strongly prefers small values but has heavy tails for the few columns that genuinely need to be large.* In effect, the prior performs **adaptive rank selection** during fitting — columns that the data does not support shrink toward zero; columns it does support remain unshrunk. Mathematically this is a sparsity-inducing prior in the *column* dimension, analogous to (but more flexible than) hard-truncating $k$ to a smaller number.
 
     The benefit over manually picking $k$: you can set $k$ generously (here, 32), let the prior figure out the effective rank, and inspect the spectrum after the fact to see what the data actually supported. We will do exactly that with the `plot_w_shrinkage_spectrum` diagnostic.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Piece 4: `gene_coverage=0.99` — restrict covariance estimation to well-sampled genes
+
+    At the SVI stage we fit *all* genes because the cascade needed $r_g$ for every transcript. At the NBLN stage we **pool low-coverage genes into one trailing `_other` pseudogene aggregate** before the covariance is fit. The reason is purely statistical.
+
+    NBLN's gene-gene structure lives in $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d})$. Estimating that object means asking "how do these genes co-fluctuate across cells?". For a gene that takes the value $0$ in 95% of cells and $1$ in 4% of cells, almost all of the cross-cell variance is multinomial sampling noise — there is essentially no signal for the covariance to read. Letting such a gene into $\underline{\underline{W}}$ dilutes the loadings with noise directions, blurs the headline correlation heatmap, and gives the shrinkage prior more nuisance columns to fight against.
+
+    `gene_coverage=0.99` keeps the genes that account for 99% of the cumulative UMI mass in the dataset and pools the rest into a single trailing `_other` column. The pooled column still participates in the per-cell NB likelihood — total counts and capture are accounted for correctly — but is excluded from $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ under the default `correlate_other_column=False`: it gets no row in the latent covariance and contributes only a deterministic baseline to the per-cell log-rate. Compositional PPC samplers do keep `_other` in the simplex so the kept-gene proportions normalize correctly. See `correlate_other_column` in the model config for the full contract.
 
     ### Other knobs
 
@@ -537,7 +571,7 @@ def _(mo):
     - `vae_latent_dim=32` — the $k$ in the low-rank covariance. Generous; the shrinkage prior decides the effective value.
     - `d_mode="learned"` — let the per-gene residual variance $d_g$ be optimized rather than fixed.
     - `optimizer_config={...clipped_adam...}` and `laplace_config={...newton_max_step...}` — numerical-stability knobs for the inner Newton solve and the outer M-step in the EM optimization. NBLN is more demanding than NBVCP in this respect.
-    - `n_steps=20_000` is much smaller than the SVI source's `500_000` because the M-step here is doing a lighter job: the heavy lifting is in the SVI cascade source, and the freeze removes two-thirds of the parameter blocks from active optimization.
+    - `n_steps=20_000` is much smaller than the SVI source's `100_000` because the M-step here is doing a lighter job: the heavy lifting is in the SVI cascade source, and the freeze removes two-thirds of the parameter blocks from active optimization.
     """)
     return
 
@@ -549,25 +583,25 @@ def _(adata, clear_caches, gc, np, out_dir, pickle, scribe, svi_results):
 
     # Match the EDA file's naming convention so the cached pickle from
     # the exploration is picked up automatically when present.
+    _parameterization = "canonical"
     _gene_coverage_laplace = 0.99
     _latent_dim = 32
     _capture_efficiency_prior = (np.log(100_000), 0.1)
 
     _out_path_laplace = out_dir / (
         f"scribe_results_nbln-"
-        f"canonical-vcp-"
+        f"{_parameterization}-"
         f"{_latent_dim}latent-"
         f"{_gene_coverage_laplace}gene_coverage-"
-        f"anchor-learneddmode_"
         f"horseshoe_columnwisewprior_laplace.pkl"
     )
     _laplace_checkpoint_dir = out_dir / (
         f"checkpoints_nbln-"
-        f"canonical-vcp-"
+        f"{_parameterization}-"
         f"{_latent_dim}latent-"
         f"{_gene_coverage_laplace}gene_coverage-"
         f"horseshoe_columnwisewprior_"
-        f"anchor-learneddmode_laplace"
+        f"laplace"
     )
 
     if _out_path_laplace.exists():
@@ -623,22 +657,25 @@ def _(adata, clear_caches, gc, np, out_dir, pickle, scribe, svi_results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Did training converge? (or: why NBLN-Laplace loss curves look weird)
+    ### Did training converge? (or: why NBLN-Laplace loss curves are usually smooth)
 
-    NBLN-Laplace's loss is a Laplace approximation to the ELBO: it is the negative log-likelihood of the data evaluated at each cell's MAP latent, plus a half-log-det term that accounts for posterior curvature, plus the global prior log-probs (including the cascade priors and the loadings shrinkage prior). For models like SVI or the Gaussian-conjugate paths we have seen before, the convergence story is simple: the loss drops fast and then flattens.
+    NBLN-Laplace's loss is a Laplace approximation to the ELBO: it is the negative log-likelihood of the data evaluated at each cell's MAP latent, plus a half-log-det term that accounts for posterior curvature, plus the global prior log-probs.
 
-    For NBLN-Laplace it is **not** that simple, and you should not panic when you see what comes next.
+    Because we are operating in a **cascade-frozen regime** (where the gauge-vulnerable capture and dispersion parameters are pinned at their SVI-calibrated values), the optimization landscape is highly structured. As a result, the training loss curve below should be remarkably **smooth**, dropping quickly and settling cleanly.
 
-    The loss curve typically does drop fast — it usually settles into a low-loss region within the first ~10K outer-loop iterations — but past that point it is common to see the curve **oscillate wildly**, occasionally spiking back up by orders of magnitude before recovering. This is not a bug in the model or in the fit; it is a structural property of the optimization problem we are solving.
+    #### What if there are wild fluctuations?
 
-    Why does it happen? Two things compose into instability:
+    While the curve here behaves beautifully, in less-constrained NBLN-Laplace fits (where more parameters are left free to refine), the loss curve can sometimes **oscillate or spike wildly** toward the end of training. This is a normal consequence of:
+    1. **Approximate inner Newton steps:** The per-cell latents $\underline{x}_c^\ast$ are computed via a fixed number of Newton steps (`n_newton_steps=5`). If an outer parameter update shifts the basin sharply, an inner step can temporarily land in a high-loss region, causing the outer loop to briefly over-correct.
+    2. **Non-monotone `log-det` terms:** The Laplace correction incorporates $\tfrac{1}{2} \log \det(-H)$, which can vary rapidly as parameters traverse the curvature landscape.
 
-    1. **The inner Newton solve is approximate.** Each outer-loop step needs the per-cell $\underline{x}_c^\ast$ MAP that satisfies $\nabla \log \pi(\underline{u}_c \mid \underline{x}_c, \theta) = 0$. We get there by a small fixed number of Newton iterations per cell (`n_newton_steps=5`), with a step-size cap (`newton_max_step`) and damping. Near a well-shaped basin those few iterations land essentially on the mode. Far from the basin — or when the outer-loop $\theta$ updates push the basin sharply — the inner Newton can take a step that lands somewhere with much higher loss. That higher loss feeds back into the outer step, the outer step over-corrects, and the cycle repeats.
-    2. **The Hessian's `log-det` term is non-monotone.** The Laplace correction includes $\tfrac{1}{2} \log \det(-H)$, which is unbounded above and can change quickly as the parameters move around the curvature landscape. Tiny outer-loop steps can change `log-det` by a large amount even when the data fit is essentially unchanged.
+    #### The Best-Loss Snapshotting Insurance Policy
 
-    `scribe`'s implementation has two insurance policies for this. The first is **gradient clipping and damping** on the outer Adam step (`grad_clip_norm=10.0`, `damping=1e-6`) — these prevent the worst spikes from happening at all by capping each outer move. The second, and the one that actually matters for your final result, is **best-loss snapshotting**: every outer-loop iteration, the driver keeps a copy of the parameters whenever a new global minimum of the loss is achieved, and at the end of training it returns *those* parameters, not the last-iteration parameters. So even if the curve looks frantic in the second half of training, the returned `laplace_results` object reflects the best-loss snapshot, not whatever volatile state the optimizer ended on. The (well-tested) machinery for this lives in the Laplace-EM driver and is on by default; you do not need to configure it.
+    If you ever run a fit that exhibits these late-stage oscillations, **do not panic**. `scribe`'s Laplace-EM driver has a built-in insurance policy: **best-loss snapshotting**.
 
-    Practically, when you look at the loss curve below, focus on whether the *envelope* of the curve settles low and stays low. Late-stage oscillations on top of a low envelope are fine — `scribe` will pick out the best moment. A loss curve that drifts steadily upward and never settles is the actually-bad pattern that does deserve worry, and in our cascade-frozen regime it almost never happens because the cascade priors anchor the optimizer to a good basin.
+    During training, the driver tracks the parameters at every iteration and keeps a copy of the state whenever a new global minimum of the loss is achieved. At the end of training, it returns the parameters from this **best-loss snapshot**, rather than whatever volatile state the optimizer ended on.
+
+    When evaluating convergence, simply focus on whether the overall *envelope* of the loss settles low and flattens. Late-stage oscillations on top of a low envelope are fine—`scribe` will automatically pick out the best moment.
     """)
     return
 
@@ -652,8 +689,6 @@ def _(laplace_results, scribe):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    The curve above shows exactly the picture we described: a clean initial drop into a low-loss region, then oscillations on top of that envelope. Because `scribe` tracks the running best-loss snapshot, the parameters in `laplace_results` correspond to the *bottom* of that envelope — not whatever spike the curve happened to end on.
-
     ### Sanity check the cascade-frozen quantities
 
     The freeze should mean that $r_g$ and $\eta_c$ from the NBLN result are *the same* as the SVI source's values (up to the moment-matching transform). The `frozen_params` field on the result tells you which parameters were frozen, and `cascade_source` embeds the SVI results object by reference so you can recover full-fidelity posterior samples for any frozen quantity.
@@ -796,7 +831,7 @@ def _(mo):
     The ratio $\|\underline{\underline{W}}_\|\| \,/\, \|\underline{\underline{W}}_\perp\|$ has two very different "healthy" regimes:
 
     - **Without loadings shrinkage** (or with a very weak prior): a ratio above $\sim 0.2$ is a red flag — it means a sizable fraction of $\underline{\underline{W}}$ is being absorbed by the all-ones gauge mode instead of representing real cross-gene correlation. A ratio below $\sim 0.05$ is clean.
-    - **With column-wise horseshoe shrinkage** (the regime we are in): ratios in the $0.5$–$0.8$ range are *routine and benign*. Why? Because the shrinkage prior actively pulls $\underline{\underline{W}}_\perp$ toward zero on noise columns, deflating the denominator. The numerator ($\underline{\underline{W}}_\|$) is small in absolute terms but no longer small *relative* to the deflated denominator. The right question to ask is whether the singular spectrum has a clean elbow (yes — we just saw it) and whether the cascade freeze is doing its job (yes — `frozen_params` confirmed it). The ratio is a secondary diagnostic.
+    - **With column-wise horseshoe shrinkage** (the regime we are in): ratios in the $0.2$–$0.8$ range are *routine and benign*. Why? Because the shrinkage prior actively pulls $\underline{\underline{W}}_\perp$ toward zero on noise columns, deflating the denominator. The numerator ($\underline{\underline{W}}_\|$) is small in absolute terms but no longer small *relative* to the deflated denominator. The right question to ask is whether the singular spectrum has a clean elbow (yes — we just saw it) and whether the cascade freeze is doing its job (yes — `frozen_params` confirmed it). The ratio is a secondary diagnostic.
 
     The full theoretical story for these regimes is in `docs/theory/loadings-shrinkage.md`.
     """)
@@ -871,9 +906,19 @@ def _(adata, laplace_results, scribe):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Compare this against the NBVCP-SVI compositional corner from earlier. The off-diagonal panels are no longer round blobs — the model's predictive contours now follow the tilts and ridges in the empirical joint. **This is the principled gene–gene correlation story:** the contours are coming from NBLN's $\underline{\underline{W}}\underline{\underline{W}}^{\!\top}$ structure, not from a richer variational guide on a model that emits independent counts.
+    The joint structure has flipped. Off-diagonal panels show the tilted ellipses the data exhibits — the model's blue contours trace the same axes of co-variation the empirical scatter follows. Look at the RPL26-vs-RPL34 panel: a sharp positive ridge in both model and empirical, reflecting that these two ribosomal proteins co-vary tightly across cells. The mitochondrial respiratory-chain genes (NDUFB1, COX8A, COX7A2) show coordinated tilts in their pairwise panels — cells with more mitochondrial activity express more of all of them. **These contours come from NBLN's $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$**, which has identified the latent axes — a ribosomal program, a mitochondrial program, a splicing axis — along which the data actually varies. NBVCP could not produce these tilts as a property of its generative model: its likelihood emits counts independently across genes given per-cell capture, and any off-diagonal structure in its compositional PPC came from simplex closure rather than from a parameter that names the coupling.
 
-    The argument `gene_selection="correlation_diverse"` asks the plot to pick a set of genes whose pairwise compositional correlations span a range of magnitudes (not all clustered around the same value). That makes the panel grid more informative — you see panels where the model says "tight ridge" alongside panels where it says "essentially independent", and you can check both against the data.
+    The diagonals carry a different story than they did under NBVCP. Earlier the NBVCP compositional PPC overlapped closely with the empirical, because its compositional sampler draws per-gene Gamma noise and normalizes — that mirrors the per-gene sampling structure baked into the empirical fraction. NBLN takes a different path: `get_compositional_samples` constructs each draw by sampling a per-cell latent log-rate from the MVN prior
+
+    $$
+    \underline{x}_c \sim \mathcal{N}\!\left(\underline{\mu},\, \underline{\underline{W}}\,\underline{\underline{W}}^{\!\top} + \mathrm{diag}(\underline{d})\right)
+    $$
+
+    and applying softmax. Pure biology, with no per-gene observation noise added in. The empirical $\hat{\rho}_{c,g}$ is that same biology *plus* multinomial sampling noise from $u_{c,g}/\sum_{g'} u_{c,g'}$. The visible gap between predictive width (sharp blue) and empirical width (much wider black) on each diagonal is therefore roughly the size of the per-cell sampling noise floor on each gene. This is the "model narrower than empirical = signal versus noise distillation" framing in its genuine form: NBLN is deliberately reporting the latent biological composition, and the empirical is what you get when you observe that composition through a finite-UMI multinomial.
+
+    Two diagonals are visibly bimodal in the data and unimodal in the model: **RPL26 and RPL34**. The empirical histograms show a sharp spike near zero alongside a smooth bulk around the pseudobulk fraction; the model places its single mode at the bulk and ignores the zero-spike. The mechanism is structural — NBLN's latent prior is *Gaussian*, and softmax of a Gaussian is unimodal on each marginal regardless of how $\underline{\underline{W}}$ is structured. The bimodality the data shows is a different kind of cellular heterogeneity than NBLN's latent geometry can express, likely cell-cycle-driven (mitotic cells throttle ribosomal protein synthesis while the rest translate actively), though you cannot adjudicate that from this plot alone. The off-diagonal ridge between RPL26 and RPL34 is still captured correctly: the two genes co-vary positively whether they are in the high-translation mode or the low one. NBLN has the *correlation* right; the Gaussian latent just smears the *marginal* across the two modes. Genes where you suspect bursty bimodal expression are a natural use case for `scribe`'s `twostate_ln_rate` / `twostate_ln_logit` models, which keep NBLN's joint covariance structure but replace the per-gene NB likelihood with a Poisson-Beta compound that has a bimodal regime.
+
+    The `correlation_diverse` auto-selection picks genes that span a range of pairwise compositional correlations, so this grid is showing what the model has learned about correlation structure. The ribosomal pair (RPL26, RPL34) co-varies along its own axis; the mitochondrial trio (NDUFB1, COX8A, COX7A2) co-varies along a different axis; SRSF2 (a splicing factor) tracks the mitochondrial set more closely than the ribosomal one; cross-cluster panels show milder, less tilted ridges. This is the signal NBLN was built to surface — a low-dimensional, interpretable set of co-regulated gene programs you can read directly off $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ rather than infer post-hoc from a clustering on a guide's posterior over a count-independent likelihood.
 
     A pair-level cross-check with the count-space corner:
     """)
@@ -885,11 +930,12 @@ def _(adata, laplace_results, scribe):
     scribe.viz.plot_corner_ppc(
         laplace_results,
         adata,
-        n_genes=5,
+        n_genes=6,
         n_samples=512,
-        figsize=(8, 8),
+        figsize=(12, 12),
         n_contour_levels=3,
         density_method="kde",
+        gene_selection="correlation_diverse",
     )
     return
 
@@ -1002,7 +1048,7 @@ def _(mo):
 
     The three composable pieces of the cascade workflow:
 
-    1. **SVI cascade source** (`informative_priors_from=svi_results`) — fit NBVCP under SVI with a tight biology-informed capture-efficiency prior, then carry that posterior forward as empirical Gaussian priors on NBLN's dispersion, mean log-rate, and per-cell capture.
+    1. **SVI cascade source** (`informative_priors_from=svi_results`) — fit the deepest NBVCP variant from the previous tutorial (gene-specific $p_g$ + joint low-rank guide) on *all* genes, then carry that posterior forward as empirical Gaussian priors on NBLN's dispersion, mean log-rate, and per-cell capture.
     2. **Cascade freeze** (`informative_priors_freeze=("dispersion", "capture_efficiency")`) — pin the cascade-derived $r$ and $\eta$ as constants during the NBLN M-step. This structurally kills the per-cell rigid-translation gauge so that $\underline{\underline{W}}$ can encode cross-gene correlations without being polluted by library-size slop.
     3. **Loadings shrinkage** (`priors={"loadings": {"type": "horseshoe_columnwise", ...}}`) — a column-wise horseshoe prior on the loadings matrix performs adaptive rank selection. With `latent_dim=32` and the prior active, only data-supported factors survive; the rest are shrunk away.
 
