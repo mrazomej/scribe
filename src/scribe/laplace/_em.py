@@ -391,6 +391,121 @@ class LaplaceObservationModel(ABC):
                 out[k] = v
         return out
 
+    def rescue_sweep(
+        self,
+        params: Dict[str, jnp.ndarray],
+        final: FinalSweepResult,
+        eta_anchor: Optional[jnp.ndarray],
+        count_data: jnp.ndarray,
+        aux_data: Dict[str, jnp.ndarray],
+        cell_mask: jnp.ndarray,
+        n_newton: int,
+        damping: float,
+    ) -> FinalSweepResult:
+        """Re-run Newton on the cells flagged by ``cell_mask``.
+
+        Default implementation: slice every per-cell tensor by
+        ``cell_mask``, delegate to :meth:`final_sweep` on the sliced
+        sub-batch with the rescue-sized ``n_newton`` and ``damping``,
+        then scatter the rescued ``(x_new, eta_new, gn_new)`` back into
+        the full-shape tensors at the masked positions.  Cells not in
+        ``cell_mask`` pass through unchanged.
+
+        Works for every observation model because the kernel-dispatch
+        logic lives entirely inside ``final_sweep``; this method only
+        needs the slice / scatter plumbing and the abstract slicing
+        utility :meth:`aux_batch_slice`.
+
+        Parameters
+        ----------
+        params : dict
+            Global parameters as returned by the outer-loop optimizer.
+            Passed through to ``final_sweep`` unchanged.
+        final : FinalSweepResult
+            Post-main-fit sweep result.  Its ``latent_loc`` /
+            ``eta_loc`` / ``final_grad_norms`` are the source of truth
+            for the cells we are NOT rescuing.
+        eta_anchor : Optional[jnp.ndarray]
+            Per-cell capture anchor (``(log_M_0, sigma_M)`` broadcast)
+            or ``None``.  Sliced if present.
+        count_data : jnp.ndarray, shape (N, G)
+            Full observed counts.  Sliced row-wise by ``cell_mask``.
+        aux_data : dict
+            Per-cell auxiliary data (e.g. frozen ``eta`` values, per-cell
+            ``sigma_eta`` for soft cascade).  Sliced via
+            :meth:`aux_batch_slice`.
+        cell_mask : jnp.ndarray, shape (N,)
+            Boolean mask of cells to rescue.  When ``False`` everywhere
+            (no cells flagged) the method returns ``final`` unchanged
+            with ``pre_rescue_grad_norms`` / ``rescued_cell_mask`` set
+            so downstream consumers know the rescue branch ran.
+        n_newton : int
+            Number of Newton iterations for the rescue (typically much
+            larger than the main fit's value — e.g. 50 vs 5).
+        damping : float
+            Damping for the rescue Newton steps (typically tighter than
+            the main fit's value).
+
+        Returns
+        -------
+        FinalSweepResult
+            A new sweep result with rescued cells written back at
+            ``cell_mask`` positions.  ``pre_rescue_grad_norms`` holds
+            the full pre-rescue gradient tensor; ``rescued_cell_mask``
+            is ``cell_mask`` as a JAX array.
+        """
+        mask_arr = jnp.asarray(cell_mask, dtype=jnp.bool_)
+        n_to_rescue = int(jnp.sum(mask_arr))
+        if n_to_rescue == 0:
+            return FinalSweepResult(
+                latent_loc=final.latent_loc,
+                eta_loc=final.eta_loc,
+                final_grad_norms=final.final_grad_norms,
+                pre_rescue_grad_norms=final.final_grad_norms,
+                rescued_cell_mask=mask_arr,
+            )
+
+        idx = jnp.where(mask_arr)[0]
+        counts_sub = count_data[idx]
+        latent_sub = final.latent_loc[idx]
+        eta_sub = (
+            final.eta_loc[idx] if final.eta_loc is not None else None
+        )
+        eta_anchor_sub = (
+            eta_anchor[idx]
+            if (eta_anchor is not None and eta_anchor.ndim >= 1)
+            else eta_anchor
+        )
+        aux_sub = self.aux_batch_slice(aux_data, idx)
+
+        rescued = self.final_sweep(
+            params=params,
+            latent_loc=latent_sub,
+            eta_loc=eta_sub,
+            eta_anchor=eta_anchor_sub,
+            count_data=counts_sub,
+            aux_data=aux_sub,
+            n_newton=int(n_newton),
+            damping=float(damping),
+        )
+
+        new_latent = final.latent_loc.at[idx].set(rescued.latent_loc)
+        if final.eta_loc is not None and rescued.eta_loc is not None:
+            new_eta = final.eta_loc.at[idx].set(rescued.eta_loc)
+        else:
+            new_eta = final.eta_loc
+        new_grad = final.final_grad_norms.at[idx].set(
+            rescued.final_grad_norms
+        )
+
+        return FinalSweepResult(
+            latent_loc=new_latent,
+            eta_loc=new_eta,
+            final_grad_norms=new_grad,
+            pre_rescue_grad_norms=final.final_grad_norms,
+            rescued_cell_mask=mask_arr,
+        )
+
 
 # =====================================================================
 # Optimizer and helpers
@@ -972,6 +1087,53 @@ def run_laplace_em(
         damping=damping,
     )
 
+    # ---- Optional rescue pass on diverged cells ----
+    # When enabled, identify cells whose ``final_grad_norm`` exceeds
+    # ``newton_tolerance * rescue_threshold_multiplier`` and re-run
+    # Newton on JUST those cells with ``rescue_n_newton`` iterations
+    # (default 50) and ``rescue_damping_multiplier`` × the main damping
+    # (default 10×).  The base-class ``rescue_sweep`` slices per-cell
+    # tensors, delegates to ``final_sweep``, and scatter-writes the
+    # rescued MAPs back at the masked positions.  Pre-rescue gradient
+    # norms are preserved on ``final.pre_rescue_grad_norms`` so the
+    # rescue-rate diagnostic and ``model_unfit_cell_mask`` remain
+    # computable downstream.
+    rescue_count = 0
+    if (
+        laplace_config.rescue_diverged_cells
+        and np.isfinite(laplace_config.rescue_threshold_multiplier)
+    ):
+        rescue_thr = (
+            laplace_config.newton_tolerance
+            * laplace_config.rescue_threshold_multiplier
+        )
+        cell_mask = final.final_grad_norms > rescue_thr
+        rescue_count = int(jnp.sum(cell_mask))
+        if rescue_count > 0:
+            rescue_damping = (
+                damping * laplace_config.rescue_damping_multiplier
+            )
+            logger.info(
+                "Laplace[%s]: rescuing %d/%d cells (grad-norm > %.1e) "
+                "with n_newton=%d, damping=%.1e.",
+                obs_model.name,
+                rescue_count,
+                int(n_cells),
+                rescue_thr,
+                int(laplace_config.rescue_n_newton),
+                float(rescue_damping),
+            )
+            final = obs_model.rescue_sweep(
+                params=params,
+                final=final,
+                eta_anchor=eta_anchor,
+                count_data=counts,
+                aux_data=aux_data,
+                cell_mask=cell_mask,
+                n_newton=int(laplace_config.rescue_n_newton),
+                damping=float(rescue_damping),
+            )
+
     max_gn = float(jnp.max(final.final_grad_norms))
     if max_gn > laplace_config.newton_tolerance:
         offending = int(
@@ -999,6 +1161,41 @@ def run_laplace_em(
             q50 = float(np.percentile(grad_arr, 50))
             q90 = float(np.percentile(grad_arr, 90))
             q99 = float(np.percentile(grad_arr, 99))
+            # When the rescue pass ran, compose a two-line summary
+            # ("X cells diverged, Y rescued, Z still unfit") so users
+            # see the rescue's effect immediately.
+            rescue_line = ""
+            if (
+                laplace_config.rescue_diverged_cells
+                and final.rescued_cell_mask is not None
+                and final.pre_rescue_grad_norms is not None
+            ):
+                pre_arr = np.asarray(
+                    final.pre_rescue_grad_norms, dtype=float
+                )
+                rescued_mask = np.asarray(
+                    final.rescued_cell_mask, dtype=bool
+                )
+                n_rescued_attempt = int(rescued_mask.sum())
+                # "Rescued" = was diverged AND now converged.
+                converged_post = grad_arr <= tol
+                n_rescue_success = int(
+                    np.sum(rescued_mask & converged_post)
+                )
+                n_still_unfit = int(
+                    np.sum(rescued_mask & (~converged_post))
+                )
+                rescue_line = (
+                    f"  rescue: attempted {n_rescued_attempt}, "
+                    f"converged {n_rescue_success}, "
+                    f"still unfit {n_still_unfit}\n"
+                )
+            else:
+                rescue_line = (
+                    "[dim]Enable `rescue_diverged_cells=True` in "
+                    "LaplaceConfig to re-run Newton on the diverged "
+                    "cells with more iterations.[/dim]\n"
+                )
             try:
                 from rich.console import Console
                 from rich.panel import Panel
@@ -1011,10 +1208,9 @@ def run_laplace_em(
                     f"  worst grad-norm: {max_gn:.3e}\n"
                     f"  grad-norm percentiles: "
                     f"p50={q50:.2e}, p90={q90:.2e}, p99={q99:.2e}\n"
+                    f"{rescue_line}"
                     "[dim]Run with `--convergence` in scribe-visualize "
-                    "to inspect which cells, and enable "
-                    "`rescue_diverged_cells=True` to re-run Newton on "
-                    "them with more iterations.[/dim]"
+                    "to inspect which cells.[/dim]"
                 )
                 console.print(
                     Panel(

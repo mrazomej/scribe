@@ -1557,7 +1557,59 @@ class LaplaceConfig(BaseModel):
         "warn",
         description=(
             "Action when Newton fails to converge on some cells: "
-            "emit a warning, raise RuntimeError, or stay silent."
+            "emit a warning, raise RuntimeError, or stay silent.  When "
+            "``rescue_diverged_cells`` is enabled, this action is "
+            "evaluated against the POST-rescue gradient norms — i.e. "
+            "raising now means even the rescue pass could not converge "
+            "the affected cells."
+        ),
+    )
+    rescue_diverged_cells: bool = Field(
+        False,
+        description=(
+            "Opt-in: after the main fit's final Newton sweep, re-run "
+            "Newton on cells whose ``final_grad_norm`` exceeds "
+            "``newton_tolerance * rescue_threshold_multiplier`` with "
+            "``rescue_n_newton`` iterations and a damping ramp of "
+            "``rescue_damping_multiplier`` times the base damping.  "
+            "Cells that converge under rescue have their per-cell MAP "
+            "(``x_loc``, ``eta_loc``) and ``final_grad_norm`` written "
+            "back; cells still diverged after rescue are flagged via "
+            "``model_unfit_cell_mask`` on the result.  Default False "
+            "preserves bit-equal fits for existing pipelines."
+        ),
+    )
+    rescue_threshold_multiplier: float = Field(
+        10.0,
+        description=(
+            "Multiplier on ``newton_tolerance`` to define the rescue "
+            "threshold.  Cells with ``final_grad_norm > "
+            "newton_tolerance * rescue_threshold_multiplier`` are "
+            "re-run.  Set to ``1.0`` to rescue at the warning boundary "
+            "(every unconverged cell); ``inf`` disables rescue even "
+            "when ``rescue_diverged_cells=True``.  The default of "
+            "``10.0`` targets the long tail without thrashing on cells "
+            "that are only slightly above tolerance."
+        ),
+    )
+    rescue_n_newton: int = Field(
+        50,
+        description=(
+            "Number of Newton iterations to run on each rescued cell.  "
+            "Intentionally a fixed value (not user-tunable) so the JIT "
+            "compile of the rescue kernel is paid once across all "
+            "users; varying this would multiply the JIT cache by the "
+            "number of distinct values seen."
+        ),
+    )
+    rescue_damping_multiplier: float = Field(
+        10.0,
+        description=(
+            "Multiplier on the main fit's Newton damping for the "
+            "rescue pass.  Tighter damping (larger multiplier) "
+            "improves stability for the cells that struggled in the "
+            "main fit at the cost of slower per-step convergence — "
+            "but with ``rescue_n_newton=50`` there's plenty of budget."
         ),
     )
     fallback_to_encoder: bool = Field(
