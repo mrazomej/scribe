@@ -274,9 +274,13 @@ output_dir: null
 # Hydra output layout
 # -----------------------------------------------------------------------------
 hydra:
+  callbacks:
+    output_prefix:
+      _target_: scribe.cli.hydra_callbacks.OutputPrefixCallback
   run:
-    dir: ${paths.outputs_dir}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+    # nested_output_prefix mirrors conf/data/ parent folders from the data= config key
+    dir: ${paths.outputs_dir}/${nested_output_prefix:}${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
   sweep:
     dir: ${paths.outputs_dir}
-    subdir: ${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+    subdir: ${nested_output_prefix:}${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
 

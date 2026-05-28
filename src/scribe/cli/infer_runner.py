@@ -434,6 +434,48 @@ OmegaConf.register_new_resolver(
     replace=True,
 )
 
+
+def _nested_output_prefix_resolver() -> str:
+    """Resolve nested output prefix segment for Hydra run/sweep directories.
+
+    Reads the composed config and Hydra runtime data choice so the resolver
+    works for both single runs and per-job multirun launches.
+
+    Returns
+    -------
+    str
+        Prefix segment with trailing slash when non-empty, else ``""``.
+    """
+    from hydra.core.hydra_config import HydraConfig
+
+    from .output_layout import resolve_nested_output_prefix
+
+    try:
+        hydra_node = HydraConfig.get()
+        parent_cfg = (
+            hydra_node._get_parent()
+            if OmegaConf.is_config(hydra_node)
+            else None
+        )
+        data_cfg = None
+        if parent_cfg is not None and "data" in parent_cfg:
+            data_cfg = parent_cfg.data
+        choice = OmegaConf.select(hydra_node, "runtime.choices.data")
+        data_choice = str(choice) if choice is not None else None
+        return resolve_nested_output_prefix(
+            data_cfg=data_cfg,
+            data_choice=data_choice,
+        )
+    except Exception:
+        return ""
+
+
+OmegaConf.register_new_resolver(
+    "nested_output_prefix",
+    _nested_output_prefix_resolver,
+    replace=True,
+)
+
 # ------------------------------------------------------------------------------
 
 

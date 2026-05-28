@@ -9,19 +9,10 @@ from scribe.cli.split_orchestrator import (
     _build_joblib_multirun_command,
     _build_submitit_multirun_command,
     _discover_covariate_values,
-    _derive_output_prefix,
     _extract_config_options,
     _generate_tmp_yamls,
     _parse_args,
 )
-
-
-def test_derive_output_prefix_uses_parent_path_of_data_key():
-    """Extract nested prefix from a data config key."""
-    prefix = _derive_output_prefix(
-        "panfibrosis/CKD/GSE140023_filter-none_split-disease"
-    )
-    assert prefix == "panfibrosis/CKD"
 
 
 def test_generate_tmp_yamls_keeps_name_slash_safe_and_sets_prefix(
@@ -63,18 +54,16 @@ def test_parse_args_supports_multiple_data_configs():
     assert forwarded == ["model=zinbvcp"]
 
 
-def test_submitit_command_uses_nested_output_subdir_override():
-    """Hydra subdir override should encode nested grouping from output_prefix."""
+def test_submitit_command_relies_on_base_config_for_nested_subdir():
+    """Split multirun should inherit nested subdir layout from base Hydra config."""
     cmd = _build_submitit_multirun_command(
         data_list="_tmp_split_x/a,_tmp_split_x/b",
         n_jobs=4,
         split_overrides={},
         forwarded_args=[],
     )
-    assert (
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'"
-        in cmd
-    )
+    assert "hydra.sweep.subdir=" not in " ".join(cmd)
+    assert "hydra/launcher=submitit_slurm" in cmd
 
 
 def test_extract_config_options_splits_cli_tokens():

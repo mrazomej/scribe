@@ -33,6 +33,9 @@
 name: "my_dataset"
 path: "data/my_experiment/counts.h5ad"
 
+# Parent path for output nesting; auto-derived from data= key when empty.
+output_prefix: ""
+
 # ---- Optional: layer --------------------------------------------------------
 # For h5ad only. Set when counts are in a named layer (e.g., "counts").
 # layer: "counts"

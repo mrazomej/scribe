@@ -53,3 +53,8 @@ For machine-specific output locations:
 1. Copy `paths/paths.local.yaml.example` to `paths/paths.local.yaml`.
 2. Set `outputs_dir` for your local environment.
 
+Nested data configs (for example ``data=project/cohort/my_dataset``) write
+outputs under ``outputs/project/cohort/{dataset_name}/...`` automatically.
+Set ``output_prefix`` in a data YAML or pass ``data.output_prefix=...`` to
+override the derived parent folders.
+

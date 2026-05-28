@@ -463,17 +463,32 @@ scribe-infer --config-path ./conf model=nbvcp \
 ## Output Organization
 
 Hydra automatically organizes outputs under `${paths.outputs_dir}` (default
-`outputs/`):
+`outputs/`). When you select a nested data config key such as
+``data=panfibrosis/cell_type_genecorr/CKD/foo``, SCRIBE auto-derives an
+``output_prefix`` from the parent folders so artifacts mirror your
+``conf/data/`` layout:
 
 ```
 outputs/
-├── {dataset}/
-│   ├── {model}/
-│   │   ├── {inference_method}/
-│   │   │   ├── {parameters}/
-│   │   │   │   ├── scribe_results.pkl
-│   │   │   │   ├── figs/
-│   │   │   │   └── .hydra/
+├── panfibrosis/
+│   └── cell_type_genecorr/
+│       └── CKD/
+│           └── {dataset_name}/
+│               ├── {model}/
+│               │   ├── {inference_method}/
+│               │   │   ├── {parameters}/
+│               │   │   │   ├── scribe_results.pkl
+│               │   │   │   ├── figs/
+│               │   │   │   └── .hydra/
+```
+
+Flat configs (``data=my_dataset``) continue to write directly under
+``outputs/{dataset_name}/...``.
+
+Override nesting explicitly when needed:
+
+```bash
+scribe-infer data=panfibrosis/CKD/foo data.output_prefix=custom/prefix
 ```
 
 ### Local Machine Output Path Override

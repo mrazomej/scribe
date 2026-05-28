@@ -33,6 +33,8 @@ from rich.table import Table
 
 from scribe.data_loader import load_and_preprocess_anndata
 
+from .output_layout import derive_output_prefix
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -330,27 +332,6 @@ def _sanitize_value(value: str) -> str:
     )
 
 
-def _derive_output_prefix(data_name: str) -> str:
-    """Derive a nested output prefix from a data config key.
-
-    Parameters
-    ----------
-    data_name : str
-        Data config key from ``data=...`` (e.g.
-        ``panfibrosis/CKD/GSE140023_filter-none_split-disease``).
-
-    Returns
-    -------
-    str
-        Parent path portion of the key (e.g. ``panfibrosis/CKD``), or an empty
-        string when no parent directories are present.
-    """
-    # Build parent path from slash-separated Hydra key, independent of OS
-    # separator semantics.
-    parent_parts = [part for part in data_name.split("/") if part][:-1]
-    return "/".join(parent_parts)
-
-
 def _make_tmp_split_dir(conf_data_dir: Path = CONF_DATA_DIR) -> Path:
     """Create a unique temporary config directory for this invocation.
 
@@ -407,7 +388,7 @@ def _generate_tmp_yamls(
         File stems of generated configs (without ``.yaml`` suffix).
     """
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    output_prefix = _derive_output_prefix(data_name)
+    output_prefix = derive_output_prefix(data_name)
     original_name = data_cfg.get("name", "data")
     original_path = data_cfg.get("path", "")
     source_tag = _sanitize_value(data_name)
@@ -502,7 +483,7 @@ def _generate_passthrough_tmp_yaml(
     str
         Generated temp config stem (without ``.yaml``).
     """
-    output_prefix = _derive_output_prefix(data_name)
+    output_prefix = derive_output_prefix(data_name)
     source_tag = _sanitize_value(data_name)
     original_name = data_cfg.get("name", "data")
     original_path = data_cfg.get("path", "")
@@ -578,7 +559,6 @@ def _build_joblib_multirun_command(
         config_name,
         "-m",
         f"data={data_list}",
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
         "hydra/launcher=joblib",
         f"hydra.launcher.n_jobs={n_jobs}",
         # GPU assignment is handled inside infer_runner via cfg.data.gpu_id
@@ -634,7 +614,6 @@ def _build_submitit_multirun_command(
         config_name,
         "-m",
         f"data={data_list}",
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
         "hydra/launcher=submitit_slurm",
         "hydra.launcher.nodes=1",
         "hydra.launcher.tasks_per_node=1",
