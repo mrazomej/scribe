@@ -267,18 +267,22 @@ output_dir: null
 
 # --- Hydra settings ---
 hydra:
+  callbacks:
+    output_prefix:
+      _target_: scribe.cli.hydra_callbacks.OutputPrefixCallback
   run:
     # Use output_dir if explicitly set by user, otherwise auto-generate from overrides
     # Note: We use 'model' in path to keep runs organized by model type
     # sanitize_dirname removes brackets [] which cause issues with Orbax checkpoint library
-    dir: ${paths.outputs_dir}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+    # nested_output_prefix mirrors conf/data/ parent folders from the data= config key
+    dir: ${paths.outputs_dir}/${nested_output_prefix:}${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
   sweep:
     # For --multirun (joblib) sweeps, use the same output structure as single runs
     # instead of Hydra's default multirun/ directory.  sweep.dir is resolved once
     # before jobs are composed, so per-job interpolations (data.name, model, etc.)
     # must go in sweep.subdir which is resolved per-job.
     dir: ${paths.outputs_dir}
-    subdir: ${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+    subdir: ${nested_output_prefix:}${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
   job:
     name: ${data.name}_${inference.method}
     config:
