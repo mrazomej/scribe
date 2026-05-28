@@ -341,7 +341,7 @@ def plot_convergence(
             linestyle="--",
             linewidth=1.0,
         )
-        ax3.set_xlabel(r"$\log_{10}$ n\_genes\_expressed")
+        ax3.set_xlabel(r"$\log_{10}$ n_genes_expressed")
         ax3.set_ylabel(
             r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$"
         )
@@ -364,7 +364,7 @@ def plot_convergence(
         log_ng = np.log10(np.maximum(n_genes_expr, 1.0))
         _scatter_by_bucket(ax4, log_lib, log_ng)
         ax4.set_xlabel(r"$\log_{10}$ library size")
-        ax4.set_ylabel(r"$\log_{10}$ n\_genes\_expressed")
+        ax4.set_ylabel(r"$\log_{10}$ n_genes_expressed")
         ax4.set_title("QC scatter (cells colored by convergence)")
         ax4.legend(fontsize=8, loc="best")
 
