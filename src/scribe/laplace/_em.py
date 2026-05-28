@@ -1136,101 +1136,153 @@ def run_laplace_em(
 
     max_gn = float(jnp.max(final.final_grad_norms))
     if max_gn > laplace_config.newton_tolerance:
-        offending = int(
-            jnp.sum(final.final_grad_norms > laplace_config.newton_tolerance)
+        grad_arr = np.asarray(final.final_grad_norms, dtype=float)
+        tol = laplace_config.newton_tolerance
+        rescue_thr = (
+            tol * laplace_config.rescue_threshold_multiplier
         )
+        offending = int((grad_arr > tol).sum())
+
+        # ---- Context-aware accounting --------------------------------
+        # Three buckets that drive the panel framing:
+        #   (a) "borderline"    — above tol but ≤ rescue_thr.
+        #   (b) "rescue success" — above rescue_thr AND now ≤ tol.
+        #   (c) "model unfit"    — above rescue_thr AND still > tol.
+        #
+        # Bucket (c) is the only ACTIONABLE concern; everything else
+        # is informational and shouldn't be alarming.
+        rescue_ran = (
+            laplace_config.rescue_diverged_cells
+            and final.rescued_cell_mask is not None
+            and final.pre_rescue_grad_norms is not None
+        )
+        if rescue_ran:
+            rescued_mask = np.asarray(
+                final.rescued_cell_mask, dtype=bool
+            )
+            converged_post = grad_arr <= tol
+            n_rescue_attempt = int(rescued_mask.sum())
+            n_rescue_success = int(
+                (rescued_mask & converged_post).sum()
+            )
+            n_still_unfit = int(
+                (rescued_mask & ~converged_post).sum()
+            )
+            n_borderline = int(
+                ((grad_arr > tol) & (grad_arr <= rescue_thr)).sum()
+            )
+        else:
+            n_rescue_attempt = 0
+            n_rescue_success = 0
+            n_still_unfit = 0
+            n_borderline = offending  # everything above tol when rescue is off
+
         msg_short = (
             f"Laplace[{obs_model.name}]: {offending}/{n_cells} cells "
-            f"did not converge below tolerance="
-            f"{laplace_config.newton_tolerance:.1e} "
+            f"did not converge below tolerance={tol:.1e} "
             f"(worst grad-norm={max_gn:.3e})."
         )
         action = laplace_config.convergence_action
         if action == "raise":
             raise RuntimeError(msg_short)
         if action == "warn":
-            # Quantile breakdown helps users decide whether they have
-            # a long-tail (a few badly-stuck cells) or a broad miss
-            # (most cells just need more Newton steps).  Library-size
-            # correlation is the most common cause; surface a hint
-            # without computing it here (the convergence viz panel
-            # owns that diagnostic).
-            grad_arr = np.asarray(final.final_grad_norms, dtype=float)
-            pct = 100.0 * offending / max(int(n_cells), 1)
-            tol = laplace_config.newton_tolerance
             q50 = float(np.percentile(grad_arr, 50))
             q90 = float(np.percentile(grad_arr, 90))
             q99 = float(np.percentile(grad_arr, 99))
-            # When the rescue pass ran, compose a two-line summary
-            # ("X cells diverged, Y rescued, Z still unfit") so users
-            # see the rescue's effect immediately.
-            rescue_line = ""
-            if (
-                laplace_config.rescue_diverged_cells
-                and final.rescued_cell_mask is not None
-                and final.pre_rescue_grad_norms is not None
-            ):
-                pre_arr = np.asarray(
-                    final.pre_rescue_grad_norms, dtype=float
+            pct = 100.0 * offending / max(int(n_cells), 1)
+
+            # Decide presentation: cyan/info when rescue handled the
+            # tail (or the tail is just borderline-above-tol);
+            # yellow/warning when cells remain genuinely unfit.
+            rescue_truly_problematic = (
+                (not laplace_config.rescue_diverged_cells and offending > 0)
+                or (rescue_ran and n_still_unfit > 0)
+            )
+            if rescue_truly_problematic:
+                border_color = "yellow"
+                title_color = "yellow"
+                headline_color = "bold yellow"
+            else:
+                border_color = "cyan"
+                title_color = "cyan"
+                headline_color = "bold cyan"
+
+            # Headline reframes the story based on outcome.
+            if rescue_ran and n_still_unfit > 0:
+                headline = (
+                    f"[{headline_color}]{n_still_unfit} / {n_cells} cells "
+                    f"({100.0 * n_still_unfit / max(int(n_cells), 1):.2f}%) "
+                    "remain unfit AFTER rescue[/]"
                 )
-                rescued_mask = np.asarray(
-                    final.rescued_cell_mask, dtype=bool
-                )
-                n_rescued_attempt = int(rescued_mask.sum())
-                # "Rescued" = was diverged AND now converged.
-                converged_post = grad_arr <= tol
-                n_rescue_success = int(
-                    np.sum(rescued_mask & converged_post)
-                )
-                n_still_unfit = int(
-                    np.sum(rescued_mask & (~converged_post))
-                )
-                rescue_line = (
-                    f"  rescue: attempted {n_rescued_attempt}, "
-                    f"converged {n_rescue_success}, "
-                    f"still unfit {n_still_unfit}\n"
+            elif rescue_ran and n_rescue_attempt > 0:
+                headline = (
+                    f"[{headline_color}]Rescue cleaned up all "
+                    f"{n_rescue_attempt} diverged cells[/]; "
+                    f"{n_borderline} cells in the borderline "
+                    f"({tol:.0e}–{rescue_thr:.0e}) band"
                 )
             elif laplace_config.rescue_diverged_cells:
-                # Rescue is on but no cell exceeded the threshold
-                # (10× newton_tolerance by default).  The warning fired
-                # only because cells are above tolerance but below the
-                # rescue threshold — i.e. borderline.  Suggest lowering
-                # ``rescue_threshold_multiplier`` to capture them.
-                rescue_line = (
-                    "[dim]Rescue did not trigger: no cells exceeded "
-                    f"{tol * laplace_config.rescue_threshold_multiplier:.1e} "
-                    f"(newton_tolerance × {laplace_config.rescue_threshold_multiplier:.1f}). "
-                    "Lower `rescue_threshold_multiplier` to rescue "
-                    "borderline-tolerance cells.[/dim]\n"
+                # Rescue is on but didn't trigger — everything above tol
+                # sits in the borderline band.
+                headline = (
+                    f"[{headline_color}]All {offending} above-tolerance "
+                    f"cells are in the borderline ({tol:.0e}–{rescue_thr:.0e}) "
+                    "band[/]; no rescue needed"
                 )
             else:
-                rescue_line = (
+                # Rescue disabled.
+                headline = (
+                    f"[{headline_color}]{offending} / {n_cells} cells "
+                    f"({pct:.2f}%)[/] did not converge below "
+                    f"newton_tolerance = {tol:.1e}"
+                )
+
+            # Footer hint depends on outcome.
+            if rescue_ran and n_still_unfit > 0:
+                hint = (
+                    "[dim]These cells likely have unusual count profiles "
+                    "(doublets / stress / extreme library size).  Inspect "
+                    "via `result.model_unfit_cell_mask` or "
+                    "`--convergence` in scribe-visualize.[/dim]"
+                )
+            elif not laplace_config.rescue_diverged_cells:
+                hint = (
                     "[dim]Re-enable `rescue_diverged_cells=True` in "
                     "LaplaceConfig to re-run Newton on the diverged "
-                    "cells with more iterations.[/dim]\n"
+                    "cells with more iterations.[/dim]"
                 )
+            else:
+                hint = (
+                    "[dim]Inspect via `result.unconverged_cell_mask` "
+                    "or `--convergence` in scribe-visualize.[/dim]"
+                )
+
             try:
                 from rich.console import Console
                 from rich.panel import Panel
 
                 console = Console(stderr=True, force_terminal=False)
+                rescue_line = ""
+                if rescue_ran and n_rescue_attempt > 0:
+                    rescue_line = (
+                        f"  rescue: attempted {n_rescue_attempt}, "
+                        f"converged {n_rescue_success}, "
+                        f"still unfit {n_still_unfit}\n"
+                    )
                 panel_body = (
-                    f"[bold]{offending} / {n_cells} cells "
-                    f"({pct:.2f}%)[/bold] did not converge below "
-                    f"newton_tolerance = {tol:.1e}\n"
+                    f"{headline}\n"
                     f"  worst grad-norm: {max_gn:.3e}\n"
                     f"  grad-norm percentiles: "
                     f"p50={q50:.2e}, p90={q90:.2e}, p99={q99:.2e}\n"
                     f"{rescue_line}"
-                    "[dim]Run with `--convergence` in scribe-visualize "
-                    "to inspect which cells.[/dim]"
+                    f"{hint}"
                 )
                 console.print(
                     Panel(
                         panel_body,
-                        title=f"[yellow]Laplace[{obs_model.name}] "
-                        "inner-Newton convergence[/yellow]",
-                        border_style="yellow",
+                        title=f"[{title_color}]Laplace[{obs_model.name}] "
+                        f"inner-Newton convergence[/{title_color}]",
+                        border_style=border_color,
                     )
                 )
             except Exception:

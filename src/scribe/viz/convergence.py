@@ -92,18 +92,18 @@ def _prepare_convergence_data(results, counts, viz_cfg=None):
     if pre_rescue is not None:
         pre_rescue = np.asarray(pre_rescue, dtype=float).reshape(-1)
 
-    # Library size per cell from the count matrix.  Coerce in case
-    # counts arrives as an AnnData / sparse matrix.
+    # Library size + n_genes_expressed per cell from the count matrix.
+    # Coerce in case counts arrives as an AnnData / sparse matrix.
     counts_arr = _coerce_counts(counts)
-    if counts_arr.ndim != 2:
-        lib = None
-    else:
+    lib = None
+    n_genes_expr = None
+    if counts_arr.ndim == 2 and int(counts_arr.shape[0]) == int(
+        grad_arr.shape[0]
+    ):
         lib = counts_arr.sum(axis=1)
-        # Defensive: trim to length(grad_arr) if the counts were filtered
-        # against a different cell axis (shouldn't happen for Laplace,
-        # but guards against future axis-confusion bugs).
-        if int(lib.shape[0]) != int(grad_arr.shape[0]):
-            lib = None
+        # n_genes_expressed is the per-cell count of genes with at
+        # least one UMI — the standard scRNA-seq QC metric.
+        n_genes_expr = (counts_arr > 0).sum(axis=1)
 
     # Convergence buckets: 0=converged, 1=rescued, 2=model_unfit, 3=unconverged_no_rescue
     bucket = np.zeros(grad_arr.shape[0], dtype=np.int8)
@@ -126,6 +126,7 @@ def _prepare_convergence_data(results, counts, viz_cfg=None):
         "rescued_mask": rescued_mask,
         "pre_rescue": pre_rescue,
         "lib": lib,
+        "n_genes_expr": n_genes_expr,
         "bucket": bucket,
     }
 
@@ -166,13 +167,26 @@ def plot_convergence(
 ):
     """Per-cell inner-Newton convergence diagnostic for Laplace fits.
 
-    Produces a two-panel figure:
+    Produces a 2x2 panel grid:
 
-    1. Histogram of per-cell ``log10(final_grad_norm + ε)`` with vertical
-       reference lines at ``newton_tolerance`` and the rescue threshold.
-    2. Scatter of ``log10(library_size)`` vs ``log10(final_grad_norm)``
-       colored by convergence bucket.  Surfaces whether unconverged
-       cells correlate with library-size extremes.
+    1. **Histogram** of per-cell ``log10(final_grad_norm + ε)`` with
+       vertical reference lines at ``newton_tolerance`` and the rescue
+       threshold.
+    2. **Scatter (library size)**: ``log10(library_size)`` vs
+       ``log10(final_grad_norm)`` colored by convergence bucket —
+       surfaces whether unconverged cells correlate with extreme
+       library sizes.
+    3. **Scatter (n_genes_expressed)**: ``log10(n_genes_expressed)`` vs
+       ``log10(final_grad_norm)``.  Same role as panel 2 but with the
+       gene-detection axis.  Often more diagnostic for doublets and
+       stressed cells, which show unusual gene-detection counts
+       independent of total UMI.
+    4. **QC scatter**: ``log10(library_size)`` vs
+       ``log10(n_genes_expressed)`` colored by convergence bucket.
+       The classic scRNA-seq QC overlay — places unconverged cells in
+       the standard QC space so you can see whether they're outliers
+       in the count-vs-detection plane (the typical home of doublets
+       and dying cells).
 
     Returns ``None`` when ``final_grad_norms`` is unavailable (e.g.
     non-Laplace fits or older pickles).
@@ -183,15 +197,16 @@ def plot_convergence(
         Fitted Laplace result.  Must expose ``final_grad_norms``.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.  Used to
-        compute per-cell library size for panel 2.
+        compute per-cell library size + ``n_genes_expressed`` for
+        panels 2-4.
     """
     console.print(
         "[dim]Plotting per-cell Newton convergence diagnostic...[/dim]"
     )
     if ax is not None:
         raise ValueError(
-            "Convergence diagnostic uses 2 panels; provide `fig` or "
-            "2 `axes`, not `ax`."
+            "Convergence diagnostic uses 4 panels; provide `fig` or "
+            "4 `axes`, not `ax`."
         )
 
     data = _prepare_convergence_data(results, counts, viz_cfg)
@@ -202,29 +217,48 @@ def plot_convergence(
     tol = data["tol"]
     rescued_mask = data["rescued_mask"]
     lib = data["lib"]
+    n_genes_expr = data["n_genes_expr"]
     bucket = data["bucket"]
 
     fig, _, flat_axes = _create_or_validate_grid_axes(
-        n_rows=1,
+        n_rows=2,
         n_cols=2,
         fig=fig,
         axes=axes,
-        figsize=figsize or (12.0, 4.5),
+        figsize=figsize or (12.0, 9.0),
     )
-    ax1, ax2 = flat_axes
+    ax1, ax2, ax3, ax4 = flat_axes
 
-    # ---- Panel 1: histogram of log10(grad_norm) -----------------------------
-    # Small floor avoids log10(0) for cells that converged perfectly.
+    # Common: log10 grad norms with a small floor so cells that
+    # converged perfectly don't trip log10(0).
     eps = 1e-30
     log_grad = np.log10(np.maximum(grad_arr, eps))
 
     palette, bucket_keys = _bucket_colors_and_labels(
         bucket, rescued_mask is not None
     )
+    rescue_thr = tol * _DEFAULT_RESCUE_THRESHOLD_MULTIPLIER
 
+    def _scatter_by_bucket(ax_, x, y):
+        """Helper: scatter points coloured by convergence bucket."""
+        for k in bucket_keys:
+            mask_k = bucket == k
+            if mask_k.sum() == 0:
+                continue
+            color, label = palette[k]
+            ax_.scatter(
+                x[mask_k],
+                y[mask_k],
+                s=10,
+                color=color,
+                alpha=0.5 if k == 0 else 0.85,
+                edgecolor="none",
+                label=label,
+            )
+
+    # ---- Panel 1: histogram of log10(grad_norm) ---------------------------
     n_bins = 60
     bin_edges = np.linspace(log_grad.min(), log_grad.max(), n_bins + 1)
-    # Stack per-bucket histograms.
     for k in bucket_keys:
         mask_k = bucket == k
         if mask_k.sum() == 0:
@@ -239,7 +273,6 @@ def plot_convergence(
             label=f"{label} ({n_k})",
             edgecolor="none",
         )
-
     ax1.axvline(
         np.log10(tol),
         color="black",
@@ -247,9 +280,6 @@ def plot_convergence(
         linewidth=1.2,
         label=f"newton_tolerance = {tol:.0e}",
     )
-    # Show the rescue threshold even when rescue didn't run (it's
-    # what `rescue_diverged_cells=True` *would* use).
-    rescue_thr = tol * _DEFAULT_RESCUE_THRESHOLD_MULTIPLIER
     ax1.axvline(
         np.log10(rescue_thr),
         color="black",
@@ -264,7 +294,7 @@ def plot_convergence(
     ax1.set_title("Per-cell final Newton grad norm")
     ax1.legend(fontsize=8, loc="best")
 
-    # ---- Panel 2: scatter (library size, grad norm) -------------------------
+    # ---- Panel 2: scatter (library size, grad norm) -----------------------
     if lib is None:
         ax2.text(
             0.5,
@@ -277,21 +307,7 @@ def plot_convergence(
         ax2.set_axis_off()
     else:
         log_lib = np.log10(np.maximum(lib, 1.0))
-        # Plot converged cells first so unconverged points sit on top.
-        for k in bucket_keys:
-            mask_k = bucket == k
-            if mask_k.sum() == 0:
-                continue
-            color, label = palette[k]
-            ax2.scatter(
-                log_lib[mask_k],
-                log_grad[mask_k],
-                s=10,
-                color=color,
-                alpha=0.5 if k == 0 else 0.85,
-                edgecolor="none",
-                label=label,
-            )
+        _scatter_by_bucket(ax2, log_lib, log_grad)
         ax2.axhline(
             np.log10(tol),
             color="black",
@@ -305,5 +321,52 @@ def plot_convergence(
         ax2.set_title("Convergence vs library size")
         ax2.legend(fontsize=8, loc="best")
 
+    # ---- Panel 3: scatter (n_genes_expressed, grad norm) ------------------
+    if n_genes_expr is None:
+        ax3.text(
+            0.5,
+            0.5,
+            "n_genes_expressed unavailable\n(counts shape mismatch)",
+            ha="center",
+            va="center",
+            transform=ax3.transAxes,
+        )
+        ax3.set_axis_off()
+    else:
+        log_ng = np.log10(np.maximum(n_genes_expr, 1.0))
+        _scatter_by_bucket(ax3, log_ng, log_grad)
+        ax3.axhline(
+            np.log10(tol),
+            color="black",
+            linestyle="--",
+            linewidth=1.0,
+        )
+        ax3.set_xlabel(r"$\log_{10}$ n\_genes\_expressed")
+        ax3.set_ylabel(
+            r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$"
+        )
+        ax3.set_title("Convergence vs n_genes_expressed")
+        ax3.legend(fontsize=8, loc="best")
+
+    # ---- Panel 4: QC scatter (library size, n_genes_expressed) ------------
+    if lib is None or n_genes_expr is None:
+        ax4.text(
+            0.5,
+            0.5,
+            "QC scatter unavailable\n(counts shape mismatch)",
+            ha="center",
+            va="center",
+            transform=ax4.transAxes,
+        )
+        ax4.set_axis_off()
+    else:
+        log_lib = np.log10(np.maximum(lib, 1.0))
+        log_ng = np.log10(np.maximum(n_genes_expr, 1.0))
+        _scatter_by_bucket(ax4, log_lib, log_ng)
+        ax4.set_xlabel(r"$\log_{10}$ library size")
+        ax4.set_ylabel(r"$\log_{10}$ n\_genes\_expressed")
+        ax4.set_title("QC scatter (cells colored by convergence)")
+        ax4.legend(fontsize=8, loc="best")
+
     fig.tight_layout()
-    return fig, flat_axes, 2
+    return fig, flat_axes, 4
