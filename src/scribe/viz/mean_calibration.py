@@ -778,6 +778,21 @@ def _prepare_calibration_data(
     # form.
     if _use_pln:
         # Pull eta_capture and d_pln when available.
+        #
+        # Eta-detection priority:
+        #   1. ``results.eta_loc`` — per-cell MAP eta from the Laplace
+        #      fit.  Populated whenever the model uses capture, including
+        #      cascade-frozen eta (``frozen_params`` ⊇ {"eta"}) where
+        #      ``uses_biology_informed_capture`` may be False but the fit
+        #      *did* condition on a per-cell capture offset.  This is the
+        #      authoritative signal — without it, the diagnostic computes
+        #      ``mean exp(μ + x_dev)`` instead of
+        #      ``mean exp(μ + x_dev − η_c)``, which inflates ``pred_mean``
+        #      by ``1 / mean(p_capture)`` (~3-5× for typical Sham/UUO
+        #      cascade fits).
+        #   2. ``_get_map_estimates_for_plot(..., "eta_capture")`` — the
+        #      pre-existing route when ``uses_biology_informed_capture``
+        #      is True (catches non-Laplace results).
         pln_targets = []
         if bool(
             getattr(
@@ -800,6 +815,15 @@ def _prepare_calibration_data(
         )
         eta_capture = map_estimates.get("eta_capture")
         d_pln = map_estimates.get("d_pln")
+
+        # Laplace fits expose per-cell eta on ``results.eta_loc`` even
+        # when ``uses_biology_informed_capture`` is False (e.g. cascade
+        # froze eta to source values).  Prefer that over the map-estimate
+        # route when present.
+        if eta_capture is None:
+            eta_loc_attr = getattr(results, "eta_loc", None)
+            if eta_loc_attr is not None:
+                eta_capture = eta_loc_attr
 
         # Pull eta as numpy for both the formula and the label.
         if eta_capture is not None:
@@ -867,6 +891,43 @@ def _prepare_calibration_data(
                     x_eff = x_arr + log_capture
             else:
                 x_eff = x_arr
+            # Convergence-aware cell filter.  The per-cell MAP path
+            # averages ``exp(log_rate_c)`` over cells, so a single cell
+            # whose inner Newton diverged can dominate the per-gene
+            # mean — its ``x_dev`` entries reach |·| > 100 even though
+            # the Newton tolerance is < 1.  Concretely we observed cells
+            # with ``final_grad_norm`` up to a few hundred (median ~0.1)
+            # producing per-gene rates of 1e10+ for genes with zero
+            # observed counts.
+            #
+            # Filter rule: keep cells whose final_grad_norm is below the
+            # max of (a) ``max_grad_norm_threshold`` (a fixed 5.0 sets a
+            # floor where the inner Newton is clearly diverged regardless
+            # of the run's specific tolerance setting) and (b) ten times
+            # the median (adapts to fits where the bulk is well-converged
+            # but a small tail isn't).  When ``final_grad_norms`` is
+            # unavailable (older pickles, non-Laplace results), fall back
+            # to the bulk log-rate cap below.
+            fgn = getattr(results, "final_grad_norms", None)
+            if fgn is not None:
+                fgn_arr = np.asarray(fgn, dtype=float).reshape(-1)
+                if fgn_arr.shape[0] == x_eff.shape[0]:
+                    grad_threshold = max(
+                        5.0,
+                        10.0 * float(np.median(fgn_arr)),
+                    )
+                    cell_mask = fgn_arr <= grad_threshold
+                    if cell_mask.sum() >= max(2, int(0.5 * fgn_arr.shape[0])):
+                        x_eff = x_eff[cell_mask]
+            # Defensive cap on per-cell log-rate before exp, applied
+            # AFTER the convergence-based filter.  Catches edge-case
+            # numerical blow-ups in the surviving cells (e.g. a
+            # genuinely large posterior log-rate on a heavily expressed
+            # gene where the Newton step is fine but the value itself
+            # is enormous).  log_rate = 20 → rate ≈ 5e8, far above any
+            # realistic per-cell count; the bound is liberal so it
+            # doesn't bite for high-expression genes.
+            x_eff = np.clip(x_eff, -50.0, 20.0)
             pred_mean = np.exp(x_eff).mean(axis=0)
         else:
             # Population-level fallback (VAE).
@@ -894,7 +955,23 @@ def _prepare_calibration_data(
         _annotations = []
         if mean_eta is not None:
             _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
-        _annotations.append("PLN (log-rate)")
+        # Branch the family label on ``base_model`` so NBLN / TSLN fits
+        # don't get mislabeled as PLN.  ``_is_pln_model`` groups them
+        # because they share the log-rate-latent decoder, but the
+        # diagnostic title should reflect the actual observation model.
+        _bm = getattr(
+            getattr(results, "model_config", None), "base_model", None
+        )
+        _bm_value = getattr(_bm, "value", _bm)
+        _family_label_map = {
+            "pln": "PLN (log-rate)",
+            "nbln": "NBLN (log-rate)",
+            "twostate_ln_rate": "TSLN-Rate (log-rate)",
+            "twostate_ln_logit": "TSLN-Logit (log-rate)",
+        }
+        _annotations.append(
+            _family_label_map.get(_bm_value, "PLN-family (log-rate)")
+        )
 
         obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
         return {

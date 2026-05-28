@@ -1545,4 +1545,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             # layout unconditionally lets downstream tooling rely on
             # ``result.axis_layout.decoupled`` without a None-check.
             axis_layout=self._axis_layout,
+            # Pass-through of rescue-pass diagnostics from
+            # ``FinalSweepResult``.  ``None`` for v1 (rescue pass not
+            # implemented yet); populated by the engine hook in
+            # ``_em.py`` once the rescue commit lands.
+            pre_rescue_grad_norms=getattr(
+                final, "pre_rescue_grad_norms", None
+            ),
+            rescued_cell_mask=getattr(final, "rescued_cell_mask", None),
         )

@@ -201,6 +201,16 @@ def _run_laplace_inference(
         # Always present for PLN/NBLN (NoneWPrior populates a minimal
         # dict); None for LNM-family in v1.
         w_prior_diagnostics=run_result.w_prior_diagnostics,
+        # Per-cell Newton convergence diagnostics.  The rescue-side
+        # tensors are None for v1 (rescue pass not implemented yet);
+        # ``newton_tolerance`` always populates so the result's
+        # convergence-mask properties apply the same threshold the
+        # fit used.
+        _pre_rescue_grad_norms=getattr(
+            run_result, "pre_rescue_grad_norms", None
+        ),
+        _rescued_cell_mask=getattr(run_result, "rescued_cell_mask", None),
+        _newton_tolerance=float(laplace_config.newton_tolerance),
     )
 
     # Populate NB-on-totals globals when the LNM family fitted them

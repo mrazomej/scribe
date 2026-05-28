@@ -48,6 +48,7 @@ from .heatmap import plot_correlation_heatmap
 from .mixture_ppc import plot_mixture_ppc, plot_mixture_composition
 from .annotation_ppc import plot_annotation_ppc
 from .capture_anchor import plot_capture_anchor, plot_p_capture_scaling
+from .convergence import plot_convergence
 from .mean_calibration import plot_mean_calibration
 from .mu_pairwise import plot_mu_pairwise
 from .corner_ppc import plot_corner_ppc
@@ -226,6 +227,15 @@ Examples:
         "(for VCP models).",
     )
     parser.add_argument(
+        "--convergence",
+        action="store_true",
+        default=None,
+        dest="convergence",
+        help="Enable per-cell Newton convergence diagnostic "
+        "(Laplace fits): histogram of final_grad_norms + scatter vs "
+        "library size, colored by rescue outcome.",
+    )
+    parser.add_argument(
         "--mean-calibration",
         action="store_true",
         default=None,
@@ -383,6 +393,7 @@ def _load_default_viz_config():
                 "annotation_ppc": False,
                 "capture_anchor": False,
                 "p_capture_scaling": False,
+                "convergence": False,
                 "mean_calibration": False,
                 "mu_pairwise": False,
                 "corner_ppc": False,
@@ -493,6 +504,7 @@ def _build_viz_config(args):
         viz_cfg.annotation_ppc = True
         viz_cfg.capture_anchor = True
         viz_cfg.p_capture_scaling = True
+        viz_cfg.convergence = True
         viz_cfg.mean_calibration = True
         viz_cfg.mu_pairwise = True
         viz_cfg.corner_ppc = True
@@ -523,6 +535,8 @@ def _build_viz_config(args):
         viz_cfg.capture_anchor = True
     if args.p_capture_scaling:
         viz_cfg.p_capture_scaling = True
+    if args.convergence:
+        viz_cfg.convergence = True
     if args.mean_calibration:
         viz_cfg.mean_calibration = True
     if args.mu_pairwise:
@@ -1655,6 +1669,44 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 except Exception as e:
                     console.print(
                         f"[red]  Failed to generate capture-anchor plot: "
+                        f"{e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        if viz_cfg.convergence:
+            if getattr(ds_results, "final_grad_norms", None) is None:
+                console.print(
+                    "[yellow]  Skipping convergence diagnostic "
+                    "(final_grad_norms unavailable on this result)[/yellow]"
+                )
+            elif not overwrite and _plot_exists(
+                ds_figs_dir, "_convergence", fmt
+            ):
+                plots_skipped.append(f"convergence{ds_label}")
+                console.print(
+                    "[yellow]  Skipping convergence diagnostic "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating per-cell convergence diagnostic..."
+                    "[/dim]"
+                )
+                try:
+                    result = plot_convergence(
+                        ds_results, ds_counts, ds_figs_dir, orig_cfg, viz_cfg
+                    )
+                    if result is not None:
+                        plots_generated.append(f"convergence{ds_label}")
+                        console.print(
+                            "[green]  Convergence plot saved[/green]"
+                        )
+                    else:
+                        plots_skipped.append(f"convergence{ds_label}")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate convergence plot: "
                         f"{e}[/red]"
                     )
                 finally:

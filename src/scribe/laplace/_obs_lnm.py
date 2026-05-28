@@ -891,4 +891,10 @@ class LNMObservationModel(LaplaceObservationModel):
             stopped_at_step=stopped_at_step,
             divergence_aborted=divergence_aborted,
             global_uncertainty=global_uncertainty or {},
+            # Pass-through of rescue-pass diagnostics; ``None`` until
+            # the engine's rescue hook lands.
+            pre_rescue_grad_norms=getattr(
+                final, "pre_rescue_grad_norms", None
+            ),
+            rescued_cell_mask=getattr(final, "rescued_cell_mask", None),
         )

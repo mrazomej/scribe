@@ -366,6 +366,36 @@ class ScribeLaplaceResults(
     # ``scribe.laplace._axis_layout.AxisLayout``.
     axis_layout: Optional[Any] = None
 
+    # ---- Per-cell Newton convergence diagnostics ------------------
+    #
+    # ``_pre_rescue_grad_norms`` carries the per-cell grad-norm tensor
+    # from BEFORE the optional rescue pass ran.  ``None`` when the
+    # rescue pass did not run (i.e. ``LaplaceConfig.rescue_diverged_cells``
+    # was False, or it was True but no cell exceeded the rescue threshold).
+    # When present, ``final_grad_norms`` is the post-rescue tensor;
+    # users wanting "what fraction of cells were diverged on the main
+    # fit" should consult ``unconverged_cell_mask`` (the property
+    # defined below) which delegates to ``_pre_rescue_grad_norms`` when
+    # available.
+    _pre_rescue_grad_norms: Optional[jnp.ndarray] = None
+
+    # ``_rescued_cell_mask`` is the boolean per-cell mask of cells that
+    # were passed through the rescue pass (i.e. exceeded the rescue
+    # threshold and got re-run with more Newton steps).  ``None`` when
+    # rescue did not run.  A cell with this mask True may or may not
+    # have converged on the rescue — check ``model_unfit_cell_mask`` to
+    # distinguish.
+    _rescued_cell_mask: Optional[np.ndarray] = None
+
+    # ``_newton_tolerance`` is the per-cell Newton tolerance used during
+    # the fit (``LaplaceConfig.newton_tolerance``).  Stored on the result
+    # so the convergence-mask properties can apply the same threshold
+    # the fit actually used, even when the user later runs with a
+    # different default.  ``None`` for older pickles or when the bridge
+    # did not record it; the mask properties fall back to ``1e-4`` in
+    # that case.
+    _newton_tolerance: Optional[float] = None
+
     # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
     # model's ``pack_result`` when a W-prior strategy is configured
     # (always populated for PLN/NBLN — even ``NoneWPrior`` produces a
@@ -445,6 +475,76 @@ class ScribeLaplaceResults(
         # Without an axis_layout we cannot distinguish decoupled from
         # legacy; fall back to G_obs (today's behaviour).
         return self.G_obs
+
+    @property
+    def unconverged_cell_mask(self) -> Optional[np.ndarray]:
+        """Boolean per-cell mask of cells that did not converge on the main fit.
+
+        Returns ``True`` for cells whose final inner-Newton gradient norm
+        exceeded ``LaplaceConfig.newton_tolerance`` BEFORE the optional
+        rescue pass.  When rescue did not run, this is equivalent to
+        ``final_grad_norms > newton_tolerance``.
+
+        The threshold comes from ``self._newton_tolerance`` when it was
+        recorded by the bridge (the typical path).  Older pickles missing
+        the field fall back to ``1e-4`` — the configured default
+        on every shipped LaplaceConfig — which gives the right answer
+        unless the user fit with a custom tolerance.
+
+        Returns
+        -------
+        np.ndarray or None
+            Boolean array of shape ``(n_cells,)``.  ``None`` when
+            ``final_grad_norms`` is unavailable on this result.
+        """
+        if self.final_grad_norms is None:
+            return None
+        # Pre-rescue norms if rescue ran, else raw norms.
+        source = (
+            self._pre_rescue_grad_norms
+            if self._pre_rescue_grad_norms is not None
+            else self.final_grad_norms
+        )
+        tol = (
+            float(self._newton_tolerance)
+            if self._newton_tolerance is not None
+            else 1e-4
+        )
+        return np.asarray(np.asarray(source) > tol, dtype=bool)
+
+    @property
+    def model_unfit_cell_mask(self) -> Optional[np.ndarray]:
+        """Boolean per-cell mask of cells the model cannot fit, post-rescue.
+
+        Returns ``True`` for cells whose final inner-Newton gradient norm
+        is STILL above ``newton_tolerance`` AFTER the rescue pass.  These
+        are the cells where giving Newton more iterations and tighter
+        damping was not enough — the model genuinely cannot fit them.
+
+        Only meaningful when the rescue pass ran (i.e.
+        ``_rescued_cell_mask is not None``).  When rescue did not run,
+        returns ``None`` — distinguish this from "all cells fit"
+        (which would be an all-``False`` mask).
+
+        Returns
+        -------
+        np.ndarray or None
+            Boolean array of shape ``(n_cells,)`` when rescue ran;
+            ``None`` otherwise.
+        """
+        if (
+            self._rescued_cell_mask is None
+            or self.final_grad_norms is None
+        ):
+            return None
+        tol = (
+            float(self._newton_tolerance)
+            if self._newton_tolerance is not None
+            else 1e-4
+        )
+        return np.asarray(
+            np.asarray(self.final_grad_norms) > tol, dtype=bool
+        )
 
     def __repr__(self) -> str:
         """Return a concise text summary for interactive inspection.

@@ -81,3 +81,27 @@ def postprocess_results(ctx: FitContext) -> None:
         object.__setattr__(
             results, "_component_mapping", ctx._component_mapping
         )
+
+    # -- Per-cell Newton convergence column on result.obs ---------------------
+    # Laplace fits expose per-cell inner-Newton gradient norms; surface a
+    # boolean ``scribe_inner_newton_converged`` column on ``result.obs``
+    # so downstream tooling (and humans browsing the AnnData) can filter
+    # by convergence quality.  Mirrors how ``scribe_gene_coverage_included``
+    # gets written on ``adata.var``.  No-op when ``obs`` isn't populated or
+    # the result isn't a Laplace fit.
+    _obs = getattr(results, "obs", None)
+    _grad_norms = getattr(results, "final_grad_norms", None)
+    if _obs is not None and _grad_norms is not None:
+        import numpy as np
+
+        _tol = getattr(results, "_newton_tolerance", None)
+        if _tol is None:
+            _tol = 1e-4
+        _converged = np.asarray(_grad_norms) <= float(_tol)
+        if _converged.shape[0] == _obs.shape[0]:
+            # Write to a copy so we don't mutate any AnnData the user
+            # passed in directly.  ``object.__setattr__`` keeps the
+            # frozen dataclass happy.
+            _obs_copy = _obs.copy()
+            _obs_copy["scribe_inner_newton_converged"] = _converged
+            object.__setattr__(results, "obs", _obs_copy)

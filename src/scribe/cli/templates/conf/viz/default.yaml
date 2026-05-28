@@ -49,6 +49,7 @@ viz:
   annotation_ppc: false    # Needs annotation_key in config
   capture_anchor: false    # Biology-informed capture prior only
   p_capture_scaling: false # VCP models only
+  convergence: false       # Per-cell Newton convergence (Laplace fits only)
   mean_calibration: false  # Observed vs predicted gene means (log-log)
   # Multi-dataset only; figure suffix _mean_pairwise.
   mu_pairwise: false

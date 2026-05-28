@@ -1605,4 +1605,10 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             # decoupled math raises before reaching here, so this is
             # mainly future-proofing for Commit 3b).
             axis_layout=self._axis_layout,
+            # Pass-through of rescue-pass diagnostics; ``None`` until
+            # the engine's rescue hook lands.
+            pre_rescue_grad_norms=getattr(
+                final, "pre_rescue_grad_norms", None
+            ),
+            rescued_cell_mask=getattr(final, "rescued_cell_mask", None),
         )

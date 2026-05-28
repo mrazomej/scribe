@@ -202,6 +202,17 @@ class LaplaceRunResult:
     # ``Any`` to avoid a circular import with
     # ``scribe.laplace._axis_layout.AxisLayout``.
     axis_layout: Optional[Any] = None
+    # Rescue-pass diagnostics.  Populated when the engine's optional
+    # per-cell Newton rescue (``LaplaceConfig.rescue_diverged_cells``)
+    # is enabled and at least one cell was passed through.  ``None``
+    # otherwise.  ``pre_rescue_grad_norms`` carries the full per-cell
+    # grad-norm tensor BEFORE rescue ran; ``rescued_cell_mask`` is the
+    # boolean mask of cells that were re-run.  Plumbed through
+    # ``_format_laplace_results`` into ``ScribeLaplaceResults`` so
+    # downstream tooling can compute the rescue rate and distinguish
+    # "diverged on main fit" from "still diverged after rescue".
+    pre_rescue_grad_norms: Optional[jnp.ndarray] = None
+    rescued_cell_mask: Optional[jnp.ndarray] = None
 
 
 @dataclass
@@ -217,11 +228,21 @@ class InitState:
 
 @dataclass
 class FinalSweepResult:
-    """Bundle returned by :meth:`LaplaceObservationModel.final_sweep`."""
+    """Bundle returned by :meth:`LaplaceObservationModel.final_sweep`.
+
+    ``pre_rescue_grad_norms`` is populated only by the rescue-pass code
+    path (see ``LaplaceConfig.rescue_diverged_cells``).  ``None`` when
+    rescue did not run.  Carries the full per-cell grad-norm tensor
+    BEFORE rescue so downstream tooling can compute the rescue rate and
+    distinguish "cells that were diverged on the main fit" from "cells
+    that are still diverged after rescue".
+    """
 
     latent_loc: jnp.ndarray
     eta_loc: Optional[jnp.ndarray]
     final_grad_norms: jnp.ndarray
+    pre_rescue_grad_norms: Optional[jnp.ndarray] = None
+    rescued_cell_mask: Optional[jnp.ndarray] = None
 
 
 # =====================================================================
@@ -956,7 +977,7 @@ def run_laplace_em(
         offending = int(
             jnp.sum(final.final_grad_norms > laplace_config.newton_tolerance)
         )
-        msg = (
+        msg_short = (
             f"Laplace[{obs_model.name}]: {offending}/{n_cells} cells "
             f"did not converge below tolerance="
             f"{laplace_config.newton_tolerance:.1e} "
@@ -964,9 +985,50 @@ def run_laplace_em(
         )
         action = laplace_config.convergence_action
         if action == "raise":
-            raise RuntimeError(msg)
+            raise RuntimeError(msg_short)
         if action == "warn":
-            logger.warning(msg)
+            # Quantile breakdown helps users decide whether they have
+            # a long-tail (a few badly-stuck cells) or a broad miss
+            # (most cells just need more Newton steps).  Library-size
+            # correlation is the most common cause; surface a hint
+            # without computing it here (the convergence viz panel
+            # owns that diagnostic).
+            grad_arr = np.asarray(final.final_grad_norms, dtype=float)
+            pct = 100.0 * offending / max(int(n_cells), 1)
+            tol = laplace_config.newton_tolerance
+            q50 = float(np.percentile(grad_arr, 50))
+            q90 = float(np.percentile(grad_arr, 90))
+            q99 = float(np.percentile(grad_arr, 99))
+            try:
+                from rich.console import Console
+                from rich.panel import Panel
+
+                console = Console(stderr=True, force_terminal=False)
+                panel_body = (
+                    f"[bold]{offending} / {n_cells} cells "
+                    f"({pct:.2f}%)[/bold] did not converge below "
+                    f"newton_tolerance = {tol:.1e}\n"
+                    f"  worst grad-norm: {max_gn:.3e}\n"
+                    f"  grad-norm percentiles: "
+                    f"p50={q50:.2e}, p90={q90:.2e}, p99={q99:.2e}\n"
+                    "[dim]Run with `--convergence` in scribe-visualize "
+                    "to inspect which cells, and enable "
+                    "`rescue_diverged_cells=True` to re-run Newton on "
+                    "them with more iterations.[/dim]"
+                )
+                console.print(
+                    Panel(
+                        panel_body,
+                        title=f"[yellow]Laplace[{obs_model.name}] "
+                        "inner-Newton convergence[/yellow]",
+                        border_style="yellow",
+                    )
+                )
+            except Exception:
+                # Rich missing or terminal unavailable — fall back to
+                # the existing single-line warning so users on log-only
+                # backends still get the signal.
+                logger.warning(msg_short)
 
     # ---- Post-fit global Laplace uncertainty ----
     # Compute Hessian-based posterior approximations for model-specific
