@@ -1565,18 +1565,21 @@ class LaplaceConfig(BaseModel):
         ),
     )
     rescue_diverged_cells: bool = Field(
-        False,
+        True,
         description=(
-            "Opt-in: after the main fit's final Newton sweep, re-run "
-            "Newton on cells whose ``final_grad_norm`` exceeds "
+            "Default ON: after the main fit's final Newton sweep, "
+            "re-run Newton on cells whose ``final_grad_norm`` exceeds "
             "``newton_tolerance * rescue_threshold_multiplier`` with "
             "``rescue_n_newton`` iterations and a damping ramp of "
             "``rescue_damping_multiplier`` times the base damping.  "
             "Cells that converge under rescue have their per-cell MAP "
             "(``x_loc``, ``eta_loc``) and ``final_grad_norm`` written "
             "back; cells still diverged after rescue are flagged via "
-            "``model_unfit_cell_mask`` on the result.  Default False "
-            "preserves bit-equal fits for existing pipelines."
+            "``model_unfit_cell_mask`` on the result.  The rescue "
+            "short-circuits (no-op) when no cells exceed the threshold, "
+            "so fits whose per-cell Newton was already healthy see no "
+            "change.  Set to False to opt out and restore the legacy "
+            "behavior where diverged cells keep their bad MAP values."
         ),
     )
     rescue_threshold_multiplier: float = Field(

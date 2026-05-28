@@ -1190,9 +1190,22 @@ def run_laplace_em(
                     f"converged {n_rescue_success}, "
                     f"still unfit {n_still_unfit}\n"
                 )
+            elif laplace_config.rescue_diverged_cells:
+                # Rescue is on but no cell exceeded the threshold
+                # (10× newton_tolerance by default).  The warning fired
+                # only because cells are above tolerance but below the
+                # rescue threshold — i.e. borderline.  Suggest lowering
+                # ``rescue_threshold_multiplier`` to capture them.
+                rescue_line = (
+                    "[dim]Rescue did not trigger: no cells exceeded "
+                    f"{tol * laplace_config.rescue_threshold_multiplier:.1e} "
+                    f"(newton_tolerance × {laplace_config.rescue_threshold_multiplier:.1f}). "
+                    "Lower `rescue_threshold_multiplier` to rescue "
+                    "borderline-tolerance cells.[/dim]\n"
+                )
             else:
                 rescue_line = (
-                    "[dim]Enable `rescue_diverged_cells=True` in "
+                    "[dim]Re-enable `rescue_diverged_cells=True` in "
                     "LaplaceConfig to re-run Newton on the diverged "
                     "cells with more iterations.[/dim]\n"
                 )

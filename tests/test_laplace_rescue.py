@@ -39,14 +39,16 @@ def _synthetic_pln(n_cells=40, n_genes=6, latent_dim=2, seed=0):
 
 
 # =====================================================================
-# 1. Default behavior: rescue OFF means rescue masks stay None
+# 1. Rescue on toy data short-circuits: masks stay None when no cells diverge
 # =====================================================================
 
 
-class TestRescueDefaultOff:
-    """``rescue_diverged_cells`` defaults to False; masks remain None."""
+class TestRescueShortCircuit:
+    """Rescue is on by default but short-circuits when no cells exceed the
+    rescue threshold; on small synthetic data this is the typical path."""
 
-    def test_default_off_pre_rescue_grad_norms_is_none(self):
+    def test_no_diverged_cells_keeps_masks_none(self):
+        """Toy PLN data converges cleanly; rescue never triggers; masks stay None."""
         import scribe
 
         adata = _synthetic_pln(seed=0)
@@ -58,11 +60,15 @@ class TestRescueDefaultOff:
             n_steps=30,
             seed=0,
         )
+        # When no cells exceed ``newton_tolerance * rescue_threshold_multiplier``,
+        # the engine's rescue hook short-circuits BEFORE calling
+        # ``rescue_sweep``, so the masks stay None.  This is the
+        # common path for healthy fits.
         assert result._pre_rescue_grad_norms is None
         assert result._rescued_cell_mask is None
 
-    def test_default_off_unconverged_mask_uses_final_grad_norms(self):
-        """Without rescue, ``unconverged_cell_mask`` derives from raw grad norms."""
+    def test_unconverged_mask_uses_final_grad_norms_when_no_rescue(self):
+        """When rescue short-circuits, ``unconverged_cell_mask`` derives from raw grad norms."""
         import scribe
 
         adata = _synthetic_pln(seed=1)
@@ -82,8 +88,8 @@ class TestRescueDefaultOff:
         expected = np.asarray(result.final_grad_norms) > tol
         assert np.array_equal(mask, expected)
 
-    def test_model_unfit_mask_only_when_rescue_ran(self):
-        """``model_unfit_cell_mask`` is None until rescue ran."""
+    def test_model_unfit_mask_only_when_rescue_actually_ran(self):
+        """``model_unfit_cell_mask`` is None when rescue short-circuited."""
         import scribe
 
         adata = _synthetic_pln(seed=2)
