@@ -176,13 +176,13 @@ def plot_convergence(
        ``log10(final_grad_norm)`` colored by convergence bucket —
        surfaces whether unconverged cells correlate with extreme
        library sizes.
-    3. **Scatter (n_genes_expressed)**: ``log10(n_genes_expressed)`` vs
+    3. **Scatter (n genes measured)**: ``log10(n genes measured)`` vs
        ``log10(final_grad_norm)``.  Same role as panel 2 but with the
        gene-detection axis.  Often more diagnostic for doublets and
        stressed cells, which show unusual gene-detection counts
        independent of total UMI.
     4. **QC scatter**: ``log10(library_size)`` vs
-       ``log10(n_genes_expressed)`` colored by convergence bucket.
+       ``log10(n genes measured)`` colored by convergence bucket.
        The classic scRNA-seq QC overlay — places unconverged cells in
        the standard QC space so you can see whether they're outliers
        in the count-vs-detection plane (the typical home of doublets
@@ -197,7 +197,7 @@ def plot_convergence(
         Fitted Laplace result.  Must expose ``final_grad_norms``.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.  Used to
-        compute per-cell library size + ``n_genes_expressed`` for
+        compute per-cell library size + ``n genes measured`` for
         panels 2-4.
     """
     console.print(
@@ -315,9 +315,7 @@ def plot_convergence(
             linewidth=1.0,
         )
         ax2.set_xlabel(r"$\log_{10}$ library size")
-        ax2.set_ylabel(
-            r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$"
-        )
+        ax2.set_ylabel(r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$")
         ax2.set_title("Convergence vs library size")
         ax2.legend(fontsize=8, loc="best")
 
@@ -326,7 +324,7 @@ def plot_convergence(
         ax3.text(
             0.5,
             0.5,
-            "n_genes_expressed unavailable\n(counts shape mismatch)",
+            "n genes measured unavailable\n(counts shape mismatch)",
             ha="center",
             va="center",
             transform=ax3.transAxes,
@@ -341,11 +339,9 @@ def plot_convergence(
             linestyle="--",
             linewidth=1.0,
         )
-        ax3.set_xlabel(r"$\log_{10}$ n_genes_expressed")
-        ax3.set_ylabel(
-            r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$"
-        )
-        ax3.set_title("Convergence vs n_genes_expressed")
+        ax3.set_xlabel(r"$\log_{10}$ n genes measured")
+        ax3.set_ylabel(r"$\log_{10}\|\nabla_{\mathrm{inner}}\|_{\infty}$")
+        ax3.set_title("Convergence vs n genes measured")
         ax3.legend(fontsize=8, loc="best")
 
     # ---- Panel 4: QC scatter (library size, n_genes_expressed) ------------
@@ -364,7 +360,7 @@ def plot_convergence(
         log_ng = np.log10(np.maximum(n_genes_expr, 1.0))
         _scatter_by_bucket(ax4, log_lib, log_ng)
         ax4.set_xlabel(r"$\log_{10}$ library size")
-        ax4.set_ylabel(r"$\log_{10}$ n_genes_expressed")
+        ax4.set_ylabel(r"$\log_{10}$ n genes measured")
         ax4.set_title("QC scatter (cells colored by convergence)")
         ax4.legend(fontsize=8, loc="best")
 
