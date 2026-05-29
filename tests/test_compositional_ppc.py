@@ -283,3 +283,80 @@ def test_plot_compositional_ppc_rejects_results_without_method():
             min_mean_umi=0.0,
             save=False, show=False, close=True,
         )
+
+
+def test_render_compositional_offdiag_panel_kde_default(monkeypatch):
+    """By default, _render_compositional_offdiag_panel should use KDE and call gaussian_kde."""
+    from scribe.viz.compositional_corner_ppc import _render_compositional_offdiag_panel
+    import matplotlib.pyplot as plt
+    import scipy.stats
+
+    rng = np.random.default_rng(0)
+    model_x = rng.uniform(0.01, 0.99, size=100)
+    model_y = rng.uniform(0.01, 0.99, size=100)
+    emp_x = rng.uniform(0.01, 0.99, size=10)
+    emp_y = rng.uniform(0.01, 0.99, size=10)
+
+    seen = {"called": False}
+    class _FakeKDE:
+        def __call__(self, positions):
+            return np.ones(positions.shape[1])
+
+    def _fake_kde(stacked):
+        seen["called"] = True
+        return _FakeKDE()
+
+    monkeypatch.setattr(scipy.stats, "gaussian_kde", _fake_kde)
+
+    fig, ax = plt.subplots()
+    _render_compositional_offdiag_panel(
+        ax, model_x, model_y, emp_x, emp_y, 0.5, 0.5
+    )
+    plt.close(fig)
+    assert seen["called"] is True
+
+
+def test_render_compositional_offdiag_panel_hist2d(monkeypatch):
+    """In hist2d mode, _render_compositional_offdiag_panel should not call gaussian_kde."""
+    from scribe.viz.compositional_corner_ppc import _render_compositional_offdiag_panel
+    import matplotlib.pyplot as plt
+    import scipy.stats
+
+    rng = np.random.default_rng(0)
+    model_x = rng.uniform(0.01, 0.99, size=100)
+    model_y = rng.uniform(0.01, 0.99, size=100)
+    emp_x = rng.uniform(0.01, 0.99, size=10)
+    emp_y = rng.uniform(0.01, 0.99, size=10)
+
+    monkeypatch.setattr(
+        scipy.stats,
+        "gaussian_kde",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("gaussian_kde should not be called")
+        ),
+    )
+
+    fig, ax = plt.subplots()
+    _render_compositional_offdiag_panel(
+        ax, model_x, model_y, emp_x, emp_y, 0.5, 0.5, density_method="hist2d"
+    )
+    plt.close(fig)
+
+
+def test_compositional_invalid_density_method_raises():
+    """ValueError should be raised for an invalid density method."""
+    from scribe.viz.compositional_corner_ppc import _render_compositional_offdiag_panel
+    import matplotlib.pyplot as plt
+
+    rng = np.random.default_rng(0)
+    model_x = rng.uniform(0.01, 0.99, size=100)
+    model_y = rng.uniform(0.01, 0.99, size=100)
+    emp_x = rng.uniform(0.01, 0.99, size=10)
+    emp_y = rng.uniform(0.01, 0.99, size=10)
+
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="density_method"):
+        _render_compositional_offdiag_panel(
+            ax, model_x, model_y, emp_x, emp_y, 0.5, 0.5, density_method="invalid"
+        )
+    plt.close(fig)

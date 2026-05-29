@@ -73,12 +73,11 @@ a single figure:
   credible-region bands from posterior predictive draws with the observed count
   histogram overlaid.
 - **Lower-triangle panels** — bivariate PPC panels: 2-D density contour
-  levels computed via
-  pooled posterior predictive samples overlaid. By default, these densities are
-  computed with a fast `numpy.histogram2d` path (`density_method="hist2d"`).
-  For smoother (but slower) contours, `density_method="kde"` uses
-  `scipy.stats.gaussian_kde`. Scatter points default to `scatter_color="black"`
-  and are rendered in the background under contours.
+  levels computed via pooled posterior predictive samples overlaid. By default,
+  these densities are computed using `scipy.stats.gaussian_kde` for smooth contours
+  (`density_method="kde"`). Alternatively, a faster binned density can be used via
+  `numpy.histogram2d` (`density_method="hist2d"`). Scatter points default to
+  `scatter_color="black"` and are rendered in the background under contours.
   Contours use HPD-style mass levels by default:
   `contour_mass_levels=(0.5, 0.68, 0.95, 0.99)`.
   Gray contour-line edges are drawn on smoother panels by default
@@ -128,9 +127,10 @@ Three modes (checked in priority order):
 
 ### Performance
 
-The default `hist2d` estimator is designed for speed on large pooled PPC
-samples.  When `density_method="kde"`, pooled samples are subsampled to at most
-50 000 points and tiny jitter is added to break integer ties for KDE stability.
+By default, `density_method="kde"` is used, where pooled samples are subsampled
+to at most 50 000 points and tiny jitter is added to break integer ties for KDE
+stability. For large datasets where speed is a priority, the alternative `hist2d`
+estimator uses binned densities for substantially faster performance.
 
 ### CLI usage
 
@@ -159,7 +159,9 @@ Layout per panel:
   - step empirical histogram (per-cell `u_c,g / N_c`),
   - dashed vertical line at the pseudobulk value.
 - 2-D (lower-triangle of `plot_compositional_corner_ppc`):
-  - filled HPD contours from the pooled model samples,
+  - filled HPD contours from the pooled model samples (estimated using
+    `scipy.stats.gaussian_kde` by default via `density_method="kde"`, or fast
+    `numpy.histogram2d` via `density_method="hist2d"`),
   - per-cell empirical scatter,
   - large pseudobulk marker (`X`).
 

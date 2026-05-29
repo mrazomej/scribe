@@ -70,7 +70,7 @@ def _render_compositional_offdiag_panel(
     pseudobulk_color="crimson",
     pseudobulk_marker="X",
     pseudobulk_size=120,
-    density_method="hist2d",
+    density_method="kde",
     hist2d_bins=80,
     x_range=None,
     y_range=None,
@@ -245,7 +245,7 @@ def plot_compositional_corner_ppc(
     pseudobulk_color="crimson",
     pseudobulk_marker="X",
     pseudobulk_size=120,
-    density_method="hist2d",
+    density_method="kde",
     hist2d_bins=80,
     match_offdiag_limits_to_marginals=True,
     gene_selection="correlation_diverse",
@@ -304,8 +304,9 @@ def plot_compositional_corner_ppc(
     pseudobulk_color, pseudobulk_marker, pseudobulk_size : style
         controls for the dataset-level pseudobulk marker (large
         ``X`` by default to stand out against the scatter cloud).
-    density_method : {"hist2d", "kde"}
-        Density estimator for the model field.  ``hist2d`` is faster.
+    density_method : {"kde", "hist2d"}
+        Density estimator for the model field. ``"kde"`` (default) is smoother;
+        ``"hist2d"`` is faster.
     hist2d_bins : int
         Bins per axis for the histogram-based density.
     match_offdiag_limits_to_marginals : bool, default True

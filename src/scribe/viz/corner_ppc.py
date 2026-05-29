@@ -574,7 +574,7 @@ def _render_offdiag_panel(
     scatter_size=4,
     scatter_color="black",
     log_scale=False,
-    density_method="hist2d",
+    density_method="kde",
     hist2d_bins=80,
     x_range=None,
     y_range=None,
@@ -629,10 +629,10 @@ def _render_offdiag_panel(
     log_scale : bool
         If ``True``, apply ``log1p`` to both PPC samples and observed
         data before density estimation and scatter plotting.
-    density_method : {"hist2d", "kde"}
-        Off-diagonal density estimator. ``"hist2d"`` (default) uses
-        ``numpy.histogram2d`` and is substantially faster. ``"kde"`` uses
+    density_method : {"kde", "hist2d"}
+        Off-diagonal density estimator. ``"kde"`` (default) uses
         ``scipy.stats.gaussian_kde`` for a smoother but slower estimate.
+        ``"hist2d"`` uses ``numpy.histogram2d`` and is substantially faster.
     hist2d_bins : int
         Number of bins per axis for ``density_method="hist2d"``.
     x_range : tuple of float or None
@@ -846,7 +846,7 @@ def plot_corner_ppc(
     scatter_alpha=0.25,
     scatter_size=4,
     scatter_color="black",
-    density_method="hist2d",
+    density_method="kde",
     hist2d_bins=80,
     log_scale=False,
     match_offdiag_limits_to_marginals=True,
@@ -947,10 +947,10 @@ def plot_corner_ppc(
         Marker size for scatter points.
     scatter_color : str
         Colour for observed-data scatter points.
-    density_method : {"hist2d", "kde"}
-        Off-diagonal density estimator. ``"hist2d"`` (default) is fast and
-        uses binned densities; ``"kde"`` provides smoother contours but is
-        slower on large pooled PPC samples.
+    density_method : {"kde", "hist2d"}
+        Off-diagonal density estimator. ``"kde"`` (default) provides smoother
+        contours but is slower on large pooled PPC samples; ``"hist2d"`` is fast
+        and uses binned densities.
     hist2d_bins : int
         Number of bins per axis for ``density_method="hist2d"``.
     log_scale : bool

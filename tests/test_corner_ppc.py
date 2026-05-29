@@ -356,15 +356,15 @@ class TestRenderOffdiagPanel:
         assert len(ax.collections) > 0
         plt.close(fig)
 
-    def test_hist2d_default_does_not_call_kde(self, monkeypatch):
-        """Default off-diagonal rendering should use fast hist2d, not KDE."""
+    def test_hist2d_mode_does_not_call_kde(self, monkeypatch):
+        """Hist2d off-diagonal rendering should use fast hist2d, not KDE."""
         rng = np.random.default_rng(111)
         ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
         ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
         obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
         obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
 
-        # If KDE is called in default mode this test should fail immediately.
+        # If KDE is called in hist2d mode this test should fail immediately.
         monkeypatch.setattr(
             corner_ppc_module,
             "gaussian_kde",
@@ -374,7 +374,36 @@ class TestRenderOffdiagPanel:
         )
 
         fig, ax = plt.subplots()
-        _render_offdiag_panel(ax, ppc_x, ppc_y, obs_x, obs_y)
+        _render_offdiag_panel(ax, ppc_x, ppc_y, obs_x, obs_y, density_method="hist2d")
+        assert len(ax.collections) > 0
+        plt.close(fig)
+
+    def test_kde_default_calls_kde(self, monkeypatch):
+        """Default off-diagonal rendering should use KDE, executing gaussian_kde."""
+        rng = np.random.default_rng(222)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+        seen = {"called": False}
+
+        # Build a minimal KDE stub that matches the callable contract.
+        class _FakeKDE:
+            def __call__(self, positions):
+                _n = positions.shape[1]
+                return np.ones(_n, dtype=float)
+
+        def _fake_kde(_stacked):
+            seen["called"] = True
+            return _FakeKDE()
+
+        monkeypatch.setattr(corner_ppc_module, "gaussian_kde", _fake_kde)
+
+        fig, ax = plt.subplots()
+        _render_offdiag_panel(
+            ax, ppc_x, ppc_y, obs_x, obs_y
+        )
+        assert seen["called"] is True
         assert len(ax.collections) > 0
         plt.close(fig)
 
