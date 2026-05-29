@@ -97,6 +97,11 @@ def _build_from_kwargs(ctx, kw, d_mode):
         overdispersion_dataset_prior=kw.get(
             "overdispersion_dataset_prior", "none"
         ),
+        regime_dataset_prior=kw.get("regime_dataset_prior", "none"),
+        regime_dataset_target=kw.get("regime_dataset_target"),
+        overdispersion_dataset_independent=kw.get(
+            "overdispersion_dataset_independent", True
+        ),
         horseshoe_tau0=kw.get("horseshoe_tau0", 1.0),
         horseshoe_slab_df=kw.get("horseshoe_slab_df", 4),
         horseshoe_slab_scale=kw.get("horseshoe_slab_scale", 2.0),

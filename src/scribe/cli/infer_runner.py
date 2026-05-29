@@ -1164,6 +1164,12 @@ def main(cfg: DictConfig) -> None:
         "zero_inflation_dataset_prior": cfg.get(
             "zero_inflation_dataset_prior", "none"
         ),
+        # Two-state dataset-level regime hierarchy + free overdispersion
+        "regime_dataset_prior": cfg.get("regime_dataset_prior", "none"),
+        "regime_dataset_target": cfg.get("regime_dataset_target"),
+        "overdispersion_dataset_independent": cfg.get(
+            "overdispersion_dataset_independent", True
+        ),
         "overdispersion_dataset_prior": cfg.get(
             "overdispersion_dataset_prior", "none"
         ),

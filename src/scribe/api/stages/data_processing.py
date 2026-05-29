@@ -102,6 +102,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
     prob_dataset_mode = kw.get("prob_dataset_mode", "gene_specific")
     zi_dataset_prior = kw.get("zero_inflation_dataset_prior", "none")
     od_dataset_prior = kw.get("overdispersion_dataset_prior", "none")
+    regime_dataset_prior = kw.get("regime_dataset_prior", "none")
     dataset_mixing = kw.get("dataset_mixing")
     prob_prior = kw.get("prob_prior", "none")
     zi_prior = kw.get("zero_inflation_prior", "none")
@@ -134,6 +135,12 @@ def process_data_and_datasets(ctx: FitContext) -> None:
             od_dataset_prior = "none"
             msgs.append("overdispersion_dataset_prior -> 'none'")
 
+        # The two-state regime hierarchy collapses to the gene-level prior
+        # when only one dataset is present (there is nothing to pool across).
+        if regime_dataset_prior != "none":
+            regime_dataset_prior = "none"
+            msgs.append("regime_dataset_prior -> 'none'")
+
         if msgs:
             n_datasets = None
             if dataset_mixing is None:
@@ -150,12 +157,14 @@ def process_data_and_datasets(ctx: FitContext) -> None:
         or prob_dataset_prior != "none"
         or zi_dataset_prior != "none"
         or od_dataset_prior != "none"
+        or regime_dataset_prior != "none"
     )
     if _uses_ds and dataset_indices is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
             "(expression_dataset_prior, prob_dataset_prior, "
-            "zero_inflation_dataset_prior, overdispersion_dataset_prior) "
+            "zero_inflation_dataset_prior, overdispersion_dataset_prior, "
+            "regime_dataset_prior) "
             "require dataset_key so cells can "
             "be mapped to datasets. Provide dataset_key as an adata.obs "
             "column when using dataset-level hierarchical priors."
@@ -170,6 +179,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
     kw["prob_dataset_mode"] = prob_dataset_mode
     kw["zero_inflation_dataset_prior"] = zi_dataset_prior
     kw["overdispersion_dataset_prior"] = od_dataset_prior
+    kw["regime_dataset_prior"] = regime_dataset_prior
     kw["dataset_mixing"] = dataset_mixing
     kw["prob_prior"] = prob_prior
     kw["zero_inflation_prior"] = zi_prior

@@ -70,6 +70,9 @@ def build_config_from_preset(
     prob_dataset_mode: str = "gene_specific",
     zero_inflation_dataset_prior: str = "none",
     overdispersion_dataset_prior: str = "none",
+    regime_dataset_prior: str = "none",
+    regime_dataset_target: Optional[str] = None,
+    overdispersion_dataset_independent: bool = True,
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
@@ -636,11 +639,18 @@ def build_config_from_preset(
         builder._prob_dataset_mode = prob_dataset_mode
         builder._zero_inflation_dataset_prior = zero_inflation_dataset_prior
         builder._overdispersion_dataset_prior = overdispersion_dataset_prior
+        # Two-state dataset-level regime hierarchy + free overdispersion.
+        builder._regime_dataset_prior = regime_dataset_prior
+        builder._regime_dataset_target = regime_dataset_target
+        builder._overdispersion_dataset_independent = (
+            overdispersion_dataset_independent
+        )
         if (
             expression_dataset_prior != "none"
             or prob_dataset_prior != "none"
             or zero_inflation_dataset_prior != "none"
             or overdispersion_dataset_prior != "none"
+            or regime_dataset_prior != "none"
         ):
             builder._unconstrained = True
     else:

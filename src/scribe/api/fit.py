@@ -128,6 +128,10 @@ def fit(
     prob_dataset_mode: str = "gene_specific",
     zero_inflation_dataset_prior: str = "none",
     overdispersion_dataset_prior: str = "none",
+    # Two-state dataset-level regime hierarchy + free overdispersion
+    regime_dataset_prior: str = "none",
+    regime_dataset_target: Optional[str] = None,
+    overdispersion_dataset_independent: bool = True,
     auto_downgrade_single_dataset_hierarchy: bool = True,
     # Horseshoe hyperparameters
     horseshoe_tau0: float = 1.0,
@@ -1095,6 +1099,9 @@ def fit(
             prob_dataset_mode=prob_dataset_mode,
             zero_inflation_dataset_prior=zero_inflation_dataset_prior,
             overdispersion_dataset_prior=overdispersion_dataset_prior,
+            regime_dataset_prior=regime_dataset_prior,
+            regime_dataset_target=regime_dataset_target,
+            overdispersion_dataset_independent=overdispersion_dataset_independent,
             auto_downgrade_single_dataset_hierarchy=auto_downgrade_single_dataset_hierarchy,
             horseshoe_tau0=horseshoe_tau0,
             horseshoe_slab_df=horseshoe_slab_df,
