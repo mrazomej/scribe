@@ -58,6 +58,9 @@ dirname_aliases:
     expression_dataset_prior: exprdataprior
     prob_dataset_prior: probdataprior
     zero_inflation_dataset_prior: zerodataprior
+    regime_dataset_prior: regimedataprior
+    regime_dataset_target: regimetarget
+    overdispersion_dataset_independent: overdispdataindep
     overdispersion_prior: overdispprior
     overdispersion_dataset_prior: overdispdatasetprior
     positive_transform: postransform

@@ -69,6 +69,14 @@ expression_dataset_prior: "none"  # Dataset-level mu/r prior: none | gaussian | 
 prob_dataset_prior: "none"   # Dataset-level p/phi prior: none | gaussian | horseshoe | neg
 prob_dataset_mode: "gene_specific"  # Structural mode for dataset prob: none | scalar | gene_specific | two_level
 zero_inflation_dataset_prior: "none"  # Dataset-level gate prior: none | gaussian | horseshoe | neg
+# Two-state only: dataset-level prior on the regime coordinate (k_off /
+# switching_ratio / concentration / inv_concentration, per parameterization).
+# Links the bursting regime across datasets. none | gaussian | horseshoe | neg
+regime_dataset_prior: "none"
+regime_dataset_target: null  # Override the regime coordinate (null = parameterization default)
+# Two-state only: give the overdispersion coordinate (burst_size / excess_fano)
+# an independent, free value per dataset (no cross-dataset hierarchy).
+overdispersion_dataset_independent: true
 
 # --- Sparsity Prior Hyperparameters ---
 # Horseshoe hyperparameters (used when any *_prior is "horseshoe")
