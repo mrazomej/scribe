@@ -77,6 +77,11 @@ from ..components.vae_components import (
 from ..config import GuideFamilyConfig, ModelConfig
 from ..config.enums import HierarchicalPriorType, InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
+from ..config.enums import (
+    TWOSTATE_OVERDISPERSION_COORD,
+    TWOSTATE_REGIME_COORD,
+    TWOSTATE_SIGMOID_REGIME_COORDS,
+)
 from ..config.groups import VAEConfig
 from ..parameterizations import (
     PARAMETERIZATIONS,
@@ -1103,9 +1108,7 @@ def create_model(
 
         # Hierarchical mu/r across datasets
         if model_config.expression_dataset_prior != _NONE:
-            _mu_target = (
-                "mu" if param_key in ("mean_prob", "mean_odds") else "r"
-            )
+            _mu_target = "mu" if _expression_target_is_mu(param_key) else "r"
             param_specs = _datasetify_mu(
                 param_specs=param_specs,
                 param_key=param_key,
@@ -1172,6 +1175,44 @@ def create_model(
         )
 
     # ==========================================================================
+    # Step 5.6: Two-state dataset-level regime hierarchy + free overdispersion
+    # ==========================================================================
+    # The regime/overdispersion coordinates are two-state extras (built in
+    # Step 5), so these passes run AFTER the extras exist — unlike the mu/p
+    # dataset hierarchies (Step 4.6), which operate on core parameters.
+    if model_config.n_datasets is not None and base_model in (
+        "twostate",
+        "twostatevcp",
+    ):
+        _regime_coord = TWOSTATE_REGIME_COORD.get(model_config.parameterization)
+        # Link the regime coordinate across datasets: it is the weakly
+        # identified "NB ↔ bursty" axis and benefits from partial pooling.
+        if model_config.regime_dataset_prior != _NONE:
+            param_specs = _datasetify_regime(
+                param_specs=param_specs,
+                parameterization=model_config.parameterization,
+                guide_families=guide_families,
+                n_datasets=model_config.n_datasets,
+                shared_component_indices=getattr(
+                    model_config, "shared_component_indices", None
+                ),
+                positive_transform=(
+                    _pos_transform_for_name(_regime_coord)
+                    if _regime_coord is not None
+                    else None
+                ),
+                target_override=model_config.regime_dataset_target,
+            )
+        # Give the overdispersion coordinate an independent, free value per
+        # dataset (well identified by each dataset's variance; no shrinkage).
+        if model_config.overdispersion_dataset_independent:
+            param_specs = _datasetify_overdispersion_independent(
+                param_specs=param_specs,
+                parameterization=model_config.parameterization,
+                n_datasets=model_config.n_datasets,
+            )
+
+    # ==========================================================================
     # Step 5.7: Apply horseshoe priors (upgrade normal hierarchies in-place)
     # ==========================================================================
     _HS = HierarchicalPriorType.HORSESHOE
@@ -1199,6 +1240,14 @@ def create_model(
     if model_config.zero_inflation_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_gate(param_specs, **horseshoe_kwargs)
 
+    if model_config.regime_dataset_prior == _HS:
+        param_specs = _horseshoe_dataset_regime(
+            param_specs,
+            model_config.parameterization,
+            target_override=model_config.regime_dataset_target,
+            **horseshoe_kwargs,
+        )
+
     # ==========================================================================
     # Step 5.8: Apply NEG priors (upgrade normal hierarchies in-place)
     # ==========================================================================
@@ -1222,6 +1271,14 @@ def create_model(
 
     if model_config.zero_inflation_dataset_prior == _NEG:
         param_specs = _neg_dataset_gate(param_specs, **neg_kwargs)
+
+    if model_config.regime_dataset_prior == _NEG:
+        param_specs = _neg_dataset_regime(
+            param_specs,
+            model_config.parameterization,
+            target_override=model_config.regime_dataset_target,
+            **neg_kwargs,
+        )
 
     # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
@@ -1479,6 +1536,31 @@ def _get_parameterization_key(param: Union[str, ParamEnum]) -> str:
         }
         return enum_to_key.get(param, param.value)
     return param
+
+
+def _expression_target_is_mu(param_key: str) -> bool:
+    """Whether the gene-specific expression parameter is ``mu`` (not ``r``).
+
+    The dataset-level expression hierarchy operates on whichever parameter
+    carries the biological mean.  That is ``mu`` for the NB mean
+    parameterizations (``mean_prob`` / ``mean_odds``) and for every two-state
+    parameterization (whose core gene parameter is ``mu``); it is ``r`` for the
+    canonical NB parameterization.
+
+    Parameters
+    ----------
+    param_key : str
+        Parameterization registry key (e.g. ``"canonical"``, ``"mean_odds"``,
+        ``"two_state_moment_delta"``).
+
+    Returns
+    -------
+    bool
+        True when the target expression parameter is ``mu``.
+    """
+    return param_key in ("mean_odds", "mean_prob") or param_key.startswith(
+        "two_state"
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1931,8 +2013,9 @@ def _datasetify_mu(
         Updated parameter specs with the flat mu/r replaced by a
         dataset-hierarchical triplet.
     """
-    # For mean_odds and mean_prob, the target is mu; for canonical, it's r
-    if param_key in ("mean_odds", "mean_prob"):
+    # The expression target is ``mu`` for the mean parameterizations AND for
+    # every two-state parameterization; it is ``r`` for canonical NB.
+    if _expression_target_is_mu(param_key):
         target_name = "mu"
         hyper_loc_name = "log_mu_dataset_loc"
         hyper_scale_name = "log_mu_dataset_scale"
@@ -2206,6 +2289,345 @@ def _datasetify_gate(
     return new_specs
 
 
+# ------------------------------------------------------------------------------
+# Two-state dataset-level regime + overdispersion passes
+# ------------------------------------------------------------------------------
+
+
+def _datasetify_regime(
+    param_specs: List,
+    parameterization: "ParamEnum",
+    guide_families,
+    n_datasets: int,
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
+    positive_transform=None,
+    target_override: Optional[str] = None,
+) -> List:
+    """Replace the two-state regime coordinate with a dataset-hierarchical triplet.
+
+    The regime coordinate (k_off / switching_ratio / concentration /
+    inv_concentration, depending on the parameterization) is the weakly
+    identified "NB ↔ bursty" axis.  Pooling it across datasets both
+    regularizes it and encodes the prior that the bursting regime is shared
+    between conditions unless the data disagree.
+
+    The spec class is chosen by the coordinate's support: ``inv_concentration``
+    lives on (0, 1) and uses :class:`DatasetHierarchicalSigmoidNormalSpec`
+    (logit hyperprior names); the others live on (0, ∞) and use
+    :class:`DatasetHierarchicalPositiveNormalSpec` (log hyperprior names).
+    The population-level location (``hyper_loc``) inherits the flat regime
+    spec's prior so the per-parameterization "default to NB" tilt is preserved
+    at the population level.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current specs (must already contain the regime coordinate spec, i.e.
+        this runs after Step 5 builds the two-state extras).
+    parameterization : ParamEnum
+        Active parameterization; selects the regime coordinate via
+        ``TWOSTATE_REGIME_COORD``.
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_datasets : int
+        Number of datasets.
+    shared_component_indices : tuple of int, optional
+        Component indices shared across 2+ datasets (mixture models).
+    positive_transform : Transform, optional
+        Positive transform applied when the regime coordinate lives on
+        (0, ∞).  Ignored for the sigmoid (inv_concentration) coordinate.
+    target_override : str, optional
+        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with the regime coordinate replaced by a
+        dataset-hierarchical triplet.  Returned unchanged when the
+        parameterization has no regime coordinate (non-two-state).
+    """
+    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
+    if coord is None:
+        return param_specs
+
+    # Select hyperprior names + spec class by the coordinate's support.
+    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
+    if is_sigmoid:
+        hyper_loc_name = f"logit_{coord}_dataset_loc"
+        hyper_scale_name = f"logit_{coord}_dataset_scale"
+        HierSpec = DatasetHierarchicalSigmoidNormalSpec
+    else:
+        hyper_loc_name = f"log_{coord}_dataset_loc"
+        hyper_scale_name = f"log_{coord}_dataset_scale"
+        HierSpec = DatasetHierarchicalPositiveNormalSpec
+
+    target_family = guide_families.get(coord)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == coord:
+            orig_is_mixture = getattr(spec, "is_mixture", False)
+            # Preserve the flat regime prior at the population level so the
+            # per-parameterization NB tilt (e.g. logit δ ~ N(-4, 2),
+            # log k_off ~ N(3, 2)) carries through to μ-of-the-regime.
+            orig_params = (
+                spec.prior
+                if getattr(spec, "prior", None) is not None
+                else spec.default_params
+            )
+
+            hyper_loc = NormalWithTransformSpec(
+                name=hyper_loc_name,
+                shape_dims=("n_genes",),
+                default_params=orig_params,
+                is_gene_specific=True,
+                is_mixture=orig_is_mixture,
+            )
+            # Shared scalar cross-dataset scale (tight by default → tight
+            # linkage); upgraded to the horseshoe trio later when requested.
+            hyper_scale = SoftplusNormalSpec(
+                name=hyper_scale_name,
+                shape_dims=(),
+                default_params=(-2.0, 0.5),
+            )
+
+            # Pass the positive transform only for the (0, ∞) coordinates;
+            # the sigmoid spec already defaults to SigmoidTransform.
+            extra_kwargs = {}
+            if positive_transform is not None and not is_sigmoid:
+                extra_kwargs["transform"] = positive_transform
+
+            hier_spec = HierSpec(
+                name=coord,
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name=hyper_loc_name,
+                hyper_scale_name=hyper_scale_name,
+                is_gene_specific=True,
+                is_dataset=True,
+                is_mixture=orig_is_mixture,
+                guide_family=target_family,
+                shared_component_indices=shared_component_indices,
+                **extra_kwargs,
+            )
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+def _datasetify_overdispersion_independent(
+    param_specs: List,
+    parameterization: "ParamEnum",
+    n_datasets: int,
+    target_override: Optional[str] = None,
+) -> List:
+    """Make the two-state overdispersion coordinate dataset-specific and free.
+
+    The overdispersion coordinate (burst_size / excess_fano) is well
+    identified by each dataset's variance, so it is given an independent value
+    per (dataset, gene) with NO cross-dataset hierarchy — simply by marking the
+    existing flat spec ``is_dataset=True``.  ``resolve_shape`` then prepends the
+    dataset axis (shape ``(D, G)``, or ``(K, D, G)`` for mixtures) and
+    :func:`index_dataset_params` gathers the per-cell value inside the plate.
+
+    The mean-preserving reparameterization guarantees ``E[u] = μ`` for any
+    overdispersion value, so letting it float per dataset cannot contaminate
+    the (shared, hierarchical) μ.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current specs (must already contain the overdispersion coordinate).
+    parameterization : ParamEnum
+        Active parameterization; selects the coordinate via
+        ``TWOSTATE_OVERDISPERSION_COORD``.
+    n_datasets : int
+        Number of datasets (kept for signature symmetry with the other passes).
+    target_override : str, optional
+        Explicit coordinate name overriding ``TWOSTATE_OVERDISPERSION_COORD``.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with the overdispersion coordinate marked dataset-specific.
+    """
+    del n_datasets  # axis size comes from dims at sample time, not here
+    coord = target_override or TWOSTATE_OVERDISPERSION_COORD.get(
+        parameterization
+    )
+    if coord is None:
+        return param_specs
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == coord:
+            # Re-mark the flat gene-level spec as dataset-specific.  No
+            # hyperprior and no shrinkage: each (dataset, gene) value is free.
+            new_specs.append(spec.model_copy(update={"is_dataset": True}))
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+def _horseshoe_dataset_regime(
+    param_specs: List,
+    parameterization: "ParamEnum",
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+    target_override: Optional[str] = None,
+) -> List:
+    """Upgrade the dataset-level regime hierarchy to a regularized horseshoe.
+
+    Mirrors :func:`_horseshoe_dataset_p`: replaces the scalar cross-dataset
+    scale with the horseshoe trio (τ, λ_g, c²) and swaps the
+    ``DatasetHierarchical{Sigmoid,Positive}NormalSpec`` for its
+    ``HorseshoeDataset{Sigmoid,Positive}NormalSpec`` counterpart, selected by
+    the regime coordinate's support.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after :func:`_datasetify_regime` has run.
+    parameterization : ParamEnum
+        Active parameterization; selects the regime coordinate.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+    target_override : str, optional
+        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with a horseshoe dataset-level regime hierarchy.
+    """
+    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
+    if coord is None:
+        return param_specs
+
+    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
+    if is_sigmoid:
+        scale_name = f"logit_{coord}_dataset_scale"
+        loc_name = f"logit_{coord}_dataset_loc"
+        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
+        HorseshoeClass = HorseshoeDatasetSigmoidNormalSpec
+    else:
+        scale_name = f"log_{coord}_dataset_scale"
+        loc_name = f"log_{coord}_dataset_loc"
+        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
+        HorseshoeClass = HorseshoeDatasetPositiveNormalSpec
+
+    prefix = f"{coord}_dataset"
+    raw_name = f"{coord}_raw_dataset"
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        prefix, tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == coord and isinstance(spec, TargetHierClass):
+            horseshoe_spec = HorseshoeClass(
+                name=coord,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"tau_{prefix}",
+                tau_name=f"tau_{prefix}",
+                lambda_name=f"lambda_{prefix}",
+                c_sq_name=f"c_sq_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+                transform=spec.transform,
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+def _neg_dataset_regime(
+    param_specs: List,
+    parameterization: "ParamEnum",
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+    target_override: Optional[str] = None,
+) -> List:
+    """Upgrade the dataset-level regime hierarchy to a NEG (TPBN) prior.
+
+    Mirrors :func:`_neg_dataset_p`: replaces the scalar cross-dataset scale
+    with the NEG Gamma-Gamma hierarchy (ζ_g, ψ_g) and swaps the dataset
+    hierarchical spec for its NEG counterpart, selected by the regime
+    coordinate's support.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after :func:`_datasetify_regime` has run.
+    parameterization : ParamEnum
+        Active parameterization; selects the regime coordinate.
+    u, a, tau : float
+        NEG hyperparameters.
+    target_override : str, optional
+        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with a NEG dataset-level regime hierarchy.
+    """
+    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
+    if coord is None:
+        return param_specs
+
+    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
+    if is_sigmoid:
+        scale_name = f"logit_{coord}_dataset_scale"
+        loc_name = f"logit_{coord}_dataset_loc"
+        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
+        NEGClass = NEGDatasetSigmoidNormalSpec
+    else:
+        scale_name = f"log_{coord}_dataset_scale"
+        loc_name = f"log_{coord}_dataset_loc"
+        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
+        NEGClass = NEGDatasetPositiveNormalSpec
+
+    prefix = f"{coord}_dataset"
+    raw_name = f"{coord}_raw_dataset"
+    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == coord and isinstance(spec, TargetHierClass):
+            neg_spec = NEGClass(
+                name=coord,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"psi_{prefix}",
+                psi_name=f"psi_{prefix}",
+                zeta_name=f"zeta_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+                transform=spec.transform,
+            )
+            new_specs.append(neg_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
 # ==============================================================================
 # Horseshoe Factory Helpers
 # ==============================================================================
@@ -2451,7 +2873,7 @@ def _horseshoe_dataset_mu(
     List[ParamSpec]
         Updated specs with horseshoe dataset mu.
     """
-    if param_key in ("mean_odds", "mean_prob"):
+    if _expression_target_is_mu(param_key):
         target_name = "mu"
         scale_name = "log_mu_dataset_scale"
         loc_name = "log_mu_dataset_loc"
@@ -2872,7 +3294,7 @@ def _neg_dataset_mu(
     List[ParamSpec]
         Updated specs with NEG dataset mu.
     """
-    if param_key in ("mean_odds", "mean_prob"):
+    if _expression_target_is_mu(param_key):
         target_name = "mu"
         scale_name = "log_mu_dataset_scale"
         loc_name = "log_mu_dataset_loc"

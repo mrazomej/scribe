@@ -124,6 +124,20 @@ structure:
   concentration (`bnb_concentration`, i.e. `kappa_{d,g}`): `"none"`,
   `"gaussian"`, `"horseshoe"`, or `"neg"`. Requires
   `overdispersion="bnb"` and `unconstrained=True`.
+- `regime_dataset_prior: str` — **Two-state only.** Prior for the dataset-level
+  hierarchy on the regime coordinate (`k_off` / `switching_ratio` /
+  `concentration` / `inv_concentration`, depending on the parameterization):
+  `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`. Links the bursting regime
+  across datasets. Requires a `twostate`/`twostatevcp` model, `n_datasets >= 2`,
+  and `unconstrained=True`.
+- `regime_dataset_target: Optional[str]` — Override for which coordinate carries
+  the regime hierarchy; defaults to the parameterization's regime coordinate
+  (`TWOSTATE_REGIME_COORD` in `config.enums`).
+- `overdispersion_dataset_independent: bool` — **Two-state only**, default
+  `True`. When `True`, the overdispersion coordinate (`burst_size` /
+  `excess_fano`) is made dataset-specific and **free** (independent per
+  `(dataset, gene)`, no cross-dataset hierarchy); set `False` to share a single
+  gene-level value across datasets. Ignored for non-two-state / single-dataset.
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 - `dataset_mixing_enabled` (computed property) — Effective switch used by model
   builders to decide whether `mixing_weights` have shape `(K,)` or `(D, K)`.
@@ -146,6 +160,8 @@ columns can be auto-downgraded via
   'two_level'}` -> `prob_prior` set from `prob_dataset_prior`, `prob_dataset_prior='none'`
 - `zero_inflation_dataset_prior != "none"` -> `zero_inflation_prior` set from
   `zero_inflation_dataset_prior`, `zero_inflation_dataset_prior='none'`
+- `regime_dataset_prior != "none"` -> `"none"` (no pooling across a single
+  dataset)
 - `overdispersion_dataset_prior != "none"` -> `overdispersion_dataset_prior='none'`
 
 `scribe.fit(...)` emits a `UserWarning` whenever one or more of these

@@ -187,6 +187,22 @@ class ModelConfig(BaseModel):
             else:
                 d.setdefault("zero_inflation_dataset_prior", "none")
 
+        # Dataset-level regime coordinate (two-state models only).  Accept the
+        # boolean shorthands ``hierarchical_dataset_regime`` /
+        # ``horseshoe_dataset_regime`` and translate them to the enum field.
+        if (
+            "hierarchical_dataset_regime" in d
+            or "horseshoe_dataset_regime" in d
+        ):
+            hdr = d.pop("hierarchical_dataset_regime", False)
+            hsdr = d.pop("horseshoe_dataset_regime", False)
+            if hsdr:
+                d.setdefault("regime_dataset_prior", "horseshoe")
+            elif hdr:
+                d.setdefault("regime_dataset_prior", "gaussian")
+            else:
+                d.setdefault("regime_dataset_prior", "none")
+
         # Remove the old hierarchical_datasets shortcut if present
         d.pop("hierarchical_datasets", None)
 
@@ -219,6 +235,9 @@ class ModelConfig(BaseModel):
         d.setdefault("prob_dataset_prior", "none")
         d.setdefault("prob_dataset_mode", "gene_specific")
         d.setdefault("zero_inflation_dataset_prior", "none")
+        d.setdefault("regime_dataset_prior", "none")
+        d.setdefault("regime_dataset_target", None)
+        d.setdefault("overdispersion_dataset_independent", True)
         d.setdefault("overdispersion", "none")
         d.setdefault("overdispersion_prior", "horseshoe")
         d.setdefault("overdispersion_dataset_prior", "none")
@@ -360,6 +379,43 @@ class ModelConfig(BaseModel):
             "Dataset-level hierarchical prior for gate. "
             "Requires n_datasets >= 2, unconstrained=True, "
             "and a zero-inflated model."
+        ),
+    )
+    # Dataset-level prior for the two-state "regime" coordinate.  The regime
+    # coordinate (k_off / switching_ratio / concentration / inv_concentration,
+    # per parameterization) controls the departure from the NB limit and is
+    # weakly identified, so pooling it across datasets both regularizes it and
+    # encodes the "same bursting regime unless the data disagree" prior.
+    regime_dataset_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
+        description=(
+            "Dataset-level hierarchical prior for the two-state regime "
+            "coordinate (k_off / switching_ratio / concentration / "
+            "inv_concentration, depending on the parameterization). Links the "
+            "bursting regime across datasets. Requires a two-state model "
+            "(twostate / twostatevcp), n_datasets >= 2, and unconstrained=True."
+        ),
+    )
+    regime_dataset_target: Optional[str] = Field(
+        None,
+        description=(
+            "Override for which coordinate carries the dataset-level regime "
+            "hierarchy. When None (default), uses the active parameterization's "
+            "regime coordinate (see TWOSTATE_REGIME_COORD in config.enums). "
+            "Advanced use only."
+        ),
+    )
+    overdispersion_dataset_independent: bool = Field(
+        True,
+        description=(
+            "Two-state multi-dataset only: when True (default), the "
+            "overdispersion coordinate (burst_size / excess_fano) is made "
+            "dataset-specific and FREE — an independent value per (dataset, "
+            "gene) with NO cross-dataset hierarchy — since it is well "
+            "identified by each dataset's variance and the mean-preserving "
+            "reparameterization keeps mu protected regardless of it. Set False "
+            "to keep a single gene-level overdispersion shared across datasets. "
+            "Ignored for non-two-state models and single-dataset fits."
         ),
     )
 
@@ -957,6 +1013,29 @@ class ModelConfig(BaseModel):
                     f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
                     "requires a zero-inflated model (zinb or zinbvcp), "
                     f"but base_model={self.base_model!r}."
+                )
+
+        # --- Dataset-level regime (two-state only) ---------------------------
+        if self.regime_dataset_prior != _NONE:
+            # The regime coordinate exists only in the two-state family.
+            if self.base_model not in ("twostate", "twostatevcp"):
+                raise ValueError(
+                    f"regime_dataset_prior={self.regime_dataset_prior.value!r} "
+                    "is only supported for 'twostate' and 'twostatevcp' "
+                    f"models, but base_model={self.base_model!r}."
+                )
+            if self.n_datasets is None:
+                raise ValueError(
+                    f"regime_dataset_prior={self.regime_dataset_prior.value!r} "
+                    "requires n_datasets >= 2."
+                )
+            # Like every dataset-level hierarchy, the regime prior lives in the
+            # unconstrained Normal space and maps through a sigmoid/positive
+            # transform, so unconstrained parameterization is required.
+            if not self.unconstrained:
+                raise ValueError(
+                    f"regime_dataset_prior={self.regime_dataset_prior.value!r} "
+                    "requires unconstrained=True."
                 )
 
         # --- Dataset-level overdispersion ------------------------------------
@@ -1645,12 +1724,12 @@ class ModelConfig(BaseModel):
                 "use inference_method='svi' or 'mcmc'."
             )
 
-        # (4) Multi-dataset indexing is not supported.
-        if self.n_datasets is not None and self.n_datasets > 1:
-            raise ValueError(
-                "TwoState + multi-dataset is not supported; "
-                "drop n_datasets or set it to 1."
-            )
+        # (4) Multi-dataset indexing IS supported as of this commit.  The
+        # two-state likelihood threads dataset_indices like the NB family
+        # (see TwoStateLikelihood/TwoStateVCPLikelihood.sample), and the
+        # dataset-level mu and regime hierarchies are wired in the factory.
+        # The per-dataset/per-gene rate is gathered by index_dataset_params
+        # inside the cell plate.
 
         # (5) Biology-informed capture priors on twostatevcp ARE
         # supported as of this commit.  The closure-under-binomial-

@@ -201,6 +201,45 @@ class Parameterization(str, Enum):
 
 
 # ------------------------------------------------------------------------------
+# Two-state coordinate roles (regime vs. overdispersion)
+# ------------------------------------------------------------------------------
+#
+# Each two-state parameterization samples three per-gene coordinates: the mean
+# μ (always the core parameter), an "overdispersion" coordinate that sets the
+# predictive variance (Var/Mean − 1), and a "regime" coordinate that
+# interpolates between the NB limit and the bursty / bimodal regime.  The maps
+# below name, per parameterization, which extra coordinate plays each role.
+#
+# They are consumed by the multi-dataset factory passes.  When fitting several
+# datasets jointly, the regime coordinate receives the cross-dataset
+# hierarchical prior — it is weakly identified (the old identifiability ridge)
+# and benefits from partial pooling — while the overdispersion coordinate is
+# left free per dataset, since it is well identified by each dataset's variance
+# and the mean-preserving reparameterization keeps μ protected regardless of it.
+
+#: Regime coordinate (NB ↔ bursty) for each two-state parameterization.
+TWOSTATE_REGIME_COORD = {
+    Parameterization.TWO_STATE_NATURAL: "k_off",
+    Parameterization.TWO_STATE_RATIO: "switching_ratio",
+    Parameterization.TWO_STATE_MEAN_FANO: "concentration",
+    Parameterization.TWO_STATE_MOMENT_DELTA: "inv_concentration",
+}
+
+#: Overdispersion coordinate (predictive variance) for each parameterization.
+TWOSTATE_OVERDISPERSION_COORD = {
+    Parameterization.TWO_STATE_NATURAL: "burst_size",
+    Parameterization.TWO_STATE_RATIO: "burst_size",
+    Parameterization.TWO_STATE_MEAN_FANO: "excess_fano",
+    Parameterization.TWO_STATE_MOMENT_DELTA: "excess_fano",
+}
+
+#: Regime coordinates supported on the unit interval (0, 1).  These use a
+#: sigmoid/logit-Normal hierarchy; every other regime coordinate lives on
+#: (0, ∞) and uses a positive (log/softplus-Normal) hierarchy.
+TWOSTATE_SIGMOID_REGIME_COORDS = frozenset({"inv_concentration"})
+
+
+# ------------------------------------------------------------------------------
 
 
 class InferenceMethod(str, Enum):

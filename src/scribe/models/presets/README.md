@@ -412,6 +412,34 @@ gate_g^(d) = sigmoid(loc + sqrt(psi_g) * z_{g,d})
 When gate is mixture-aware (`gate in mixture_params`), the shape becomes
 `(K, D, G)`, giving each component its own independent gate per dataset.
 
+### Two-State Dataset-Level Regime + Free Overdispersion
+
+For `twostate`/`twostatevcp`, the regime/overdispersion coordinates are
+*extras* (built in Step 5), so their dataset passes run in **Step 5.6**, after
+the extras exist (unlike `mu`/`p`, handled in Step 4.6). `TWOSTATE_REGIME_COORD`
+and `TWOSTATE_OVERDISPERSION_COORD` (`config.enums`) map each parameterization
+to its coordinates.
+
+- `_datasetify_regime()` replaces the regime coordinate
+  (`k_off`/`switching_ratio`/`concentration`/`inv_concentration`) with a
+  dataset-hierarchical triplet, choosing **sigmoid** specs + `logit_*` hyper
+  names for `inv_concentration` (support `(0, 1)`) and **positive** specs +
+  `log_*` names otherwise. The population `hyper_loc` inherits the flat regime
+  prior so the "default to NB" tilt carries through.
+- `_horseshoe_dataset_regime()` / `_neg_dataset_regime()` upgrade that triplet
+  to horseshoe / NEG, mirroring `_horseshoe_dataset_p` / `_neg_dataset_p` with
+  the same sigmoid-vs-positive selection. Triggered by
+  `regime_dataset_prior == HORSESHOE` / `NEG`.
+- `_datasetify_overdispersion_independent()` marks the overdispersion
+  coordinate (`burst_size`/`excess_fano`) `is_dataset=True` with **no**
+  hyperprior — a free per-`(dataset, gene)` value. Applied when
+  `overdispersion_dataset_independent=True` (default for multi-dataset
+  two-state).
+
+Note: `_datasetify_mu` / `_horseshoe_dataset_mu` / `_neg_dataset_mu` target
+`mu` (not `r`) for two-state parameterizations as well as the NB mean
+parameterizations, via the `_expression_target_is_mu()` helper.
+
 ## Adding New Models
 
 1. Add entry to `MODEL_EXTRA_PARAMS` in `registry.py`

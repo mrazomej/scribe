@@ -104,6 +104,10 @@ class ModelConfigBuilder:
         self._overdispersion: str = "none"
         self._overdispersion_prior: str = "horseshoe"
         self._overdispersion_dataset_prior: str = "none"
+        # Two-state dataset-level regime hierarchy + free overdispersion.
+        self._regime_dataset_prior: str = "none"
+        self._regime_dataset_target: Optional[str] = None
+        self._overdispersion_dataset_independent: bool = True
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._joint_params: Optional[List[str]] = None
@@ -789,6 +793,11 @@ class ModelConfigBuilder:
             overdispersion=self._overdispersion,
             overdispersion_prior=self._overdispersion_prior,
             overdispersion_dataset_prior=self._overdispersion_dataset_prior,
+            regime_dataset_prior=self._regime_dataset_prior,
+            regime_dataset_target=self._regime_dataset_target,
+            overdispersion_dataset_independent=(
+                self._overdispersion_dataset_independent
+            ),
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             joint_params=self._joint_params,
