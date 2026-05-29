@@ -407,6 +407,7 @@ targets a specific parameter at a specific level:
 | `prob_dataset_prior`           | \(p^{(d)}\) or \(p_g^{(d)}\)        | Dataset (or gene x dataset) | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`                             |
 | `zero_inflation_dataset_prior` | \(\pi_g^{(d)}\)                     | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model                   |
 | `overdispersion_dataset_prior` | \(\kappa_g^{(d)}\)                  | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key`     |
+| `regime_dataset_prior`         | TwoState regime coord \(\delta_g^{(d)}\) / \(k^{-(d)}_g\) / \(\kappa_g^{(d)}\) / \(s_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, TwoState model |
 
 ---
 
@@ -421,7 +422,28 @@ parameters gain a **dataset axis**. The naming convention follows:
 | \(p\) or \(p_g\) | \(p^{(d)}\) or \(p_g^{(d)}\) | `prob_dataset_prior` + `prob_dataset_mode` |
 | \(\pi_g\) | \(\pi_g^{(d)}\) | `zero_inflation_dataset_prior` |
 | \(\kappa_g\) | \(\kappa_g^{(d)}\) | `overdispersion_dataset_prior` |
+| TwoState regime coord (\(\delta_g\) / \(k^-_g\) / \(\kappa_g\) / \(s_g\)) | per-dataset | `regime_dataset_prior` |
 | \(\log M_0\) | \(\log M_0^{(d)}\) | `capture_scaling_prior` (captures dataset-level total mRNA scaling) |
+
+### TwoState multi-dataset hierarchy
+
+For the TwoState family, the mean \(\mu_g\) and the **regime coordinate** (the
+NB↔bursty axis — `k_off` / `switching_ratio` / `concentration` /
+`inv_concentration`, depending on the parameterization) are the natural
+candidates for a cross-dataset hierarchy. Linking both encodes the prior that
+two conditions share biology and bursting regime, so genuine differences stand
+out:
+
+* `expression_dataset_prior` links \(\mu_g^{(d)}\) across datasets (shared
+  expression).
+* `regime_dataset_prior` links the regime coordinate across datasets (shared
+  bursting regime). It targets the active parameterization's regime coordinate
+  by default; override with `regime_dataset_target`.
+* `overdispersion_dataset_independent` (default `True`) leaves the
+  overdispersion coordinate (`burst_size` / `excess_fano`) **free per dataset**
+  — it is well identified by each dataset's variance and, because the
+  reparameterization is mean-preserving, cannot contaminate the shared
+  \(\mu_g\). Set `False` to share one gene-level value across datasets.
 
 The `prob_dataset_mode` argument controls the granularity of the
 dataset-specific \(p\):

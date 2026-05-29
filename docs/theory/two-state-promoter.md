@@ -279,8 +279,10 @@ marginalizes \(p_{gc}\) independently per \((c, g)\) by construction.
 
 **Not yet supported:**
 
-VAE inference, multi-dataset indexing, BNB overdispersion, and the Poisson-Gamma
-denoiser are not wired for TwoState. Build-time validation rejects these
-combinations with a clear directive.
+VAE inference, BNB overdispersion, and the Poisson-Gamma denoiser are not wired
+for TwoState. Build-time validation rejects these combinations with a clear
+directive. (Multi-dataset hierarchical fitting *is* supported — the mean and
+the regime coordinate can be linked across datasets; see the
+[Parameter Reference](../guide/parameters.md#twostate-multi-dataset-hierarchy).)
 
 See `paper/_two_state_promoter.qmd` for the long-form derivations.

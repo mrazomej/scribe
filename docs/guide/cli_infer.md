@@ -139,7 +139,7 @@ layout. Key sections:
 | **Overdispersion** | `overdispersion`, `overdispersion_prior` | `"none"` or `"bnb"` with horseshoe/NEG prior |
 | **Parameterization** | `parameterization`, `unconstrained` | `canonical`, `linked` (mean_prob), or `mean_odds` |
 | **Gene-level priors** | `expression_prior`, `prob_prior`, `zero_inflation_prior` | `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
-| **Multi-dataset** | `dataset_key`, `n_datasets`, `expression_dataset_prior`, ... | Joint multi-dataset fitting |
+| **Multi-dataset** | `dataset_key`, `n_datasets`, `expression_dataset_prior`, `prob_dataset_prior`, `regime_dataset_prior` (TwoState), `overdispersion_dataset_independent` (TwoState), ... | Joint multi-dataset fitting |
 | **Guide** | `guide_rank`, `joint_params`, `dense_params` | Low-rank / joint low-rank guide. `joint_params`/`dense_params` accept shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or explicit lists |
 | **Flow guide** | `guide_flow`, `guide_flow_num_layers`, ... | Normalizing flow guide (mutually exclusive with `guide_rank`) |
 | **Mixture** | `n_components`, `mixture_params` | Mixture model components. `mixture_params` defaults to `"all"` and accepts shorthands or explicit lists |
@@ -337,6 +337,35 @@ scribe-infer --config-path ./conf data=experiment variable_capture=true
 
 The CLI detects `split_by` and launches one independent fit per unique value
 of the `condition` column.
+
+### TwoState two-condition comparison (hierarchical regime)
+
+Fit two conditions **jointly** with the TwoState model, linking both the mean
+and the bursting regime across conditions so that genuine differences stand
+out. The data config sets `dataset_key` to the condition column (and may also
+`split_by` cell type to fit one joint model per cell type):
+
+```yaml
+# @package data
+name: "uuo_vs_sham"
+path: "data/GSE140023.h5ad"
+dataset_key: "condition"          # the two conditions to compare jointly
+split_by: "cell_type_coarse"      # optional: one joint fit per cell type
+filter_obs:
+  condition: ["UUO_Day2", "Sham"]
+```
+
+```bash
+scribe-infer --config-path ./conf \
+    data=uuo_vs_sham \
+    model=twostatevcp parameterization=moment_delta unconstrained=true \
+    expression_dataset_prior=horseshoe \
+    regime_dataset_prior=horseshoe
+```
+
+`n_datasets` is auto-inferred from `dataset_key` (here, 2). The overdispersion
+coordinate stays free per condition by default
+(`overdispersion_dataset_independent=true`).
 
 ### MCMC warm-started from SVI
 

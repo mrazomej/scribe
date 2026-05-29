@@ -468,9 +468,15 @@ priors and the biological PPC sampler are also supported — both rely on the
 closure-under-binomial-thinning property that makes the capture factor
 likelihood-agnostic.
 
-**Current limitations**: VAE inference, multi-dataset indexing, BNB
-overdispersion, and the Poisson-Gamma denoiser are not yet wired for TwoState.
-Build-time validation rejects these combinations with a clear error.
+**Multi-dataset**: TwoState supports joint multi-dataset hierarchical fitting —
+link the mean (`expression_dataset_prior`) and the bursting regime
+(`regime_dataset_prior`) across datasets, leaving the overdispersion coordinate
+free per dataset. See the
+[Parameter Reference](parameters.md#twostate-multi-dataset-hierarchy).
+
+**Current limitations**: VAE inference, BNB overdispersion, and the
+Poisson-Gamma denoiser are not yet wired for TwoState. Build-time validation
+rejects these combinations with a clear error.
 
 ---
 

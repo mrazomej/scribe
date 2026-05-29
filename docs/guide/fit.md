@@ -704,6 +704,9 @@ allowed.
 | `prob_dataset_mode` | `"gene_specific"` | How \(p\) varies: `"scalar"`, `"gene_specific"`, or `"two_level"` |
 | `zero_inflation_dataset_prior` | `"none"` | Prior on zero-inflation gate across datasets |
 | `overdispersion_dataset_prior` | `"none"` | Prior on BNB \(\kappa\) across datasets. Requires `overdispersion="bnb"` |
+| `regime_dataset_prior` | `"none"` | **TwoState only.** Prior on the regime coordinate (`k_off` / `switching_ratio` / `concentration` / `inv_concentration`) across datasets |
+| `regime_dataset_target` | `None` | **TwoState only.** Override the regime coordinate; defaults to the parameterization's regime coordinate |
+| `overdispersion_dataset_independent` | `True` | **TwoState only.** Leave the overdispersion coordinate (`burst_size` / `excess_fano`) free per dataset (no cross-dataset hierarchy) |
 | `capture_scaling_prior` | `"none"` | Prior on per-dataset capture scaling \(\eta_d\). For VCP models |
 
 ```python
@@ -716,6 +719,18 @@ results = scribe.fit(
     expression_dataset_prior="horseshoe",
     prob_dataset_prior="gaussian",
     amortize_capture=True,
+)
+
+# TwoState two-condition comparison: link mu AND the bursting regime across
+# datasets (horseshoe), leaving overdispersion free per dataset (default).
+results = scribe.fit(
+    adata,
+    model="twostatevcp",
+    parameterization="moment_delta",
+    unconstrained=True,
+    dataset_key="condition",
+    expression_dataset_prior="horseshoe",
+    regime_dataset_prior="horseshoe",
 )
 ```
 
