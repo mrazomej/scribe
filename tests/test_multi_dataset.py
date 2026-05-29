@@ -4737,3 +4737,181 @@ class TestLayoutPropagationMCMC:
         r_layout = child.param_layouts.get("r")
         assert r_layout is not None
         assert GENES in r_layout.axes
+
+
+# ==============================================================================
+# Two-state promoter multi-dataset hierarchies
+# ==============================================================================
+
+
+class TestTwoStateMultiDataset:
+    """Multi-dataset hierarchies for the two-state (Poisson-Beta) model.
+
+    Verifies the wiring added to support joint multi-dataset fits:
+
+    - ``mu`` (mean) and the regime coordinate are dataset-hierarchical.
+    - the overdispersion coordinate is dataset-specific but FREE (no
+      cross-dataset hyperprior / shrinkage).
+    - the model traces with correct ``(n_datasets, n_genes)`` parameter
+      shapes and a finite log-likelihood, including the VCP and batched paths.
+    """
+
+    @staticmethod
+    def _specs_by_name(specs):
+        return {s.name: s for s in specs}
+
+    def test_mu_and_regime_dataset_hierarchical(self):
+        """moment_delta: mu and delta carry a horseshoe dataset hierarchy."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=2,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        _, _, specs = create_model(cfg)
+        by_name = self._specs_by_name(specs)
+
+        # mu: dataset + gene-specific horseshoe (positive support).
+        mu = by_name["mu"]
+        assert mu.is_dataset and mu.is_gene_specific
+        assert type(mu).__name__ == "HorseshoeDatasetPositiveNormalSpec"
+
+        # delta (= inv_concentration): dataset + gene-specific horseshoe on
+        # the unit interval -> sigmoid spec, never positive.
+        delta = by_name["inv_concentration"]
+        assert delta.is_dataset and delta.is_gene_specific
+        assert type(delta).__name__ == "HorseshoeDatasetSigmoidNormalSpec"
+
+        # The horseshoe hyper-sites exist for both coordinates.
+        assert "tau_mu_dataset" in by_name
+        assert "tau_inv_concentration_dataset" in by_name
+
+    def test_overdispersion_free_per_dataset(self):
+        """excess_fano is per-dataset but has NO cross-dataset hyperprior."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=2,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        _, _, specs = create_model(cfg)
+        by_name = self._specs_by_name(specs)
+
+        fano = by_name["excess_fano"]
+        # Dataset-specific (free per dataset) ...
+        assert fano.is_dataset and fano.is_gene_specific
+        # ... but NOT a hierarchical spec, and with no hyper-loc/scale/horseshoe
+        # sites attached to it.
+        assert "Hierarchical" not in type(fano).__name__
+        assert "Horseshoe" not in type(fano).__name__
+        for forbidden in (
+            "log_excess_fano_dataset_loc",
+            "log_excess_fano_dataset_scale",
+            "tau_excess_fano_dataset",
+        ):
+            assert forbidden not in by_name
+
+    def test_natural_regime_is_positive(self):
+        """natural: the regime coordinate (k_off) uses a positive hierarchy."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_natural",
+            unconstrained=True,
+            n_datasets=2,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        _, _, specs = create_model(cfg)
+        by_name = self._specs_by_name(specs)
+
+        k_off = by_name["k_off"]
+        assert k_off.is_dataset and k_off.is_gene_specific
+        assert type(k_off).__name__ == "HorseshoeDatasetPositiveNormalSpec"
+        # burst_size is the overdispersion coordinate here -> free per dataset.
+        burst = by_name["burst_size"]
+        assert burst.is_dataset
+        assert "Hierarchical" not in type(burst).__name__
+
+    def test_gaussian_regime_hierarchy(self):
+        """regime_dataset_prior='gaussian' yields the (non-horseshoe) spec."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=2,
+            regime_dataset_prior="gaussian",
+        )
+        _, _, specs = create_model(cfg)
+        delta = self._specs_by_name(specs)["inv_concentration"]
+        assert type(delta).__name__ == "DatasetHierarchicalSigmoidNormalSpec"
+        assert delta.is_dataset and delta.is_gene_specific
+
+    def _trace_counts(self, cfg, n_cells=30, n_genes=5, batch_size=None):
+        """Trace a multi-dataset two-state model on synthetic data."""
+        import numpyro.handlers as handlers
+
+        model, _, _ = create_model(cfg)
+        key = jax.random.PRNGKey(0)
+        counts = jax.random.randint(
+            key, (n_cells, n_genes), 0, 15
+        ).astype(jnp.float32)
+        half = n_cells // 2
+        dataset_indices = jnp.array([0] * half + [1] * (n_cells - half))
+        with handlers.seed(rng_seed=0):
+            with handlers.trace() as tr:
+                model(
+                    n_cells=n_cells,
+                    n_genes=n_genes,
+                    model_config=cfg,
+                    counts=counts,
+                    dataset_indices=dataset_indices,
+                    batch_size=batch_size,
+                )
+        return tr, counts
+
+    def test_model_trace_shapes_and_finite(self):
+        """mu/delta are (D, G); counts are (N, G); log-prob is finite."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=2,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        tr, counts = self._trace_counts(cfg, n_cells=30, n_genes=5)
+
+        assert tr["mu"]["value"].shape == (2, 5)
+        assert tr["inv_concentration"]["value"].shape == (2, 5)
+        assert tr["excess_fano"]["value"].shape == (2, 5)
+        # Gene/dataset-rank deterministics emitted outside the cell plate.
+        assert tr["k_off"]["value"].shape == (2, 5)
+        assert tr["r_hat"]["value"].shape == (2, 5)
+        # Observation site is per cell.
+        assert tr["counts"]["value"].shape == (30, 5)
+        assert bool(
+            jnp.isfinite(tr["counts"]["fn"].log_prob(counts)).all()
+        )
+
+    def test_vcp_batched_no_broadcast_blowup(self):
+        """twostatevcp batched: counts stay (batch, G) (regression guard).
+
+        Confirms the capture-rate broadcast does not balloon to
+        ``(batch, batch, G)`` on the dataset-indexed path.
+        """
+        cfg = ModelConfig(
+            base_model="twostatevcp",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=2,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        tr, _ = self._trace_counts(
+            cfg, n_cells=40, n_genes=6, batch_size=8
+        )
+        assert tr["counts"]["value"].shape == (8, 6)

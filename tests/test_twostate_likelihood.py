@@ -278,9 +278,15 @@ class TestPhase1Guards:
                 annotation_prior_logits=jnp.zeros((1, 2)),
             )
 
-    def test_multi_dataset_raises(self):
+    def test_dataset_indices_without_n_datasets_raises(self):
+        """Passing dataset_indices without configuring n_datasets is an error.
+
+        Multi-dataset IS supported, but only when ``model_config.n_datasets``
+        is set; supplying per-cell dataset assignments without it is a setup
+        mistake and is rejected with a clear ValueError.
+        """
         like = TwoStateLikelihood()
-        with pytest.raises(NotImplementedError, match="multi-dataset"):
+        with pytest.raises(ValueError, match="n_datasets"):
             like.sample(
                 {
                     "mu": jnp.array([1.0]),
@@ -427,3 +433,102 @@ class TestTwoStateLogProb:
         lp_gene = twostate_log_prob(counts, params, return_by="gene")
         assert lp_cell.shape == (n_cells,)
         assert lp_gene.shape == (n_genes,)
+
+
+# ==============================================================================
+# Multi-dataset indexing (dataset_indices threaded through sample)
+# ==============================================================================
+
+
+class TestMultiDatasetIndexing:
+    """The likelihood gathers per-dataset params inside the cell plate.
+
+    These exercise the supported multi-dataset path directly at the likelihood
+    level: per-dataset gene params have a leading ``(n_datasets, n_genes)``
+    axis, and inside the cell plate each cell is mapped to its dataset's
+    parameters via ``index_dataset_params``.  The key regression guard is that
+    the observed-count site stays ``(n_cells, n_genes)`` rather than ballooning
+    to ``(n_cells, n_cells, n_genes)``.
+    """
+
+    @staticmethod
+    def _moment_delta_cfg(n_datasets=2):
+        from scribe.models.config import ModelConfig
+        from scribe.models.presets.factory import create_model
+
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization="two_state_moment_delta",
+            unconstrained=True,
+            n_datasets=n_datasets,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        # create_model attaches the resolved param_specs to the config, which
+        # index_dataset_params consults to find the dataset axis.
+        create_model(cfg)
+        return cfg
+
+    def test_no_capture_counts_shape(self):
+        cfg = self._moment_delta_cfg()
+        like = TwoStateLikelihood()
+        D, G, N = 2, 4, 20
+        # Per-dataset gene parameters carry a leading dataset axis.
+        param_values = {
+            "mu": jnp.abs(jax.random.normal(jax.random.PRNGKey(0), (D, G))) + 0.5,
+            "excess_fano": jnp.abs(
+                jax.random.normal(jax.random.PRNGKey(1), (D, G))
+            )
+            + 0.1,
+            "inv_concentration": jnp.full((D, G), 0.05),
+        }
+        counts = jax.random.randint(
+            jax.random.PRNGKey(2), (N, G), 0, 12
+        ).astype(jnp.float32)
+        di = jnp.array([0] * (N // 2) + [1] * (N - N // 2))
+
+        with seed(rng_seed=0):
+            with trace() as tr:
+                like.sample(
+                    param_values,
+                    cell_specs=[],
+                    counts=counts,
+                    dims={"n_cells": N, "n_genes": G},
+                    batch_size=None,
+                    model_config=cfg,
+                    dataset_indices=di,
+                )
+        # Observation is per-cell, NOT (N, N, G).
+        assert tr["counts"]["value"].shape == (N, G)
+        # Gene/dataset-rank deterministics emitted outside the plate.
+        assert tr["k_off"]["value"].shape == (D, G)
+
+    def test_no_capture_batched_counts_shape(self):
+        cfg = self._moment_delta_cfg()
+        like = TwoStateLikelihood()
+        D, G, N, B = 2, 4, 24, 8
+        param_values = {
+            "mu": jnp.abs(jax.random.normal(jax.random.PRNGKey(0), (D, G))) + 0.5,
+            "excess_fano": jnp.abs(
+                jax.random.normal(jax.random.PRNGKey(1), (D, G))
+            )
+            + 0.1,
+            "inv_concentration": jnp.full((D, G), 0.05),
+        }
+        counts = jax.random.randint(
+            jax.random.PRNGKey(2), (N, G), 0, 12
+        ).astype(jnp.float32)
+        di = jnp.array([0] * (N // 2) + [1] * (N - N // 2))
+
+        with seed(rng_seed=0):
+            with trace() as tr:
+                like.sample(
+                    param_values,
+                    cell_specs=[],
+                    counts=counts,
+                    dims={"n_cells": N, "n_genes": G},
+                    batch_size=B,
+                    model_config=cfg,
+                    dataset_indices=di,
+                )
+        assert tr["counts"]["value"].shape == (B, G)

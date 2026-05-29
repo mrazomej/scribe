@@ -156,13 +156,24 @@ class TestTwoStatePhase1Validation:
                 inference_method=InferenceMethod.VAE,
             )
 
-    def test_multi_dataset_rejected(self):
-        with pytest.raises(ValueError, match="multi-dataset"):
-            ModelConfig(
-                base_model="twostate",
-                parameterization=Parameterization.TWO_STATE_NATURAL,
-                n_datasets=3,
-            )
+    def test_multi_dataset_accepted(self):
+        """Two-state multi-dataset fitting is supported.
+
+        The config builds without error, and the dataset-level mu and regime
+        hierarchies can be enabled (unconstrained + n_datasets >= 2).
+        """
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization=Parameterization.TWO_STATE_MOMENT_DELTA,
+            unconstrained=True,
+            n_datasets=3,
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+        )
+        assert cfg.n_datasets == 3
+        assert cfg.regime_dataset_prior.value == "horseshoe"
+        # Overdispersion defaults to free-per-dataset for multi-dataset fits.
+        assert cfg.overdispersion_dataset_independent is True
 
 
 # ==============================================================================

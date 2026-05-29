@@ -1,0 +1,33 @@
+# @package _global_
+# Two-state promoter, multi-dataset hierarchical preset.
+#
+# Fits >= 2 datasets jointly with the two-state (Poisson-Beta) likelihood under
+# regularized-horseshoe hierarchies that LINK two coordinates across datasets:
+#   - mu  (mean expression)   : the shared-biology signal we compare on.
+#   - delta = inv_concentration (the "regime" coordinate, NB <-> bursty): the
+#     weakly-identified shape axis; pooling it regularizes it and encodes
+#     "same bursting regime unless the data disagree".
+# The overdispersion coordinate (excess_fano) is left FREE per dataset
+# (overdispersion_dataset_independent: true) since it is well identified by
+# each dataset's variance and the mean-preserving reparameterization keeps mu
+# protected regardless of it.
+#
+# Intended use: pairwise comparison of two conditions believed to share most
+# biology. Joint fitting concentrates agreement (small tau_mu / tau_delta), so
+# the genes that genuinely differ stand out. Differential expression itself is
+# a separate downstream step (compare_datasets), not part of this preset.
+#
+# NOTE: override `n_datasets` to match the number of datasets you concatenate.
+# Other regime coordinates are available by switching `parameterization`
+# (two_state_natural -> k_off, two_state_ratio -> switching_ratio,
+#  two_state_mean_fano -> concentration); moment_delta is the recommended
+# default because its regime/overdispersion coordinates are near-orthogonal.
+
+model: twostate
+parameterization: two_state_moment_delta
+unconstrained: true
+n_components: null
+n_datasets: 2
+expression_dataset_prior: horseshoe
+regime_dataset_prior: horseshoe
+overdispersion_dataset_independent: true
