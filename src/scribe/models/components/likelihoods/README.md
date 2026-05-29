@@ -14,6 +14,7 @@ likelihoods/
 ├── lnm.py               # Logistic-Normal Multinomial (NB total × multinomial)
 ├── pln.py               # Poisson-LogNormal (per-gene Poisson from log-normal rates)
 ├── nbln.py              # NB-LogNormal (per-gene NB on log-normal-modulated means)
+├── two_state.py         # Two-state promoter (Poisson-Beta) likelihood (+ VCP)
 └── README.md            # This file
 ```
 
@@ -31,6 +32,8 @@ likelihoods/
 | `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean)      |
 | `PoissonLogNormalLikelihood`          | pln.py               | Per-gene Poisson from correlated log-normal rates via linear-decoder VAE |
 | `NBLogNormalLikelihood`               | nbln.py              | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` global  |
+| `TwoStateLikelihood`                  | two_state.py         | Two-state promoter (Poisson-Beta); supports mixtures and multi-dataset   |
+| `TwoStateVCPLikelihood`               | two_state.py         | Two-state promoter with per-cell capture probability                     |
 
 Each concrete class implements both the **generative** side (`sample()`,
 used by NumPyro during inference) and the **evaluation** side
@@ -127,6 +130,23 @@ For VCP likelihoods, 1D `p`/`phi` expansion to `(batch, 1)` is now guarded by
 the capture vector length (`capture_value.shape[0]`). This keeps gene-specific
 vectors `(n_genes,)` from being misinterpreted as per-cell vectors when
 dataset indexing is enabled.
+
+### Two-state multi-dataset
+
+`TwoStateLikelihood` / `TwoStateVCPLikelihood` thread `dataset_indices` like
+the NB family. On the multi-dataset path the gene/dataset-rank deterministic
+sites (`k_on`, `k_off`, `r_hat`, `alpha`, `beta`, `eta_act`) are emitted once on
+the full `(n_datasets, n_genes)` arrays **outside** the cell plate, while only
+the bare `PoissonBetaCompound` is built **inside** the plate from the per-cell
+arrays returned by `index_dataset_params`. The dataset-level hierarchies for
+two-state are configured with `expression_dataset_prior` (links `mu`) and
+`regime_dataset_prior` (links the regime coordinate — `k_off` /
+`switching_ratio` / `concentration` / `inv_concentration`, per
+parameterization); the overdispersion coordinate (`burst_size` / `excess_fano`)
+is left free per dataset when `overdispersion_dataset_independent=True`
+(the default). For `TwoStateVCPLikelihood`, the capture-rate multiply skips the
+leading broadcast on the dataset-indexed path so the per-cell rate stays
+`(batch, n_genes)` rather than `(batch, batch, n_genes)`.
 
 ### Mixture + Dataset Axis Convention
 

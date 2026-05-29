@@ -21,11 +21,19 @@ carry a component axis, and the observation distribution becomes a
 ``MixtureGeneral`` over K ``PoissonBetaCompound`` component
 distributions, weighted by ``mixing_weights``.
 
+Multi-dataset hierarchical models (``dataset_indices`` provided and
+``model_config.n_datasets`` set) are supported: per-dataset gene
+parameters carry a leading dataset axis ``(D, G)`` (or ``(K, D, G)``
+for mixtures), and inside the cell plate each cell is mapped to its
+dataset's parameters via :func:`index_dataset_params`.  The
+gene/dataset-level deterministic sites (k_on, k_off, r̂, …) are emitted
+once on the full ``(D, G)`` arrays *outside* the cell plate so they
+keep gene/dataset rank rather than per-subsample rank.
+
 Features NOT supported:
 
 - VAE inference (``vae_cell_fn``)
 - annotation priors (``annotation_prior_logits``)
-- multi-dataset indexing (``dataset_indices``)
 - BNB overdispersion (``OverdispersionType.BNB``)
 - the ``phi_capture`` capture-parameter variant on VCP
 
@@ -40,17 +48,51 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 
-from .base import Likelihood, build_mixture_general, sample_capture_param
+from .base import (
+    Likelihood,
+    build_mixture_general,
+    index_dataset_params,
+    sample_capture_param,
+)
 
 from ....core.axis_layout import (
     AxisLayout,
     build_param_layouts,
     broadcast_param_to_layout,
+    subset_layouts,
+    DATASETS,
 )
 
 if TYPE_CHECKING:
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
+
+
+def _drop_dataset_axis(
+    param_layouts: Optional[Dict[str, "AxisLayout"]],
+) -> Optional[Dict[str, "AxisLayout"]]:
+    """Return a copy of *param_layouts* with the ``"datasets"`` axis removed.
+
+    After :func:`index_dataset_params` collapses the dataset dimension into
+    the leading cell (batch) axis, layouts that carried a ``"datasets"`` axis
+    must be updated so that downstream broadcasting treats the new leading
+    dimension as a batch dim rather than a semantic axis.  This mirrors the
+    identically-named helper defined in the sibling likelihood modules
+    (``negative_binomial.py``, ``zero_inflated.py``, ``vcp.py``).
+
+    Parameters
+    ----------
+    param_layouts : dict or None
+        Original layouts built from ``param_specs``.
+
+    Returns
+    -------
+    dict or None
+        Updated layouts with ``"datasets"`` removed where present.
+    """
+    if param_layouts is None:
+        return None
+    return subset_layouts(param_layouts, DATASETS)
 
 
 # ==============================================================================
@@ -353,9 +395,15 @@ def _reject_phase1_unsupported(
         raise NotImplementedError(
             "TwoState + annotation priors are not supported in phase 1."
         )
+    # Multi-dataset IS supported.  Callers pass ``dataset_indices=None`` here
+    # once they have confirmed ``use_dataset_indexing`` (i.e. both
+    # ``dataset_indices`` and ``model_config.n_datasets`` are set).  A
+    # non-None value reaching this guard therefore means dataset assignments
+    # were supplied without ``n_datasets`` being configured — a setup error.
     if kwargs.get("dataset_indices") is not None:
-        raise NotImplementedError(
-            "TwoState + multi-dataset is not supported in phase 1."
+        raise ValueError(
+            "TwoState received dataset_indices but model_config.n_datasets "
+            "is not set; configure n_datasets >= 2 for multi-dataset fits."
         )
     if model_config is not None:
         # Compare against the enum member (not None / not a string).
@@ -486,27 +534,73 @@ class TwoStateLikelihood(Likelihood):
         dist.Distribution
             The observation distribution (already ``to_event(1)``).
         """
-        from ....stats.distributions import PoissonBetaCompound
-
+        # Reparameterize, emit the gene-rank deterministic sites, then build
+        # the distribution from the resulting (α, β, rate).
         alpha, beta, rate, eff_burst_size, raw_k_off = (
             _twostate_dispatch_reparam(param_values)
         )
-
-        # Emit derived quantities outside the cell plate.
         self._emit_deterministics(
             param_values, alpha, beta, rate, eff_burst_size, raw_k_off
         )
+        return self._build_bare_dist_from_reparam(
+            alpha, beta, rate, param_values
+        )
+
+    def _build_bare_dist(
+        self,
+        param_values: Dict[str, jnp.ndarray],
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
+    ) -> dist.Distribution:
+        """Build the observation distribution WITHOUT emitting deterministics.
+
+        Used on the multi-dataset path, where the per-cell parameters have
+        already been gathered by :func:`index_dataset_params` (shape
+        ``(batch, G)`` or ``(batch, K, G)``).  The gene/dataset-level
+        deterministic sites are emitted separately, once, on the full
+        ``(D, G)`` arrays outside the cell plate — re-emitting them here on
+        the per-subsample arrays would corrupt their rank.
+
+        Parameters
+        ----------
+        param_values : dict
+            Per-cell parameter arrays (already dataset-indexed).
+        param_layouts : dict, optional
+            Layouts with the ``"datasets"`` axis already dropped.
+
+        Returns
+        -------
+        dist.Distribution
+            The observation distribution (already ``to_event(1)``).
+        """
+        del param_layouts  # reserved for interface symmetry with _build_dist
+        alpha, beta, rate, _, _ = _twostate_dispatch_reparam(param_values)
+        return self._build_bare_dist_from_reparam(
+            alpha, beta, rate, param_values
+        )
+
+    @staticmethod
+    def _build_bare_dist_from_reparam(
+        alpha: jnp.ndarray,
+        beta: jnp.ndarray,
+        rate: jnp.ndarray,
+        param_values: Dict[str, jnp.ndarray],
+    ) -> dist.Distribution:
+        """Assemble the Poisson-Beta (or mixture) distribution from (α, β, rate).
+
+        Shared by both :meth:`_build_dist` and :meth:`_build_bare_dist` so the
+        single-dataset and multi-dataset paths construct identical
+        distributions from their respective parameter arrays.
+        """
+        from ....stats.distributions import PoissonBetaCompound
 
         is_mixture = "mixing_weights" in param_values
         if is_mixture:
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
-            # Broadcast mu-layout params to match the component ×
-            # gene grid using the semantic layout system.  Alpha,
-            # beta, rate inherit their shape from the dispatched
-            # reparam which already broadcasts correctly when the
-            # sampled params have a component axis.
+            # Alpha, beta, rate inherit their shape from the dispatched
+            # reparam which already broadcasts correctly when the sampled
+            # params carry a component axis (..., K, G).
             return build_mixture_general(
                 mixing_dist,
                 lambda comp_idx: PoissonBetaCompound(
@@ -552,14 +646,31 @@ class TwoStateLikelihood(Likelihood):
         For mixture models (``mixing_weights`` in ``param_values``),
         the distribution built by ``_build_dist`` is already a
         ``MixtureGeneral`` — the cell plate works unchanged.
+
+        On the multi-dataset path (``model_config.n_datasets`` set and
+        ``dataset_indices`` provided), per-dataset gene parameters carry a
+        leading dataset axis.  The deterministic sites are emitted once on
+        the full ``(D, G)`` arrays outside the plate; inside the plate each
+        cell's parameters are gathered with :func:`index_dataset_params`.
         """
+        # Multi-dataset indexing is active only when BOTH the per-cell
+        # dataset assignments and the dataset count are available.
+        n_datasets = getattr(model_config, "n_datasets", None)
+        use_dataset_indexing = (
+            n_datasets is not None and dataset_indices is not None
+        )
+
         _reject_phase1_unsupported(
             param_values,
             model_config,
             {
                 "vae_cell_fn": vae_cell_fn,
                 "annotation_prior_logits": annotation_prior_logits,
-                "dataset_indices": dataset_indices,
+                # Pass None on the supported multi-dataset path; a non-None
+                # value here means dataset_indices arrived without n_datasets.
+                "dataset_indices": (
+                    None if use_dataset_indexing else dataset_indices
+                ),
             },
         )
         del total_count_max
@@ -573,6 +684,64 @@ class TwoStateLikelihood(Likelihood):
                 param_layouts = build_param_layouts(specs, param_values)
 
         n_cells = dims["n_cells"]
+
+        # ------------------------------------------------------------------
+        # Multi-dataset path: per-dataset gene parameters are indexed inside
+        # the cell plate so each cell uses its own dataset's parameters.
+        # ------------------------------------------------------------------
+        if use_dataset_indexing:
+            # Reparameterize on the full (D, G) arrays and emit the
+            # gene/dataset-rank deterministic sites OUTSIDE the cell plate.
+            alpha, beta, rate, eff_burst_size, raw_k_off = (
+                _twostate_dispatch_reparam(param_values)
+            )
+            self._emit_deterministics(
+                param_values, alpha, beta, rate, eff_burst_size, raw_k_off
+            )
+            # After gathering, the dataset axis collapses into the leading
+            # cell (batch) axis — drop the "datasets" semantic axis.
+            ds_layouts = _drop_dataset_axis(param_layouts)
+            specs = getattr(model_config, "param_specs", None)
+
+            if batch_size is not None:
+                with numpyro.plate(
+                    "cells", n_cells, subsample_size=batch_size
+                ) as idx:
+                    cell_pv = index_dataset_params(
+                        param_values, dataset_indices[idx], n_datasets,
+                        param_specs=specs,
+                    )
+                    obs = counts[idx] if counts is not None else None
+                    numpyro.sample(
+                        "counts",
+                        self._build_bare_dist(cell_pv, ds_layouts),
+                        obs=obs,
+                    )
+            elif counts is None:
+                with numpyro.plate("cells", n_cells):
+                    cell_pv = index_dataset_params(
+                        param_values, dataset_indices, n_datasets,
+                        param_specs=specs,
+                    )
+                    numpyro.sample(
+                        "counts", self._build_bare_dist(cell_pv, ds_layouts)
+                    )
+            else:
+                with numpyro.plate("cells", n_cells):
+                    cell_pv = index_dataset_params(
+                        param_values, dataset_indices, n_datasets,
+                        param_specs=specs,
+                    )
+                    numpyro.sample(
+                        "counts",
+                        self._build_bare_dist(cell_pv, ds_layouts),
+                        obs=counts,
+                    )
+            return
+
+        # ------------------------------------------------------------------
+        # Single-dataset path: build the distribution once outside the plate.
+        # ------------------------------------------------------------------
         base_dist = self._build_dist(param_values, param_layouts)
 
         if batch_size is not None:
@@ -735,13 +904,24 @@ class TwoStateVCPLikelihood(Likelihood):
         """
         from ....stats.distributions import PoissonBetaCompound
 
+        # Multi-dataset indexing is active only when both the per-cell
+        # dataset assignments and the dataset count are available.
+        n_datasets = getattr(model_config, "n_datasets", None)
+        use_dataset_indexing = (
+            n_datasets is not None and dataset_indices is not None
+        )
+
         _reject_phase1_unsupported(
             param_values,
             model_config,
             {
                 "vae_cell_fn": vae_cell_fn,
                 "annotation_prior_logits": annotation_prior_logits,
-                "dataset_indices": dataset_indices,
+                # Pass None on the supported multi-dataset path (see the
+                # no-capture sample() for the rationale).
+                "dataset_indices": (
+                    None if use_dataset_indexing else dataset_indices
+                ),
             },
         )
         if self.capture_param_name == "phi_capture":
@@ -826,47 +1006,100 @@ class TwoStateVCPLikelihood(Likelihood):
                 constrained_name=self.constrained_name,
             )
 
-        def _build_obs_dist(p_capture_val):
-            """Build the observation distribution (non-mixture or
-            MixtureGeneral) given a per-cell p_capture scalar."""
+        # Parameter specs are needed to gather dataset-specific params.
+        specs = getattr(model_config, "param_specs", None)
+
+        def _build_obs_dist(p_capture_val, alpha_v, beta_v, rate_v, indexed):
+            """Compose per-cell rate = gene_rate · p_capture and build the dist.
+
+            When ``indexed`` is True the gene rate already carries the leading
+            cell (batch) axis — it was gathered per cell by
+            :func:`index_dataset_params` — so it is multiplied by p_capture
+            WITHOUT an extra leading expansion.  Adding ``[None, ...]`` in that
+            case would balloon the broadcast to ``(batch, batch, …)`` (silent
+            corruption / OOM), which is the bug this branch guards against.
+            """
             if is_mixture:
-                # p_capture is per-cell scalar; expand to broadcast
-                # against (genes, components) = trailing 2 dims.
+                # p_capture is a per-cell scalar; expand to broadcast against
+                # the trailing (components, genes) axes.
                 capture_expanded = p_capture_val[:, None, None]
-                rate_cell = rate_gene[None, :, :] * capture_expanded
+                if indexed:
+                    # rate_v is already (batch, K, G).
+                    rate_cell = rate_v * capture_expanded
+                else:
+                    # rate_v is gene-rank (K, G); add the cell (batch) axis.
+                    rate_cell = rate_v[None, :, :] * capture_expanded
                 mixing_weights = param_values["mixing_weights"]
                 mixing_dist = dist.Categorical(probs=mixing_weights)
                 return build_mixture_general(
                     mixing_dist,
                     lambda comp_idx: PoissonBetaCompound(
-                        alpha=alpha[..., comp_idx, :],
-                        beta=beta[..., comp_idx, :],
+                        alpha=alpha_v[..., comp_idx, :],
+                        beta=beta_v[..., comp_idx, :],
                         rate=rate_cell[..., comp_idx, :],
                     ).to_event(1),
                 )
+            # Non-mixture path.
+            if indexed:
+                # rate_v is already (batch, G).
+                rate_cell = rate_v * p_capture_val[:, None]
             else:
-                rate_cell = rate_gene[None, :] * p_capture_val[:, None]
-                return PoissonBetaCompound(
-                    alpha=alpha, beta=beta, rate=rate_cell
-                ).to_event(1)
+                # rate_v is gene-rank (G,); add the cell (batch) axis.
+                rate_cell = rate_v[None, :] * p_capture_val[:, None]
+            return PoissonBetaCompound(
+                alpha=alpha_v, beta=beta_v, rate=rate_cell
+            ).to_event(1)
+
+        def _cell_reparam(plate_idx):
+            """Return the (α, β, rate) this cell-batch should use.
+
+            On the single-dataset path the gene-rank reparam computed outside
+            the plate is reused verbatim.  On the multi-dataset path each
+            cell's dataset-specific parameters are gathered with
+            :func:`index_dataset_params` and re-reparameterized, yielding
+            per-cell ``(batch, …)`` arrays.
+            """
+            if not use_dataset_indexing:
+                return alpha, beta, rate_gene
+            # ``plate_idx`` is the subsample index array under batching, or
+            # None for full-data plates (where all cells are present in order).
+            ds_idx = (
+                dataset_indices[plate_idx]
+                if plate_idx is not None
+                else dataset_indices
+            )
+            cell_pv = index_dataset_params(
+                param_values, ds_idx, n_datasets, param_specs=specs
+            )
+            a_c, b_c, r_c, _, _ = _twostate_dispatch_reparam(cell_pv)
+            return a_c, b_c, r_c
 
         if batch_size is not None:
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 p_capture = _sample_p_capture(idx)
-                obs_dist = _build_obs_dist(p_capture)
+                a_c, b_c, r_c = _cell_reparam(idx)
+                obs_dist = _build_obs_dist(
+                    p_capture, a_c, b_c, r_c, use_dataset_indexing
+                )
                 obs = counts[idx] if counts is not None else None
                 numpyro.sample("counts", obs_dist, obs=obs)
         elif counts is None:
             with numpyro.plate("cells", n_cells):
                 p_capture = _sample_p_capture(None)
-                obs_dist = _build_obs_dist(p_capture)
+                a_c, b_c, r_c = _cell_reparam(None)
+                obs_dist = _build_obs_dist(
+                    p_capture, a_c, b_c, r_c, use_dataset_indexing
+                )
                 numpyro.sample("counts", obs_dist)
         else:
             with numpyro.plate("cells", n_cells):
                 p_capture = _sample_p_capture(None)
-                obs_dist = _build_obs_dist(p_capture)
+                a_c, b_c, r_c = _cell_reparam(None)
+                obs_dist = _build_obs_dist(
+                    p_capture, a_c, b_c, r_c, use_dataset_indexing
+                )
                 numpyro.sample("counts", obs_dist, obs=counts)
 
     # ------------------------------------------------------------------
