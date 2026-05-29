@@ -81,6 +81,31 @@ import numpyro.distributions as dist
 # Import Parameterization and HierarchicalPriorType enums directly to avoid
 # circular import
 from ..config.enums import HierarchicalPriorType, Parameterization
+from ..config.enums import (
+    TWOSTATE_REGIME_COORD,
+    TWOSTATE_SIGMOID_REGIME_COORDS,
+)
+
+
+def _twostate_param_names(
+    parameterization: Parameterization,
+) -> tuple[str, str, str]:
+    """Return the (mean, overdispersion, regime) sampled parameter names.
+
+    Deterministic per-parameterization mapping for the TwoState family, used in
+    place of variational-key sniffing.  Key sniffing breaks once a coordinate
+    carries a horseshoe/NCP or dataset hierarchy (its variational site is
+    ``{name}_raw`` / ``{name}_raw_dataset``, not ``{name}_loc``), so the
+    detection must come from the parameterization itself.
+    """
+    if parameterization == Parameterization.TWO_STATE_MOMENT_DELTA:
+        return ("mu", "excess_fano", "inv_concentration")
+    if parameterization == Parameterization.TWO_STATE_MEAN_FANO:
+        return ("mu", "excess_fano", "concentration")
+    if parameterization == Parameterization.TWO_STATE_RATIO:
+        return ("mu", "burst_size", "switching_ratio")
+    # Natural (and any unspecified TwoState default).
+    return ("mu", "burst_size", "k_off")
 
 # Set of LNM-family enum values. The compositional path is identical
 # across canonical / mean_prob / mean_odds, so any check that needs
@@ -461,6 +486,20 @@ def _build_base_skip_set(
             skip.add("r_T")
         else:
             skip.add("mu")
+
+    # TwoState dataset-level regime hierarchy overrides the base regime
+    # coordinate.  Under a horseshoe/NEG (NCP) dataset prior the base guide
+    # site does not exist (only ``{coord}_raw_dataset`` + hyper sites do), so
+    # the base builder must skip it; the dataset-regime pass rebuilds it.
+    if (
+        getattr(model_config, "regime_dataset_prior", HierarchicalPriorType.NONE)
+        != HierarchicalPriorType.NONE
+    ):
+        _regime_coord = getattr(
+            model_config, "regime_dataset_target", None
+        ) or TWOSTATE_REGIME_COORD.get(parameterization)
+        if _regime_coord is not None:
+            skip.add(_regime_coord)
     return skip
 
 
@@ -687,6 +726,7 @@ def _apply_base_parameterization(
                 split,
                 skip,
                 pos_transform=pos_transform,
+                parameterization=parameterization,
             )
         )
     else:
@@ -1191,6 +1231,146 @@ def _apply_dataset_hierarchy_p(
     else:
         distributions[target] = _build_sigmoid_normal_posterior(
             params, target, is_scalar=False, split=split
+        )
+
+
+def _apply_dataset_hierarchy_regime(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+    *,
+    pos_transform=None,
+) -> None:
+    """Pass 4b: rebuild the TwoState regime coordinate's dataset-level hierarchy.
+
+    Active when ``regime_dataset_prior != "none"``.  The regime coordinate is
+    ``k_off`` / ``switching_ratio`` / ``concentration`` / ``inv_concentration``
+    depending on the parameterization (see ``TWOSTATE_REGIME_COORD``).  This
+    mirrors :func:`_apply_dataset_hierarchy_p`, but selects sigmoid (for the
+    bounded ``inv_concentration``) vs. positive (the others) reconstruction by
+    the coordinate's support.  The resulting MAP gains a leading dataset axis.
+    """
+    regime_prior = getattr(
+        model_config, "regime_dataset_prior", HierarchicalPriorType.NONE
+    )
+    if regime_prior == HierarchicalPriorType.NONE:
+        return
+
+    coord = getattr(
+        model_config, "regime_dataset_target", None
+    ) or TWOSTATE_REGIME_COORD.get(parameterization)
+    if coord is None:
+        return
+
+    # inv_concentration lives in (0, 1) -> sigmoid hyper names + transform;
+    # k_off / switching_ratio / concentration live in (0, inf) -> log/positive.
+    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
+    if is_sigmoid:
+        hyper_loc = f"logit_{coord}_dataset_loc"
+        hyper_scale = f"logit_{coord}_dataset_scale"
+        target_tf = dist.transforms.SigmoidTransform()
+    else:
+        hyper_loc = f"log_{coord}_dataset_loc"
+        hyper_scale = f"log_{coord}_dataset_scale"
+        target_tf = pos_transform
+
+    target = coord
+    hs_prefix = f"{coord}_dataset"
+    raw_name = f"{coord}_raw_dataset"
+
+    # --- Horseshoe (NCP): hyper-loc + horseshoe trio + raw-z normal --------
+    if regime_prior == HierarchicalPriorType.HORSESHOE:
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            if f"{hyper_loc}_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+            if f"tau_{hs_prefix}_loc" in params:
+                distributions.update(
+                    _build_horseshoe_hyperparameter_posteriors(
+                        params, hs_prefix
+                    )
+                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split, transform=target_tf
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
+
+    # --- NEG (NCP): hyper-loc + Gamma-Gamma hypers + raw-z normal ----------
+    if regime_prior == HierarchicalPriorType.NEG:
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            if f"{hyper_loc}_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+            if f"psi_{hs_prefix}_concentration" in params:
+                distributions.update(
+                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
+                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split, transform=target_tf
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_neg_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
+
+    # --- Gaussian (centered) dataset hierarchy: hyperparams + (D, G) target -
+    distributions.update(
+        _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+    )
+    jp = _find_joint_prefix(params, target)
+    if jp:
+        distributions[target] = _build_joint_low_rank_posterior(
+            params, target, jp, split, transform=target_tf
+        )
+    elif f"{target}_W" in params:
+        distributions[target] = _build_low_rank_positive_normal_posterior(
+            params, target, is_mixture, split, transform=target_tf
+        )
+    elif is_sigmoid:
+        distributions[target] = _build_sigmoid_normal_posterior(
+            params, target, is_scalar=False, split=split
+        )
+    else:
+        distributions[target] = _build_positive_normal_posterior(
+            params,
+            target,
+            is_mixture,
+            split,
+            is_scalar=False,
+            transform=pos_transform,
         )
 
 
@@ -1849,6 +2029,23 @@ def get_posterior_distributions(
         low_rank,
         split,
         pos_transform=_resolve_pos_transform_for(pos_transform, _p_target),
+    )
+    _regime_coord = getattr(
+        model_config, "regime_dataset_target", None
+    ) or TWOSTATE_REGIME_COORD.get(parameterization)
+    _apply_dataset_hierarchy_regime(  # Pass 4b (TwoState regime coordinate)
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        is_mixture,
+        low_rank,
+        split,
+        pos_transform=(
+            _resolve_pos_transform_for(pos_transform, _regime_coord)
+            if _regime_coord is not None
+            else None
+        ),
     )
     _apply_dataset_hierarchy_gate(  # Pass 5
         distributions,
@@ -3197,6 +3394,7 @@ def _build_two_state_posteriors(
     skip: Optional[set] = None,
     *,
     pos_transform=None,
+    parameterization: Optional[Parameterization] = None,
 ) -> Dict[str, Any]:
     """Build posteriors for the TwoState (Poisson-Beta compound) family.
 
@@ -3242,7 +3440,14 @@ def _build_two_state_posteriors(
                 return True
         return False
 
-    if _has("inv_concentration"):
+    # Prefer the parameterization enum when available: variational-key
+    # sniffing is unreliable once a coordinate carries a horseshoe/NCP or
+    # dataset hierarchy (its site is ``{name}_raw[_dataset]``, not
+    # ``{name}_loc``), which would otherwise mis-detect the parameterization
+    # (e.g. moment-delta read as mean-Fano -> KeyError on ``concentration``).
+    if parameterization is not None:
+        param_names = _twostate_param_names(parameterization)
+    elif _has("inv_concentration"):
         # Moment-delta: samples (mu, excess_fano, inv_concentration).
         param_names = ("mu", "excess_fano", "inv_concentration")
     elif _has("excess_fano"):

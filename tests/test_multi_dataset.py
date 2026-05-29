@@ -4915,3 +4915,79 @@ class TestTwoStateMultiDataset:
             cfg, n_cells=40, n_genes=6, batch_size=8
         )
         assert tr["counts"]["value"].shape == (8, 6)
+
+
+class TestTwoStateMultiDatasetGetMap:
+    """Posterior reconstruction (get_map / get_distributions) must handle the
+    hierarchical two-state model.
+
+    Regression guard for the ``KeyError: 'concentration_loc'`` that occurred
+    when ``_build_two_state_posteriors`` detected the parameterization by
+    sniffing ``{name}_loc`` variational keys: under a horseshoe/NCP dataset
+    prior the regime coordinate's site is ``{coord}_raw_dataset`` (not
+    ``{coord}_loc``), so moment-delta was mis-read as mean-Fano.
+    """
+
+    def _fit(self, parameterization, n_steps=25):
+        import warnings
+
+        warnings.filterwarnings("ignore")
+        import anndata as ad
+        import pandas as pd
+        import scribe
+
+        rng = np.random.default_rng(0)
+        n_per, n_genes = 40, 5
+        counts = rng.poisson(
+            3.0, size=(2 * n_per, n_genes)
+        ).astype(np.float32)
+        adata = ad.AnnData(
+            X=counts,
+            obs=pd.DataFrame(
+                {"condition": ["A"] * n_per + ["B"] * n_per}
+            ),
+        )
+        return scribe.fit(
+            adata,
+            model="twostatevcp",
+            parameterization=parameterization,
+            unconstrained=True,
+            dataset_key="condition",
+            expression_dataset_prior="horseshoe",
+            regime_dataset_prior="horseshoe",
+            inference_method="svi",
+            n_steps=n_steps,
+            n_samples=5,
+            seed=0,
+        )
+
+    @pytest.mark.parametrize(
+        "parameterization,regime",
+        [
+            ("two_state_moment_delta", "inv_concentration"),
+            ("two_state_natural", "k_off"),
+        ],
+    )
+    def test_get_map_canonical_does_not_crash(self, parameterization, regime):
+        """get_map(canonical=True) reconstructs mu + regime with a dataset axis."""
+        res = self._fit(parameterization)
+        m = res.get_map(canonical=True, verbose=False)
+        # mu and the regime coordinate are reconstructed (no concentration_loc
+        # KeyError) and carry a leading dataset axis (D, G).
+        assert "mu" in m
+        assert np.asarray(m["mu"]).shape[0] == 2  # n_datasets
+        assert regime in m
+        assert np.asarray(m[regime]).shape[0] == 2
+
+    def test_posterior_samples_have_dataset_axis(self):
+        """Posterior samples expose mu/regime/overdispersion with a dataset axis."""
+        import jax
+
+        res = self._fit("two_state_moment_delta")
+        ps = res.get_posterior_samples(
+            rng_key=jax.random.PRNGKey(1), n_samples=8
+        )
+        for name in ("mu", "excess_fano", "inv_concentration"):
+            arr = np.asarray(ps[name])
+            # (n_samples, n_datasets, n_genes)
+            assert arr.ndim == 3 and arr.shape[1] == 2

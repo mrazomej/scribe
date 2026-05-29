@@ -1005,8 +1005,70 @@ def _prepare_calibration_data(
             )
             return None
 
-        mu_arr = np.asarray(mu, dtype=float).reshape(-1)
         p_capture_ts = _ts_map.get("p_capture")
+
+        # Multi-dataset: one calibration panel per dataset.  TwoState is
+        # mean-preserving, so the predicted mean for dataset d is mu^(d)
+        # (times that dataset's mean capture for the VCP variant).  After the
+        # dataset-level hierarchy reconstruction, mu carries a leading dataset
+        # axis, so it must be sliced per dataset rather than flattened.
+        if (
+            is_multi_dataset
+            and dataset_codes is not None
+            and dataset_names is not None
+            and getattr(results.model_config, "n_datasets", None)
+        ):
+            _layouts = _get_layouts_for_plot(results)
+            _mu_ds_ax = (
+                _layouts["mu"].dataset_axis if "mu" in _layouts else 0
+            )
+            mu_full = np.asarray(mu, dtype=float)
+            pc_full = (
+                np.asarray(p_capture_ts, dtype=float)
+                if p_capture_ts is not None
+                else None
+            )
+            ds_codes = np.asarray(dataset_codes, dtype=int).ravel()
+            ds_results = []
+            for d in np.unique(ds_codes):
+                mask = ds_codes == d
+                obs_mean = np.mean(
+                    np.asarray(counts[mask], dtype=float), axis=0
+                )
+                # Slice mu to this dataset along its dataset axis.
+                if _mu_ds_ax is not None:
+                    mu_d = np.take(mu_full, int(d), axis=_mu_ds_ax)
+                else:
+                    mu_d = mu_full
+                mu_d = np.asarray(mu_d, dtype=float).reshape(-1)
+                # Capture is per cell; use this dataset's mean capture.
+                if pc_full is not None:
+                    pred_mean = mu_d * float(np.mean(pc_full[mask]))
+                else:
+                    pred_mean = mu_d
+                name = (
+                    str(dataset_names[int(d)])
+                    if int(d) < len(dataset_names)
+                    else f"dataset_{int(d)}"
+                )
+                ds_results.append(
+                    {
+                        "name": name,
+                        "obs_mean": obs_mean,
+                        "pred_mean": pred_mean,
+                    }
+                )
+            return {
+                "mode": "multi_dataset",
+                "ds_results": ds_results,
+                "obs_mean": None,
+                "pred_mean": None,
+                "is_mixture": False,
+                "annotations": ["TwoState (mean-preserving)"],
+            }
+
+        # Single-dataset: predicted mean = mu (times mean capture for VCP).
+        mu_arr = np.asarray(mu, dtype=float).reshape(-1)
         _annotations = []
         if p_capture_ts is not None:
             mean_nu = float(np.mean(np.asarray(p_capture_ts, dtype=float)))
