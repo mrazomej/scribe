@@ -1037,6 +1037,28 @@ class ModelConfig(BaseModel):
                     f"regime_dataset_prior={self.regime_dataset_prior.value!r} "
                     "requires unconstrained=True."
                 )
+            # A custom regime_dataset_target must name a coordinate that
+            # actually exists in the active parameterization (its regime or
+            # overdispersion coordinate).  Otherwise the factory pass silently
+            # no-ops and reconstruction later raises an opaque KeyError.
+            if self.regime_dataset_target is not None:
+                from .enums import (
+                    TWOSTATE_OVERDISPERSION_COORD,
+                    TWOSTATE_REGIME_COORD,
+                )
+
+                _valid = {
+                    TWOSTATE_REGIME_COORD.get(self.parameterization),
+                    TWOSTATE_OVERDISPERSION_COORD.get(self.parameterization),
+                }
+                _valid.discard(None)
+                if self.regime_dataset_target not in _valid:
+                    raise ValueError(
+                        f"regime_dataset_target="
+                        f"{self.regime_dataset_target!r} is not a coordinate of "
+                        f"parameterization {self.parameterization.value!r}; "
+                        f"expected one of {sorted(_valid)}."
+                    )
 
         # --- Dataset-level overdispersion ------------------------------------
         if self.overdispersion_dataset_prior != _NONE:
@@ -1730,6 +1752,28 @@ class ModelConfig(BaseModel):
         # dataset-level mu and regime hierarchies are wired in the factory.
         # The per-dataset/per-gene rate is gathered by index_dataset_params
         # inside the cell plate.
+        #
+        # (4b) Mixture + multi-dataset is NOT yet supported together.  For a
+        # two-state mixture the resolved mixture_params make ``mu`` carry a
+        # component axis ``(K, G)`` while the dataset-indexed regime /
+        # overdispersion coordinates carry a dataset axis ``(D, G)``; the two
+        # axes collide in the Poisson-Beta reparameterization (no shared
+        # singleton-component broadcast yet).  Reject this combination with a
+        # clear error rather than crash deep inside SVI.  Single-dataset
+        # mixtures and non-mixture multi-dataset both work.
+        if (
+            self.n_components is not None
+            and self.n_components >= 2
+            and self.n_datasets is not None
+            and self.n_datasets >= 2
+        ):
+            raise ValueError(
+                "TwoState mixture models (n_components >= 2) combined with "
+                "multi-dataset fitting (n_datasets >= 2) are not yet "
+                "supported. Use a non-mixture multi-dataset fit, or split by "
+                "the mixture grouping (e.g. one fit per cell type) and compare "
+                "datasets within each group."
+            )
 
         # (5) Biology-informed capture priors on twostatevcp ARE
         # supported as of this commit.  The closure-under-binomial-

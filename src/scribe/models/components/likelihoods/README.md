@@ -32,7 +32,7 @@ likelihoods/
 | `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean)      |
 | `PoissonLogNormalLikelihood`          | pln.py               | Per-gene Poisson from correlated log-normal rates via linear-decoder VAE |
 | `NBLogNormalLikelihood`               | nbln.py              | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` global  |
-| `TwoStateLikelihood`                  | two_state.py         | Two-state promoter (Poisson-Beta); supports mixtures and multi-dataset   |
+| `TwoStateLikelihood`                  | two_state.py         | Two-state promoter (Poisson-Beta); supports mixtures OR multi-dataset (not both yet) |
 | `TwoStateVCPLikelihood`               | two_state.py         | Two-state promoter with per-cell capture probability                     |
 
 Each concrete class implements both the **generative** side (`sample()`,

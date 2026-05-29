@@ -175,6 +175,36 @@ class TestTwoStatePhase1Validation:
         # Overdispersion defaults to free-per-dataset for multi-dataset fits.
         assert cfg.overdispersion_dataset_independent is True
 
+    def test_mixture_plus_multi_dataset_rejected(self):
+        """Mixture (n_components>=2) + multi-dataset is not yet supported.
+
+        The component axis on ``mu`` and the dataset axis on the regime /
+        overdispersion coordinates collide in the reparameterization; reject
+        the combination at config time instead of crashing inside SVI.
+        """
+        with pytest.raises(ValueError, match="mixture.*multi-dataset|not yet"):
+            ModelConfig(
+                base_model="twostate",
+                parameterization=Parameterization.TWO_STATE_MOMENT_DELTA,
+                unconstrained=True,
+                n_datasets=2,
+                n_components=2,
+                regime_dataset_prior="horseshoe",
+            )
+
+    def test_invalid_regime_dataset_target_rejected(self):
+        """regime_dataset_target must name a coordinate of the parameterization."""
+        # k_off is the natural/ratio regime coord, not a mean_fano coordinate.
+        with pytest.raises(ValueError, match="regime_dataset_target"):
+            ModelConfig(
+                base_model="twostate",
+                parameterization=Parameterization.TWO_STATE_MEAN_FANO,
+                unconstrained=True,
+                n_datasets=2,
+                regime_dataset_prior="horseshoe",
+                regime_dataset_target="k_off",
+            )
+
 
 # ==============================================================================
 # resolve_user_parameterization_for_model: strict rejection of DM-family strings
