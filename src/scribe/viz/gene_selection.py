@@ -82,6 +82,79 @@ def _get_gene_names(results):
     return None
 
 
+def _resolve_explicit_genes(genes, results, counts=None):
+    """Resolve an explicit gene selection to integer indices.
+
+    Maps a caller-supplied list of gene identifiers to integer indices
+    in the results' gene space, **preserving the caller-specified
+    order** so that repeated calls with the same ``genes`` list line up
+    panel-for-panel (e.g. comparing two models on the same genes).
+
+    Parameters
+    ----------
+    genes : sequence
+        Gene identifiers to display.  Each element is either an integer
+        index into the results' gene axis, or a gene-name string matched
+        against ``results.var.index``.
+    results : object
+        Fitted SCRIBE results object (provides gene names and
+        ``n_genes``).
+    counts : array-like, optional
+        Observed counts, used only to infer the gene count when the
+        results object does not expose ``n_genes``.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Integer gene indices in caller order.
+
+    Raises
+    ------
+    ValueError
+        If a name is not found, an integer index is out of range, a name
+        is requested when the results object carries no gene names, or
+        ``genes`` is empty.
+    """
+    gene_names = _get_gene_names(results)
+    name_to_idx = (
+        {str(name): i for i, name in enumerate(gene_names)}
+        if gene_names is not None
+        else None
+    )
+    n_genes = int(getattr(results, "n_genes", 0) or 0)
+    if n_genes <= 0 and counts is not None:
+        n_genes = int(_coerce_counts(counts).shape[1])
+
+    resolved = []
+    for g in genes:
+        if isinstance(g, (int, np.integer)) and not isinstance(g, bool):
+            idx = int(g)
+            if n_genes and not (0 <= idx < n_genes):
+                raise ValueError(
+                    f"Gene index {idx} is out of range "
+                    f"[0, {n_genes - 1}]."
+                )
+            resolved.append(idx)
+        else:
+            key = str(g)
+            if name_to_idx is None:
+                raise ValueError(
+                    "Gene names were requested, but the results object "
+                    "carries no gene names; pass integer indices instead."
+                )
+            if key not in name_to_idx:
+                raise ValueError(
+                    f"Gene name {key!r} not found in the results gene "
+                    "space (it may have been excluded by gene_coverage "
+                    "filtering and pooled into '_other')."
+                )
+            resolved.append(name_to_idx[key])
+
+    if not resolved:
+        raise ValueError("`genes` must contain at least one gene.")
+    return np.asarray(resolved, dtype=int)
+
+
 def _coerce_counts(counts):
     """Coerce counts to a dense 2-D numpy array.
 

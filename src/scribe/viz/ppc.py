@@ -27,6 +27,7 @@ from .gene_selection import (
     _coerce_and_align_counts_to_results,
     _coerce_counts,
     _get_gene_names,
+    _resolve_explicit_genes,
     _resolve_pooled_other_idx,
     _select_genes,
 )
@@ -152,6 +153,7 @@ def _prepare_ppc_data(
     n_rows,
     n_cols,
     n_samples,
+    genes=None,
     ppc_level: str = "marginal",
     map_sampling: bool = False,
 ):
@@ -211,20 +213,32 @@ def _prepare_ppc_data(
     console.print(
         f"[dim]Using n_rows={n_rows}, n_cols={n_cols} for PPC plot (log-spaced binning)[/dim]"
     )
-    selected_idx, mean_counts = _select_genes(
-        counts,
-        n_rows,
-        n_cols,
-        exclude_idx=_resolve_pooled_other_idx(results),
-    )
+    if genes is not None:
+        # Explicit caller-specified selection: resolve names/indices and
+        # preserve the given order (do NOT re-sort by mean) so repeated
+        # calls with the same `genes` list line up panel-for-panel.
+        selected_idx = _resolve_explicit_genes(genes, results, counts=counts)
+        mean_counts = np.median(_coerce_counts(counts), axis=0)
+        selected_idx_sorted = selected_idx
+        n_genes_selected = len(selected_idx_sorted)
+        console.print(
+            f"[dim]Selected {n_genes_selected} caller-specified genes[/dim]"
+        )
+    else:
+        selected_idx, mean_counts = _select_genes(
+            counts,
+            n_rows,
+            n_cols,
+            exclude_idx=_resolve_pooled_other_idx(results),
+        )
 
-    selected_means = mean_counts[selected_idx]
-    sort_order = np.argsort(selected_means)
-    selected_idx_sorted = selected_idx[sort_order]
-    n_genes_selected = len(selected_idx_sorted)
-    console.print(
-        f"[dim]Selected {n_genes_selected} genes across {n_rows} expression bins[/dim]"
-    )
+        selected_means = mean_counts[selected_idx]
+        sort_order = np.argsort(selected_means)
+        selected_idx_sorted = selected_idx[sort_order]
+        n_genes_selected = len(selected_idx_sorted)
+        console.print(
+            f"[dim]Selected {n_genes_selected} genes across {n_rows} expression bins[/dim]"
+        )
 
     if counts_for_sampling is None:
         counts_for_sampling = counts
@@ -312,6 +326,7 @@ def plot_ppc(
     n_rows=None,
     n_cols=None,
     n_genes=None,
+    genes=None,
     n_samples=None,
     figsize=None,
     fig=None,
@@ -337,7 +352,17 @@ def plot_ppc(
         Number of grid columns.  Overrides ``viz_cfg.ppc_opts.n_cols``.
     n_genes : int, optional
         Total number of genes to display.  When given without ``n_cols``,
-        derives ``n_cols = ceil(n_genes / n_rows)``.
+        derives ``n_cols = ceil(n_genes / n_rows)``.  Ignored when
+        ``genes`` is provided (the count is taken from the list length).
+    genes : sequence, optional
+        Explicit genes to display, as gene-name strings (matched against
+        ``results.var.index``) and/or integer indices into the results'
+        gene axis.  When given, this overrides the default abundance-
+        stratified auto-selection and the panels appear **in the order
+        listed** — so two ``plot_ppc`` calls with the same ``genes`` line
+        up panel-for-panel (useful for comparing models on the same
+        genes).  Names excluded by ``gene_coverage`` filtering (pooled
+        into ``_other``) are not selectable and raise ``ValueError``.
     n_samples : int, optional
         Number of posterior predictive samples.  Overrides
         ``viz_cfg.ppc_opts.n_samples``.
@@ -382,6 +407,9 @@ def plot_ppc(
         raise ValueError(
             "PPC requires multiple axes; provide `fig` or `axes` instead of `ax`."
         )
+    # An explicit gene list fixes the panel count; let the grid size to it.
+    if genes is not None:
+        n_genes = len(genes)
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
     grid = _resolve_ppc_grid(
         n_rows=n_rows,
@@ -398,6 +426,7 @@ def plot_ppc(
         n_rows=grid["n_rows"],
         n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
+        genes=genes,
         ppc_level=ppc_level,
         map_sampling=map_sampling,
     )
