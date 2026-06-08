@@ -1,0 +1,218 @@
+/* ==========================================================================
+   Altos Labs Brand Color Overrides for MkDocs Material
+   ==========================================================================
+   Brand palette sourced from sculpt.viz.colors (Altos Brand Guidelines).
+
+   Primary Colors:
+     gold:         #ebb800
+     green:        #00b97c
+     purple:       #b48ec6
+     blue:         #4f7cbb
+     light_blue:   #97e4ff
+     black:        #231f20
+
+   Accent Colors:
+     accent_blue:        #2F6EBA
+     accent_teal:        #28898A
+     accent_indigo:      #635EA9
+     accent_periwinkle:  #767eed
+     accent_royal_blue:  #4651A2
+     accent_aqua:        #afebe8
+     accent_sky_blue:    #3D8BE3
+     accent_dark_blue:   #272C68
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Light Mode Overrides
+   -------------------------------------------------------------------------- */
+[data-md-color-scheme="default"] {
+  /* Primary: accent_dark_blue for nav bar, headers */
+  --md-primary-fg-color: #272C68;
+  --md-primary-fg-color--light: #4651A2;
+  --md-primary-fg-color--dark: #1c2050;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+
+  /* Accent: gold for interactive highlights */
+  --md-accent-fg-color: #ebb800;
+  --md-accent-fg-color--transparent: #ebb80033;
+  --md-accent-bg-color: #ffffff;
+  --md-accent-bg-color--light: #ffffffb3;
+
+  /* Typeset link color: accent_blue */
+  --md-typeset-a-color: #2F6EBA;
+
+  /* Code highlight line background: faint gold */
+  --md-code-hl-color: #fcf1ce;
+
+  /* Footer */
+  --md-footer-bg-color: #272C68;
+  --md-footer-bg-color--dark: #1c2050;
+}
+
+/* --------------------------------------------------------------------------
+   Dark Mode Overrides
+   -------------------------------------------------------------------------- */
+[data-md-color-scheme="slate"] {
+  /* Primary: accent_indigo for dark mode nav */
+  --md-primary-fg-color: #635EA9;
+  --md-primary-fg-color--light: #767eed;
+  --md-primary-fg-color--dark: #4651A2;
+  --md-primary-bg-color: #1e1e2e;
+  --md-primary-bg-color--light: #1e1e2eb3;
+
+  /* Accent: gold remains the highlight */
+  --md-accent-fg-color: #ebb800;
+  --md-accent-fg-color--transparent: #ebb80033;
+  --md-accent-bg-color: #1e1e2e;
+  --md-accent-bg-color--light: #1e1e2eb3;
+
+  /* Typeset link color: accent_sky_blue for readability on dark bg */
+  --md-typeset-a-color: #3D8BE3;
+
+  /* Code highlight line background: muted dark gold */
+  --md-code-hl-color: #ebb80020;
+
+  /* Footer */
+  --md-footer-bg-color: #1c2050;
+  --md-footer-bg-color--dark: #141535;
+}
+
+/* --------------------------------------------------------------------------
+   Admonition Color Overrides
+   --------------------------------------------------------------------------
+   Remap admonition types to brand colors for visual consistency. */
+
+/* Tip / Success: brand green (#00b97c) */
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-admonition-icon--tip: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2m-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>');
+}
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-color: #00b97c;
+}
+.md-typeset .tip > .admonition-title,
+.md-typeset .tip > summary {
+  background-color: #00b97c1a;
+}
+.md-typeset .tip > .admonition-title::before,
+.md-typeset .tip > summary::before {
+  background-color: #00b97c;
+}
+
+/* Note / Info: accent_blue (#2F6EBA) */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-color: #2F6EBA;
+}
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary {
+  background-color: #2F6EBA1a;
+}
+.md-typeset .note > .admonition-title::before,
+.md-typeset .note > summary::before {
+  background-color: #2F6EBA;
+}
+
+.md-typeset .admonition.info,
+.md-typeset details.info {
+  border-color: #2F6EBA;
+}
+.md-typeset .info > .admonition-title,
+.md-typeset .info > summary {
+  background-color: #2F6EBA1a;
+}
+.md-typeset .info > .admonition-title::before,
+.md-typeset .info > summary::before {
+  background-color: #2F6EBA;
+}
+
+/* Warning: gold (#ebb800) */
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: #ebb800;
+}
+.md-typeset .warning > .admonition-title,
+.md-typeset .warning > summary {
+  background-color: #ebb8001a;
+}
+.md-typeset .warning > .admonition-title::before,
+.md-typeset .warning > summary::before {
+  background-color: #ebb800;
+}
+
+/* Danger / Error: brand purple (#b48ec6) */
+.md-typeset .admonition.danger,
+.md-typeset details.danger {
+  border-color: #b48ec6;
+}
+.md-typeset .danger > .admonition-title,
+.md-typeset .danger > summary {
+  background-color: #b48ec61a;
+}
+.md-typeset .danger > .admonition-title::before,
+.md-typeset .danger > summary::before {
+  background-color: #b48ec6;
+}
+
+/* Example: accent_teal (#28898A) */
+.md-typeset .admonition.example,
+.md-typeset details.example {
+  border-color: #28898A;
+}
+.md-typeset .example > .admonition-title,
+.md-typeset .example > summary {
+  background-color: #28898A1a;
+}
+.md-typeset .example > .admonition-title::before,
+.md-typeset .example > summary::before {
+  background-color: #28898A;
+}
+
+/* --------------------------------------------------------------------------
+   Navigation Tabs: gold underline on active tab
+   -------------------------------------------------------------------------- */
+.md-tabs__link--active,
+.md-tabs__link:is(:focus, :hover) {
+  color: #ebb800;
+}
+
+/* --------------------------------------------------------------------------
+   Grid Cards: left-border accent using brand colors
+   -------------------------------------------------------------------------- */
+.md-typeset .grid.cards > ul > li:nth-child(6n+1) {
+  border-left: 3px solid #ebb800;
+}
+.md-typeset .grid.cards > ul > li:nth-child(6n+2) {
+  border-left: 3px solid #00b97c;
+}
+.md-typeset .grid.cards > ul > li:nth-child(6n+3) {
+  border-left: 3px solid #4f7cbb;
+}
+.md-typeset .grid.cards > ul > li:nth-child(6n+4) {
+  border-left: 3px solid #28898A;
+}
+.md-typeset .grid.cards > ul > li:nth-child(6n+5) {
+  border-left: 3px solid #635EA9;
+}
+.md-typeset .grid.cards > ul > li:nth-child(6n+6) {
+  border-left: 3px solid #b48ec6;
+}
+
+/* --------------------------------------------------------------------------
+   Header / Search bar refinement
+   -------------------------------------------------------------------------- */
+/* Increase header logo size for better brand visibility. */
+.md-header__button.md-logo :is(img, svg) {
+  height: 2rem;
+  width: auto;
+}
+
+.md-search__input {
+  background-color: #4651A2;
+}
+[data-md-color-scheme="slate"] .md-search__input {
+  background-color: #4651A280;
+}
