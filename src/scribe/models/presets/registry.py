@@ -1066,7 +1066,7 @@ def build_inv_concentration_spec(
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     positive_transform: Any = None,
-    prior_loc: float = -4.0,
+    prior_loc: float = -2.0,
     prior_scale: float = 2.0,
 ) -> List[ParamSpec]:
     """Build the inv_concentration spec for TwoState (moment-delta variant).
@@ -1077,8 +1077,14 @@ def build_inv_concentration_spec(
 
     When ``unconstrained=True``, uses :class:`SigmoidNormalSpec` —
     ``logit(delta) ~ Normal(loc, scale)`` with a sigmoid transform.
-    Default prior Normal(-4, 2) in logit-space gives median
-    delta ~ 0.018 (kappa ~ 55, mildly NB-like).
+    Default prior Normal(-2, 2) in logit-space gives median
+    delta ~ 0.12 (kappa ~ 7.5, weakly NB-leaning).  This is a
+    deliberate, weakly-NB default: it no longer crushes genuine
+    burstiness toward the negative-binomial limit (the previous
+    ``loc=-4`` default, median delta ~ 0.018 / kappa ~ 55, biased
+    bursty fits ~3x in ``k_off``).  Fully overridable per fit via
+    ``priors={"inv_concentration": (loc, scale)}`` (e.g.
+    ``(0.0, 2.0)`` for a neutral regime prior).
 
     When ``unconstrained=False``, uses :class:`BetaSpec` — a direct
     constrained distribution on (0, 1).  Default ``Beta(1, 50)``

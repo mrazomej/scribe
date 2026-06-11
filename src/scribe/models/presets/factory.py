@@ -28,7 +28,7 @@ Examples
 ... )
 """
 
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import numpyro
@@ -1294,6 +1294,34 @@ def create_model(
     merged_priors = {
         k: v for k, v in merged_priors.items() if k in current_spec_names
     }
+    # Fold in prior overrides stored on ``model_config.priors`` (set via
+    # ``scribe.fit(priors={...})`` / ``with_priors``) for the TwoState regime
+    # coordinates only (``inv_concentration``, ``switching_ratio``,
+    # ``concentration``).  These specs are built *inside* this factory and,
+    # unlike the NB-family params (``p``/``r``/``mu``) and capture, their
+    # builders do NOT read ``model_config.priors`` — so a user override stored
+    # there never reaches the spec via the extraction above (which only sees
+    # ``model_config.param_specs``, empty until this factory populates it).
+    # Restricting the fold to the regime coordinates is deliberate: folding in
+    # *every* stored prior would clobber specs that already resolve their
+    # priors at build time, e.g. ``mu``'s per-gene data-driven anchor
+    # (``mu_prior_loc``), which the scalar stored value would overwrite.  Only
+    # add an entry when it isn't already resolved from the specs.
+    _REGIME_COORDS = {
+        c
+        for c in TWOSTATE_REGIME_COORD.values()
+        if c in ("inv_concentration", "switching_ratio", "concentration")
+    }
+    _config_priors = _config_priors_as_dict(model_config)
+    for _k in _REGIME_COORDS:
+        _v = _config_priors.get(_k)
+        if (
+            _v is not None
+            and _k in current_spec_names
+            and _k not in _CAPTURE_PRIOR_KEYS
+            and _k not in merged_priors
+        ):
+            merged_priors[_k] = _v
     if priors:
         merged_priors.update(
             {k: v for k, v in priors.items() if k not in _CAPTURE_PRIOR_KEYS}
@@ -1305,6 +1333,27 @@ def create_model(
     }
     if guides:
         merged_guides.update(guides)
+
+    # Center the variational guide init on the override for the TwoState
+    # regime coordinates.  These specs are built inside this factory with
+    # fixed ``default_params``, and the mean-field guide initializes from
+    # ``spec.guide`` (else ``default_params``) — *not* ``spec.prior``.  So
+    # overriding only the prior would leave the guide initialized at the
+    # built-in default, and SVI would barely move (the prior pull is weak
+    # next to the data and the guide starts in the wrong place), masking the
+    # override.  NB-family params do not have this problem because their
+    # spec builders set ``default_params`` and ``prior`` together from
+    # ``model_config.priors``; this mirrors that behavior for the regime
+    # coordinates so a user ``priors={...}`` override actually controls the
+    # fit.  Only applied when the user did not pass an explicit guide for the
+    # coordinate.  ``_REGIME_COORDS`` is defined with the prior-fold above.
+    for _k in _REGIME_COORDS:
+        if (
+            _k in current_spec_names
+            and _k in merged_priors
+            and _k not in merged_guides
+        ):
+            merged_guides[_k] = merged_priors[_k]
 
     if merged_priors or merged_guides:
         param_specs = apply_prior_guide_overrides(
@@ -3478,6 +3527,37 @@ def _extract_priors_from_param_specs(
         if hasattr(spec, "prior") and spec.prior is not None:
             priors[spec.name] = spec.prior
     return priors
+
+
+# ------------------------------------------------------------------------------
+
+
+def _config_priors_as_dict(model_config) -> Dict[str, Any]:
+    """Return ``model_config.priors`` as a plain ``dict``.
+
+    ``model_config.priors`` is a :class:`PriorOverrides` pydantic model
+    (``extra="allow"``) whose user-supplied entries live in
+    ``__pydantic_extra__``, but persisted/legacy configs may also carry a
+    plain ``dict``.  Handle both forms (and ``None``) so callers that fold
+    stored prior overrides into the spec pipeline don't need to special-case
+    the container type.
+    """
+    priors = getattr(model_config, "priors", None)
+    if priors is None:
+        return {}
+    if isinstance(priors, dict):
+        return dict(priors)
+    # Pydantic model: prefer the explicit extra mapping (where with_priors
+    # entries land), falling back to model_dump() for declared fields.
+    extra = getattr(priors, "__pydantic_extra__", None)
+    if extra is not None:
+        return dict(extra)
+    if hasattr(priors, "model_dump"):
+        try:
+            return dict(priors.model_dump())
+        except Exception:
+            pass
+    return {}
 
 
 # ------------------------------------------------------------------------------
