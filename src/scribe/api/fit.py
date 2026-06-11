@@ -115,6 +115,14 @@ def fit(
     #   - All other models: ``"softplus"`` (legacy behavior).
     # Pass any explicit value (string or dict) to override.
     positive_transform: Optional[Union[str, Dict[str, str]]] = None,
+    # Number of Gauss-Legendre quadrature nodes used by the two-state
+    # Poisson-Beta likelihood (``PoissonBetaCompound``) for the SVI
+    # ``twostate`` / ``twostatevcp`` models.  ``None`` (default) uses the
+    # distribution default of 60 nodes, keeping existing behavior
+    # bit-identical.  Raise it (e.g. ``n_quad_nodes=120``) for higher
+    # quadrature accuracy of the log-likelihood integral at additional
+    # compute cost.  Ignored by non-two-state models.
+    n_quad_nodes: Optional[int] = None,
     expression_prior: str = "none",
     prob_prior: str = "none",
     zero_inflation_prior: str = "none",
@@ -419,6 +427,15 @@ def fit(
     unconstrained : bool, default=False
         If True, use Normal+transform instead of constrained
         distributions.  This can help with optimization in some cases.
+
+    n_quad_nodes : int, optional
+        Number of Gauss-Legendre quadrature nodes used by the two-state
+        Poisson-Beta likelihood (``PoissonBetaCompound``) for the SVI
+        ``twostate`` / ``twostatevcp`` models.  ``None`` (default) uses
+        the distribution default of 60 nodes, keeping existing behavior
+        unchanged.  Increase it (e.g. ``120``) for higher accuracy of the
+        log-likelihood integral at additional compute cost.  Ignored by
+        non-two-state models.
 
     expression_prior : str, default="none"
         Gene-level hierarchical prior for mu (or r) across mixture
@@ -1087,6 +1104,7 @@ def fit(
             parameterization=parameterization,
             unconstrained=unconstrained,
             positive_transform=positive_transform,
+            n_quad_nodes=n_quad_nodes,
             expression_prior=expression_prior,
             prob_prior=prob_prior,
             zero_inflation_prior=zero_inflation_prior,

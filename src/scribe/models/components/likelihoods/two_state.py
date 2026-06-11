@@ -506,6 +506,7 @@ class TwoStateLikelihood(Likelihood):
         self,
         param_values: Dict[str, jnp.ndarray],
         param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
+        n_quad_nodes: Optional[int] = None,
     ) -> dist.Distribution:
         """Run the (µ, b, *third*) → (α, β, rate) map and build the
         observation distribution.
@@ -543,13 +544,14 @@ class TwoStateLikelihood(Likelihood):
             param_values, alpha, beta, rate, eff_burst_size, raw_k_off
         )
         return self._build_bare_dist_from_reparam(
-            alpha, beta, rate, param_values
+            alpha, beta, rate, param_values, n_quad_nodes=n_quad_nodes
         )
 
     def _build_bare_dist(
         self,
         param_values: Dict[str, jnp.ndarray],
         param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
+        n_quad_nodes: Optional[int] = None,
     ) -> dist.Distribution:
         """Build the observation distribution WITHOUT emitting deterministics.
 
@@ -575,7 +577,7 @@ class TwoStateLikelihood(Likelihood):
         del param_layouts  # reserved for interface symmetry with _build_dist
         alpha, beta, rate, _, _ = _twostate_dispatch_reparam(param_values)
         return self._build_bare_dist_from_reparam(
-            alpha, beta, rate, param_values
+            alpha, beta, rate, param_values, n_quad_nodes=n_quad_nodes
         )
 
     @staticmethod
@@ -584,14 +586,22 @@ class TwoStateLikelihood(Likelihood):
         beta: jnp.ndarray,
         rate: jnp.ndarray,
         param_values: Dict[str, jnp.ndarray],
+        n_quad_nodes: Optional[int] = None,
     ) -> dist.Distribution:
         """Assemble the Poisson-Beta (or mixture) distribution from (α, β, rate).
 
         Shared by both :meth:`_build_dist` and :meth:`_build_bare_dist` so the
         single-dataset and multi-dataset paths construct identical
         distributions from their respective parameter arrays.
+
+        ``n_quad_nodes`` controls the Gauss-Legendre node count of the
+        :class:`PoissonBetaCompound`; ``None`` falls back to its default
+        (60), keeping legacy behavior bit-identical.
         """
         from ....stats.distributions import PoissonBetaCompound
+
+        # None → use the PoissonBetaCompound default (60).
+        _k = n_quad_nodes if n_quad_nodes is not None else 60
 
         is_mixture = "mixing_weights" in param_values
         if is_mixture:
@@ -607,12 +617,13 @@ class TwoStateLikelihood(Likelihood):
                     alpha=alpha[..., comp_idx, :],
                     beta=beta[..., comp_idx, :],
                     rate=rate[..., comp_idx, :],
+                    n_quad_nodes=_k,
                 ).to_event(1),
             )
 
         # Standard (non-mixture) path
         return PoissonBetaCompound(
-            alpha=alpha, beta=beta, rate=rate
+            alpha=alpha, beta=beta, rate=rate, n_quad_nodes=_k
         ).to_event(1)
 
     # ------------------------------------------------------------------
@@ -685,6 +696,10 @@ class TwoStateLikelihood(Likelihood):
 
         n_cells = dims["n_cells"]
 
+        # Gauss-Legendre node count for the PoissonBetaCompound; None lets
+        # the build helpers fall back to the distribution default (60).
+        n_quad_nodes = getattr(model_config, "n_quad_nodes", None)
+
         # ------------------------------------------------------------------
         # Multi-dataset path: per-dataset gene parameters are indexed inside
         # the cell plate so each cell uses its own dataset's parameters.
@@ -714,7 +729,9 @@ class TwoStateLikelihood(Likelihood):
                     obs = counts[idx] if counts is not None else None
                     numpyro.sample(
                         "counts",
-                        self._build_bare_dist(cell_pv, ds_layouts),
+                        self._build_bare_dist(
+                            cell_pv, ds_layouts, n_quad_nodes=n_quad_nodes
+                        ),
                         obs=obs,
                     )
             elif counts is None:
@@ -724,7 +741,10 @@ class TwoStateLikelihood(Likelihood):
                         param_specs=specs,
                     )
                     numpyro.sample(
-                        "counts", self._build_bare_dist(cell_pv, ds_layouts)
+                        "counts",
+                        self._build_bare_dist(
+                            cell_pv, ds_layouts, n_quad_nodes=n_quad_nodes
+                        ),
                     )
             else:
                 with numpyro.plate("cells", n_cells):
@@ -734,7 +754,9 @@ class TwoStateLikelihood(Likelihood):
                     )
                     numpyro.sample(
                         "counts",
-                        self._build_bare_dist(cell_pv, ds_layouts),
+                        self._build_bare_dist(
+                            cell_pv, ds_layouts, n_quad_nodes=n_quad_nodes
+                        ),
                         obs=counts,
                     )
             return
@@ -742,7 +764,9 @@ class TwoStateLikelihood(Likelihood):
         # ------------------------------------------------------------------
         # Single-dataset path: build the distribution once outside the plate.
         # ------------------------------------------------------------------
-        base_dist = self._build_dist(param_values, param_layouts)
+        base_dist = self._build_dist(
+            param_values, param_layouts, n_quad_nodes=n_quad_nodes
+        )
 
         if batch_size is not None:
             with numpyro.plate(
@@ -940,6 +964,11 @@ class TwoStateVCPLikelihood(Likelihood):
         n_cells = dims["n_cells"]
         is_mixture = "mixing_weights" in param_values
 
+        # Gauss-Legendre node count for the PoissonBetaCompound; None →
+        # the distribution default (60), keeping legacy behavior intact.
+        n_quad_nodes = getattr(model_config, "n_quad_nodes", None)
+        _k = n_quad_nodes if n_quad_nodes is not None else 60
+
         # ----- gene-level reparam: OUTSIDE the cell plate -----
         alpha, beta, rate_gene, eff_burst_size, raw_k_off = (
             _twostate_dispatch_reparam(param_values)
@@ -1037,6 +1066,7 @@ class TwoStateVCPLikelihood(Likelihood):
                         alpha=alpha_v[..., comp_idx, :],
                         beta=beta_v[..., comp_idx, :],
                         rate=rate_cell[..., comp_idx, :],
+                        n_quad_nodes=_k,
                     ).to_event(1),
                 )
             # Non-mixture path.
@@ -1047,7 +1077,7 @@ class TwoStateVCPLikelihood(Likelihood):
                 # rate_v is gene-rank (G,); add the cell (batch) axis.
                 rate_cell = rate_v[None, :] * p_capture_val[:, None]
             return PoissonBetaCompound(
-                alpha=alpha_v, beta=beta_v, rate=rate_cell
+                alpha=alpha_v, beta=beta_v, rate=rate_cell, n_quad_nodes=_k
             ).to_event(1)
 
         def _cell_reparam(plate_idx):

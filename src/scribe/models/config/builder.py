@@ -122,6 +122,9 @@ class ModelConfigBuilder:
         self._vae_params: Dict[str, Any] = {}
         self._d_mode: str = "low_rank"
         self._alr_reference_idx: int = -1
+        # Gauss-Legendre node count for the two-state Poisson-Beta
+        # likelihood. ``None`` keeps the PoissonBetaCompound default (60).
+        self._n_quad_nodes: Optional[int] = None
         # Whether `_other` participates in Σ (PLN/NBLN/TSLN-Rate/-Logit).
         # See ``ModelConfig.correlate_other_column`` docstring.
         # Default ``False`` (the biologically cleaner setting) — flipped
@@ -816,4 +819,5 @@ class ModelConfigBuilder:
                 self, "_correlate_other_column", False
             ),
             positive_transform=self._positive_transform,
+            n_quad_nodes=getattr(self, "_n_quad_nodes", None),
         )

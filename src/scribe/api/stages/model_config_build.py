@@ -119,6 +119,9 @@ def _build_from_kwargs(ctx, kw, d_mode):
             if ctx.alr_reference_idx is not None
             else -1
         ),
+        # Two-state Poisson-Beta quadrature node count; None keeps the
+        # PoissonBetaCompound default (60).
+        n_quad_nodes=kw.get("n_quad_nodes"),
         correlate_other_column=kw.get("correlate_other_column", False),
         guide_rank=kw.get("guide_rank"),
         joint_params=kw.get("joint_params"),

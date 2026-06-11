@@ -87,6 +87,9 @@ def build_config_from_preset(
     # LNM diagonal mode (``lnm`` / ``lnmvcp`` only; see ``ModelConfig.d_mode``)
     d_mode: str = "low_rank",
     alr_reference_idx: int = -1,
+    # Gauss-Legendre node count for the two-state Poisson-Beta
+    # likelihood. ``None`` keeps the PoissonBetaCompound default (60).
+    n_quad_nodes: Optional[int] = None,
     # Whether the trailing aggregated '_other' column participates in
     # the latent low-rank covariance.  Current default ``True`` is
     # legacy (held at True for the Commit 2 release; flips to ``False``
@@ -732,6 +735,11 @@ def build_config_from_preset(
             builder._positive_transform = "softplus"
     else:
         builder._positive_transform = positive_transform
+
+    # Gauss-Legendre node count for the two-state Poisson-Beta likelihood.
+    # ``None`` keeps the PoissonBetaCompound default (60); ignored by
+    # non-two-state model families.
+    builder._n_quad_nodes = n_quad_nodes
 
     return builder.build()
 

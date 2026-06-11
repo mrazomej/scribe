@@ -246,6 +246,9 @@ class ModelConfig(BaseModel):
         d.setdefault("d_mode", "low_rank")
         d.setdefault("alr_reference_idx", -1)
         d.setdefault("gene_coverage", None)
+        # ``None`` means use the PoissonBetaCompound default (60 nodes) so
+        # old pickles reconstruct with bit-identical two-state likelihoods.
+        d.setdefault("n_quad_nodes", None)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -669,6 +672,23 @@ class ModelConfig(BaseModel):
             "Optional cumulative abundance coverage threshold in (0, 1] used "
             "for pre-fit gene filtering. Genes outside the retained set may "
             "be aggregated into a trailing 'other' pseudo-gene."
+        ),
+    )
+
+    # Gauss-Legendre quadrature node count for the two-state Poisson-Beta
+    # likelihood (PoissonBetaCompound). Only consulted by the SVI
+    # ``twostate`` / ``twostatevcp`` likelihoods. ``None`` (default) means
+    # use the PoissonBetaCompound default of 60 nodes, keeping existing
+    # behavior bit-identical; raise it for higher quadrature accuracy.
+    n_quad_nodes: Optional[int] = Field(
+        None,
+        gt=0,
+        description=(
+            "Number of Gauss-Legendre quadrature nodes used by the two-state "
+            "Poisson-Beta likelihood (PoissonBetaCompound). None means use "
+            "the distribution default (60). Higher values increase accuracy "
+            "of the log_prob integral at additional compute cost. Ignored by "
+            "non-two-state models."
         ),
     )
 
