@@ -175,5 +175,6 @@ nav:
     - Modeling Assumptions for scRNA-seq: tutorials/jurkat_cells.md
     - Mixture Models & Differential Expression: tutorials/5050_jurkat_293t.md
     - Gene–gene correlations with NBLN: tutorials/jurkat_cells_nbln.md
+    - Bursty genes & the two-state promoter: tutorials/k562_cells_twostate.md
   - API Reference: reference/
   - Contributing: contributing.md
