@@ -195,7 +195,8 @@ def _(mo):
 @app.cell
 def _(results_nbdm, scribe):
     # Plot ELBO loss
-    scribe.viz.plot_loss(results_nbdm, figsize=(6, 3))
+    _fig = scribe.viz.plot_loss(results_nbdm, figsize=(6, 3))
+    _fig.fig
     return
 
 
@@ -211,7 +212,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_nbdm, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_nbdm,
         adata,
         n_genes=16,
@@ -219,6 +220,7 @@ def _(adata, results_nbdm, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
@@ -364,9 +366,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_nbvcp, scribe):
-    scribe.viz.plot_p_capture_scaling(
+    _fig = scribe.viz.plot_p_capture_scaling(
         results_nbvcp, counts=adata, figsize=(4,4)
     )
+    _fig.fig
     return
 
 
@@ -400,7 +403,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_nbvcp, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_nbvcp,
         adata,
         n_genes=16,
@@ -408,6 +411,7 @@ def _(adata, results_nbvcp, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
@@ -489,7 +493,8 @@ def _(adata, clear_caches, gc, out_dir, pickle, scribe):
 @app.cell
 def _(results_odds, scribe):
     # Plot ELBO loss for mean_odds fit
-    scribe.viz.plot_loss(results_odds, figsize=(6, 3))
+    _fig = scribe.viz.plot_loss(results_odds, figsize=(6, 3))
+    _fig.fig
     return
 
 
@@ -503,9 +508,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_odds, scribe):
-    scribe.viz.plot_p_capture_scaling(
+    _fig = scribe.viz.plot_p_capture_scaling(
         results_odds, counts=adata, figsize=(4,4)
     )
+    _fig.fig
     return
 
 
@@ -521,7 +527,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_odds, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_odds,
         adata,
         n_genes=16,
@@ -529,6 +535,7 @@ def _(adata, results_odds, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
@@ -544,9 +551,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_odds, scribe):
-    scribe.viz.plot_mean_calibration(
+    _fig = scribe.viz.plot_mean_calibration(
         results_odds, counts=adata, figsize=(4, 4)
     )
+    _fig.fig
     return
 
 
@@ -686,7 +694,8 @@ def _(mo):
 @app.cell
 def _(results_lowrank, scribe):
     # Plot ELBO loss
-    scribe.viz.plot_loss(results_lowrank, figsize=(6, 3))
+    _fig = scribe.viz.plot_loss(results_lowrank, figsize=(6, 3))
+    _fig.fig
     return
 
 
@@ -700,7 +709,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_lowrank, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_lowrank,
         adata,
         n_genes=16,
@@ -708,6 +717,7 @@ def _(adata, results_lowrank, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
@@ -721,9 +731,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_lowrank, scribe):
-    scribe.viz.plot_mean_calibration(
+    _fig = scribe.viz.plot_mean_calibration(
         results_lowrank, counts=adata, figsize=(4, 4)
     )
+    _fig.fig
     return
 
 
@@ -739,13 +750,14 @@ def _(mo):
 
 @app.cell
 def _(adata, results_lowrank, scribe):
-    scribe.viz.plot_correlation_heatmap(
+    _fig = scribe.viz.plot_correlation_heatmap(
         results_lowrank, 
         counts=adata, 
         n_genes=100,
         n_samples=1_000,
         figsize=(7,7)
     )
+    _fig.fig
     return
 
 
@@ -863,9 +875,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_hierprob, scribe):
-    scribe.viz.plot_p_capture_scaling(
+    _fig = scribe.viz.plot_p_capture_scaling(
         results_hierprob, counts=adata, figsize=(4,4)
     )
+    _fig.fig
     return
 
 
@@ -881,7 +894,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_hierprob, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_hierprob,
         adata,
         n_genes=16,
@@ -889,6 +902,7 @@ def _(adata, results_hierprob, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
@@ -904,9 +918,10 @@ def _(mo):
 
 @app.cell
 def _(adata, results_hierprob, scribe):
-    scribe.viz.plot_mean_calibration(
+    _fig = scribe.viz.plot_mean_calibration(
         results_hierprob, counts=adata, figsize=(4, 4)
     )
+    _fig.fig
     return
 
 
@@ -1108,7 +1123,8 @@ def _(adata, clear_caches, gc, out_dir, pickle, scribe):
 @app.cell
 def _(results_flow, scribe):
     # Plot ELBO loss for normalizing flow fit
-    scribe.viz.plot_loss(results_flow, figsize=(6, 3))
+    _fig = scribe.viz.plot_loss(results_flow, figsize=(6, 3))
+    _fig.fig
     return
 
 
@@ -1159,7 +1175,7 @@ def _(mo):
 
 @app.cell
 def _(adata, results_flow, scribe):
-    scribe.viz.plot_ppc(
+    _fig = scribe.viz.plot_ppc(
         results_flow,
         adata,
         n_genes=16,
@@ -1167,14 +1183,16 @@ def _(adata, results_flow, scribe):
         figsize=(8, 8),
         n_samples=512,
     )
+    _fig.fig
     return
 
 
 @app.cell
 def _(adata, results_flow, scribe):
-    scribe.viz.plot_mean_calibration(
+    _fig = scribe.viz.plot_mean_calibration(
         results_flow, counts=adata, figsize=(4, 4)
     )
+    _fig.fig
     return
 
 
