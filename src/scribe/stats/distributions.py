@@ -1214,8 +1214,12 @@ class PoissonBetaCompound(Distribution):
         Logarithm of the Poisson rate scale. Equivalent to ``rate``;
         passing this directly is useful when the caller already has
         the log form and wants to avoid a redundant exp/log round-trip.
-    n_quad_nodes : int, default=60
-        Number of Gauss-Jacobi nodes used for log_prob. Static under JIT.
+    n_quad_nodes : int, default=256
+        Number of Gauss-Legendre nodes used for log_prob. Static under JIT.
+        The default of 256 resolves the near-singular endpoints of a
+        U-shaped Beta (bursty regime, k+ , k- < 1) well enough that the
+        regime coordinate is not biased toward the NB limit; coarser grids
+        (e.g. 60) systematically under-resolve that endpoint mass.
     quad_backend : str, default="golub_welsch"
         Quadrature backend; see :mod:`scribe.stats._jacobi_quad`.
 
@@ -1244,7 +1248,7 @@ class PoissonBetaCompound(Distribution):
         rate=None,
         *,
         log_rate=None,
-        n_quad_nodes: int = 60,
+        n_quad_nodes: int = 256,
         quad_backend: str = "golub_welsch",
         validate_args=None,
     ):

@@ -686,7 +686,7 @@ class ModelConfig(BaseModel):
         description=(
             "Number of Gauss-Legendre quadrature nodes used by the two-state "
             "Poisson-Beta likelihood (PoissonBetaCompound). None means use "
-            "the distribution default (60). Higher values increase accuracy "
+            "the distribution default (256). Higher values increase accuracy "
             "of the log_prob integral at additional compute cost. Ignored by "
             "non-two-state models."
         ),

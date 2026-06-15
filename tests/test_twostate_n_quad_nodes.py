@@ -12,8 +12,9 @@ Validates:
   ``twostatevcp`` model and returns a result.
 - The configured value actually propagates to the constructed
   ``PoissonBetaCompound`` distribution (via a numpyro trace).
-- The default (``n_quad_nodes`` unset / ``None``) keeps the historical
-  60-node behavior, so existing fits stay bit-identical.
+- The default (``n_quad_nodes`` unset / ``None``) uses 256 nodes, which
+  resolves the near-singular endpoints of a U-shaped (bursty) Beta;
+  pass an int to override.
 """
 
 import jax
@@ -94,12 +95,12 @@ class TestNQuadNodesPropagation:
         assert hasattr(base, "n_quad_nodes")
         assert base.n_quad_nodes == 120
 
-    def test_default_is_sixty(self):
-        """Unset n_quad_nodes keeps the historical 60-node default."""
+    def test_default_is_256(self):
+        """Unset n_quad_nodes uses the 256-node default."""
         counts = _make_counts()
         cfg = _build_cfg("twostate", n_quad_nodes=None)
         base = _unwrap_poisson_beta(_trace_counts_dist(cfg, counts))
-        assert base.n_quad_nodes == 60
+        assert base.n_quad_nodes == 256
 
     def test_vcp_propagates_to_distribution(self):
         """The VCP build path also threads the configured node count."""

@@ -600,8 +600,8 @@ class TwoStateLikelihood(Likelihood):
         """
         from ....stats.distributions import PoissonBetaCompound
 
-        # None → use the PoissonBetaCompound default (60).
-        _k = n_quad_nodes if n_quad_nodes is not None else 60
+        # None → use the PoissonBetaCompound default (256).
+        _k = n_quad_nodes if n_quad_nodes is not None else 256
 
         is_mixture = "mixing_weights" in param_values
         if is_mixture:
@@ -965,9 +965,9 @@ class TwoStateVCPLikelihood(Likelihood):
         is_mixture = "mixing_weights" in param_values
 
         # Gauss-Legendre node count for the PoissonBetaCompound; None →
-        # the distribution default (60), keeping legacy behavior intact.
+        # the distribution default (256).
         n_quad_nodes = getattr(model_config, "n_quad_nodes", None)
-        _k = n_quad_nodes if n_quad_nodes is not None else 60
+        _k = n_quad_nodes if n_quad_nodes is not None else 256
 
         # ----- gene-level reparam: OUTSIDE the cell plate -----
         alpha, beta, rate_gene, eff_burst_size, raw_k_off = (
