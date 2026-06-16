@@ -1207,7 +1207,7 @@ def plot_mean_calibration(
     ctx,
     viz_cfg=None,
     is_mixture=False,
-    is_multi_dataset=False,
+    is_multi_dataset=None,
     dataset_codes=None,
     dataset_names=None,
     figsize=None,
@@ -1238,12 +1238,21 @@ def plot_mean_calibration(
         Visualization config.
     is_mixture : bool, optional
         Whether the model uses more than one component.
-    is_multi_dataset : bool, optional
-        Whether the run includes multiple datasets.
+    is_multi_dataset : bool or None, optional
+        Whether to split the calibration into per-dataset panels.  ``None``
+        (default) auto-detects a hierarchical fit from ``results`` (≥ 2
+        datasets with per-cell indices) and enables per-dataset panels;
+        ``True``/``False`` force the mode.  When enabled with
+        ``dataset_codes`` / ``dataset_names`` left ``None``, they are filled
+        from the fitted per-cell indices and generic ``dataset_{i}`` labels.
     dataset_codes : ndarray, optional
-        Integer dataset code per cell.
+        Integer dataset code per cell.  Auto-filled from
+        ``results._dataset_indices`` when multi-dataset is enabled and this
+        is ``None``.
     dataset_names : sequence of str, optional
-        Category names for each dataset code.
+        Category names for each dataset code.  Defaults to ``dataset_{i}``
+        when multi-dataset is enabled and this is ``None``; pass explicit
+        names for readable panel titles.
 
     Returns
     -------
@@ -1251,6 +1260,40 @@ def plot_mean_calibration(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
+
+    # Resolve multi-dataset mode.  ``is_multi_dataset=None`` (the default)
+    # auto-detects a hierarchical fit from the results so per-dataset panels
+    # appear without the caller threading dataset metadata; explicit
+    # ``True``/``False`` force the mode (and remain the only way to get a
+    # single pooled panel for a hierarchical model).  When enabled but the
+    # dataset args are missing, fill ``dataset_codes`` from the fitted
+    # per-cell indices and fall back to generic ``dataset_{i}`` labels — the
+    # CLI pipeline resolves real category names from the AnnData, but
+    # interactive callers (e.g. ``scribe.viz.plot_mean_calibration(res,
+    # counts=adata)``) don't, so we keep the split panels and let the user
+    # override ``dataset_names=[...]`` for nicer labels.
+    _n_datasets = int(
+        getattr(getattr(results, "model_config", None), "n_datasets", 0) or 0
+    )
+    _ds_idx = getattr(results, "_dataset_indices", None)
+    if is_multi_dataset is None:
+        is_multi_dataset = (
+            _n_datasets >= 2 and _ds_idx is not None and ax is None
+        )
+    if is_multi_dataset:
+        if dataset_codes is None and _ds_idx is not None:
+            dataset_codes = np.asarray(_ds_idx)
+        if dataset_names is None and dataset_codes is not None:
+            _n_ds = max(
+                int(np.max(np.asarray(dataset_codes, dtype=int))) + 1,
+                _n_datasets,
+            )
+            dataset_names = [f"dataset_{i}" for i in range(_n_ds)]
+            console.print(
+                f"[dim]Per-dataset mean calibration enabled ({_n_ds} "
+                "datasets); pass dataset_names=[...] for category labels.[/dim]"
+            )
+
     if ax is not None and is_multi_dataset:
         raise ValueError(
             "Multi-dataset mean calibration requires `fig` or `axes`, not `ax`."

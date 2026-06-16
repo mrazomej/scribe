@@ -53,6 +53,13 @@ plotting from raw `adata` counts against filtered model results.
 - `plot_mean_calibration` also auto-detects PLN models and computes the
   predicted mean as `exp(y_log_rate)` from the MAP decoder log-rate head.
   This keeps the diagnostic in the model's native log-rate space.
+- `plot_mean_calibration` auto-detects hierarchical (multi-dataset) fits when
+  `is_multi_dataset` is left at its default `None`: if the results carry ≥ 2
+  datasets and per-cell `_dataset_indices`, it splits into one panel per
+  dataset, filling `dataset_codes` from the results and falling back to
+  generic `dataset_{i}` labels (pass `dataset_names=[...]` for real category
+  names, as the CLI pipeline does). Pass `is_multi_dataset=False` to force a
+  single pooled panel.
 - `plot_mean_calibration` has dedicated paths for the two TSLN variants:
   - **TSLN-Rate**: the observation model is a Poisson-Beta compound, so the
     per-cell predicted mean is `exp(x_cg − η_c) · α_g / (α_g + β_g)`. The

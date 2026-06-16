@@ -253,3 +253,112 @@ class TestFactoryWiring:
                 f"{name} should use ExpTransform under global "
                 f"positive_transform='exp', got {type(tf).__name__}"
             )
+
+
+# ----------------------------------------------------------------------
+# Posterior reconstruction honours per-parameter transforms
+# ----------------------------------------------------------------------
+
+
+def _leaf_transform(dist_obj):
+    """Return the constraint transform of a reconstructed posterior entry.
+
+    Handles both the ``TransformedDistribution`` form (mean-field guides)
+    and the ``{"base", "transform"}`` dict form (low-rank guides).
+    """
+    if isinstance(dist_obj, dict) and "transform" in dist_obj:
+        return dist_obj["transform"]
+    transforms = getattr(dist_obj, "transforms", None)
+    if transforms:
+        return transforms[0]
+    return None
+
+
+class TestPosteriorReconstructionTransforms:
+    """Reconstruction must mirror the transforms used at fit time.
+
+    Regression for a silent mis-reconstruction: a ``positive_transform``
+    dict like ``{"mu": "exp"}`` was collapsed to a *global* ``ExpTransform``
+    inside ``get_posterior_distributions`` because the dict had a single
+    distinct value.  That re-applied ``exp`` to the softplus-fit ``phi`` and
+    ``phi_capture`` when rebuilding the posterior for ``get_map`` — for VCP
+    odds-family models ``exp(loc)`` vs ``softplus(loc)`` inflated
+    ``phi_capture`` ~10x, halving the reconstructed capture and every
+    MAP-based mean (mean-calibration), while the sampling-based PPC, which
+    threads the real guide, stayed correct.
+    """
+
+    def _nbvcp_mean_odds_params(self, n_genes=6, n_cells=20):
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        # Guide locs in the regime where exp(loc) >> softplus(loc) (the
+        # bug only bites for loc well above ~1).
+        return {
+            "phi_loc": rng.normal(3.5, 0.1, size=n_genes).astype("float32"),
+            "phi_scale": np.full(n_genes, 0.1, dtype="float32"),
+            "mu_loc": rng.normal(0.0, 0.1, size=n_genes).astype("float32"),
+            "mu_scale": np.full(n_genes, 0.1, dtype="float32"),
+            "phi_capture_loc": rng.normal(
+                3.6, 0.1, size=n_cells
+            ).astype("float32"),
+            "phi_capture_scale": np.full(n_cells, 0.1, dtype="float32"),
+        }
+
+    def test_mean_odds_vcp_capture_uses_softplus_not_exp(self):
+        """phi/phi_capture stay softplus while mu honours its exp override."""
+        import numpyro.distributions as npd
+
+        from scribe.models.config import ModelConfig
+        from scribe.models.builders.posterior import (
+            get_posterior_distributions,
+        )
+
+        cfg = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            positive_transform={"mu": "exp"},
+        )
+        assert cfg.uses_variable_capture  # sanity: capture pass is active
+
+        dists = get_posterior_distributions(
+            self._nbvcp_mean_odds_params(), cfg
+        )
+
+        # ``mu`` honours its explicit exp override.
+        assert isinstance(
+            _leaf_transform(dists["mu"]), npd.transforms.ExpTransform
+        )
+        # ``phi`` and ``phi_capture`` fall back to the softplus default —
+        # NOT the global exp the old collapse produced.
+        assert isinstance(
+            _leaf_transform(dists["phi"]), npd.transforms.SoftplusTransform
+        ), "phi must use the softplus default, not exp"
+        assert isinstance(
+            _leaf_transform(dists["phi_capture"]),
+            npd.transforms.SoftplusTransform,
+        ), "phi_capture must use the softplus default, not exp"
+
+    def test_global_exp_string_still_reaches_capture(self):
+        """A global ``'exp'`` string must apply exp everywhere (no regression)."""
+        import numpyro.distributions as npd
+
+        from scribe.models.config import ModelConfig
+        from scribe.models.builders.posterior import (
+            get_posterior_distributions,
+        )
+
+        cfg = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            positive_transform="exp",
+        )
+        dists = get_posterior_distributions(
+            self._nbvcp_mean_odds_params(), cfg
+        )
+        for name in ("mu", "phi", "phi_capture"):
+            assert isinstance(
+                _leaf_transform(dists[name]), npd.transforms.ExpTransform
+            ), f"{name} should use exp under global positive_transform='exp'"

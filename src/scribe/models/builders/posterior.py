@@ -1893,41 +1893,82 @@ def get_posterior_distributions(
         )
 
     if isinstance(_pt_raw, dict):
-        _kinds_in_dict = set(_pt_raw.values()) or {"softplus"}
-        if len(_kinds_in_dict) == 1:
-            # Uniform dict — collapse to the single transform.
-            pos_transform = _kind_to_transform(next(iter(_kinds_in_dict)))
-        else:
-            # Mixed transforms.  Build a per-name resolver.  Honours
-            # ``ModelConfig.resolve_positive_transform`` which handles
-            # descriptive-alias normalization (e.g. ``"mean_expression"``
-            # → ``"mu"``).
-            def _resolver(_name: str) -> dist.transforms.Transform:
-                if hasattr(model_config, "resolve_positive_transform"):
-                    return _kind_to_transform(
-                        model_config.resolve_positive_transform(_name)
-                    )
-                # Fallback: direct dict lookup with softplus default.
+        # A ``positive_transform`` dict only *names* the transform for the
+        # parameters it lists; every unlisted positive parameter falls back to
+        # the model default (softplus) — exactly as the model factory and
+        # ``ModelConfig.resolve_positive_transform`` resolve them at fit time.
+        # We therefore decide uniform-vs-mixed by resolving the transform for
+        # this parameterization's *actual* positive parameters, NOT by counting
+        # distinct dict values.  The old ``len(set(values)) == 1`` test wrongly
+        # collapsed e.g. ``{"mu": "exp"}`` to a global ExpTransform, which then
+        # re-applied ``exp`` to the softplus-fit ``phi`` / ``r`` /
+        # ``phi_capture`` during reconstruction.  For VCP odds-family models
+        # that inflated ``phi_capture`` ~10x (exp(loc) vs softplus(loc)),
+        # halving the reconstructed capture and every MAP-based mean — while
+        # the sampling-based PPC, which goes through the real guide, stayed
+        # correct.
+        def _resolver(_name: str) -> dist.transforms.Transform:
+            if hasattr(model_config, "resolve_positive_transform"):
                 return _kind_to_transform(
-                    _pt_raw.get(_name, "softplus")
+                    model_config.resolve_positive_transform(_name)
                 )
+            # Fallback: direct dict lookup with softplus default.
+            return _kind_to_transform(_pt_raw.get(_name, "softplus"))
 
-            # Only TwoState posteriors thread the per-name resolver
-            # through.  Other base parameterizations still expect a
-            # single Transform; fail loud rather than silently emit
-            # wrong posterior shapes.
+        # Positive parameters whose reconstruction consumes ``pos_transform``,
+        # per parameterization.  For VCP odds-family models, capture is the
+        # positive ``phi_capture`` and must be included; sigmoid-based
+        # ``p_capture`` (other families) ignores the positive transform.
+        _pos_targets = {
+            Parameterization.CANONICAL: ["r"],
+            Parameterization.STANDARD: ["r"],
+            Parameterization.MEAN_PROB: ["mu"],
+            Parameterization.LINKED: ["mu"],
+            Parameterization.MEAN_ODDS: ["phi", "mu"],
+            Parameterization.ODDS_RATIO: ["phi", "mu"],
+        }.get(parameterization, [])
+        if (
+            _pos_targets
+            and parameterization
+            in (Parameterization.MEAN_ODDS, Parameterization.ODDS_RATIO)
+            and getattr(model_config, "uses_variable_capture", False)
+        ):
+            _pos_targets = _pos_targets + ["phi_capture"]
+
+        if _pos_targets and hasattr(
+            model_config, "resolve_positive_transform"
+        ):
+            _kinds = {
+                model_config.resolve_positive_transform(_t)
+                for _t in _pos_targets
+            }
+        else:
+            # Unknown target set (e.g. TwoState, LNM/PLN): preserve the legacy
+            # value-based collapse so their behavior is unchanged.
+            _kinds = set(_pt_raw.values()) or {"softplus"}
+
+        if len(_kinds) == 1:
+            # Genuinely uniform across this model's positive parameters.
+            pos_transform = _kind_to_transform(next(iter(_kinds)))
+        else:
+            # Mixed transforms — thread the per-name resolver.  Supported for
+            # the TwoState family and the odds-family (mean_odds / odds_ratio),
+            # whose Pass-1 builders resolve ``pos_transform`` per parameter.
             if parameterization not in (
                 Parameterization.TWO_STATE_NATURAL,
                 Parameterization.TWO_STATE_RATIO,
                 Parameterization.TWO_STATE_MEAN_FANO,
                 Parameterization.TWO_STATE_MOMENT_DELTA,
+                Parameterization.MEAN_ODDS,
+                Parameterization.ODDS_RATIO,
             ):
                 raise NotImplementedError(
-                    "Per-parameter positive_transform (dict form with "
-                    "mixed values) is only supported for the TwoState "
-                    "family in phase 1.  For other parameterizations, "
-                    "pass a single string (\"softplus\" or \"exp\") or "
-                    "a dict where all entries share the same value."
+                    "Per-parameter positive_transform (dict form with mixed "
+                    "effective transforms) is supported for the TwoState and "
+                    "odds-family (mean_odds / odds_ratio) parameterizations. "
+                    "For other parameterizations, pass a single string "
+                    "(\"softplus\" or \"exp\") or a dict whose listed values "
+                    "match the softplus default."
                 )
             pos_transform = _resolver
     else:
@@ -2070,14 +2111,15 @@ def get_posterior_distributions(
         parameterization,
         unconstrained,
         split,
-        # ``_apply_capture`` only uses the positive transform along the
-        # biology-informed branch (for ``eta_capture``).  TwoStateVCP
-        # phase-1 forbids that branch, so this resolution is a no-op
-        # there; for non-TwoState families ``pos_transform`` is
-        # guaranteed to already be a single Transform by the top-level
-        # mixed-dict guard in this function.
+        # ``_apply_capture`` consumes the positive transform on two branches:
+        # the odds-family ``phi_capture`` posterior (mean_odds / odds_ratio)
+        # and the biology-informed ``eta_capture`` posterior.  Resolve for the
+        # site this model actually builds so a mixed-dict resolver picks the
+        # capture parameter's own transform (softplus by default) rather than
+        # ``mu``'s.  The ``p_capture`` branch is sigmoid-based and ignores it.
         pos_transform=_resolve_pos_transform_for(
-            pos_transform, "eta_capture"
+            pos_transform,
+            "phi_capture" if _is_mean_odds_family else "eta_capture",
         ),
     )
     _apply_bnb_concentration(  # Pass 7b
@@ -2155,6 +2197,13 @@ def _apply_flow_posteriors(
 
     if pos_transform is None:
         pos_transform = dist.transforms.ExpTransform()
+    elif callable(pos_transform) and not isinstance(
+        pos_transform, dist.transforms.Transform
+    ):
+        # Per-name resolver (mixed positive_transform dict).  Flow params
+        # reconstruct a single positive base transform; resolve with the
+        # common positive target so the resolver collapses to one Transform.
+        pos_transform = pos_transform("mu")
 
     # ------------------------------------------------------------------
     # Per-parameter flows: flow_{name}$params  (non-mixture)
@@ -3317,12 +3366,20 @@ def _build_mean_odds_posteriors(
     distributions = {}
     skip = skip or set()
 
+    # ``phi`` and ``mu`` may use DIFFERENT positive transforms (e.g. the
+    # common ``positive_transform={"mean_expression": "exp"}`` leaves ``phi``
+    # on the softplus default).  Resolve each separately so a per-name resolver
+    # callable (mixed dict) maps to the correct transform; for a single
+    # ``Transform`` input ``_resolve_pos_transform_for`` is a no-op.
+    _pt_phi = _resolve_pos_transform_for(pos_transform, "phi")
+    _pt_mu = _resolve_pos_transform_for(pos_transform, "mu")
+
     if unconstrained:
         if "phi" not in skip:
             jp = _find_joint_prefix(params, "phi")
             if jp:
                 distributions["phi"] = _build_joint_low_rank_posterior(
-                    params, "phi", jp, split, transform=pos_transform
+                    params, "phi", jp, split, transform=_pt_phi
                 )
             elif "phi_W" in params:
                 distributions["phi"] = (
@@ -3331,7 +3388,7 @@ def _build_mean_odds_posteriors(
                         "phi",
                         is_mixture=False,
                         split=split,
-                        transform=pos_transform,
+                        transform=_pt_phi,
                     )
                 )
             else:
@@ -3341,13 +3398,13 @@ def _build_mean_odds_posteriors(
                     is_mixture=False,
                     split=split,
                     is_scalar=True,
-                    transform=pos_transform,
+                    transform=_pt_phi,
                 )
         if "mu" not in skip:
             jp = _find_joint_prefix(params, "mu")
             if jp:
                 distributions["mu"] = _build_joint_low_rank_posterior(
-                    params, "mu", jp, split, transform=pos_transform
+                    params, "mu", jp, split, transform=_pt_mu
                 )
             elif "mu_W" in params:
                 distributions["mu"] = _build_low_rank_positive_normal_posterior(
@@ -3355,7 +3412,7 @@ def _build_mean_odds_posteriors(
                     "mu",
                     is_mixture,
                     split,
-                    transform=pos_transform,
+                    transform=_pt_mu,
                 )
             else:
                 distributions["mu"] = _build_positive_normal_posterior(
@@ -3363,7 +3420,7 @@ def _build_mean_odds_posteriors(
                     "mu",
                     is_mixture,
                     split,
-                    transform=pos_transform,
+                    transform=_pt_mu,
                 )
     else:
         if "phi" not in skip:
