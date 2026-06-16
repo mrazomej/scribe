@@ -148,6 +148,7 @@ nav:
     - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
     - Hierarchical Gene-Specific p: theory/hierarchical-p.md
     - Beta Negative Binomial: theory/beta-negative-binomial.md
+    - Two-State Promoter (Poisson-Beta): theory/two-state-promoter.md
     - Anchoring Priors: theory/anchoring-priors.md
     - Hierarchical Priors: theory/hierarchical-priors.md
     - GRN Biophysics: theory/grn-biophysics.md
