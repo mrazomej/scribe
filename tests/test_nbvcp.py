@@ -118,13 +118,13 @@ def nbvcp_results(
         return _nbvcp_results_cache[key]
     # Configure JAX device
     if device_type == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+        os.environ["JAX_PLATFORMS"] = "cpu"
         import jax
 
         jax.config.update("jax_platform_name", "cpu")
     else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+        os.environ.pop("JAX_PLATFORMS", None)
+        os.environ.pop("JAX_PLATFORM_NAME", None)
     counts, _ = small_dataset
     # Set up priors based on parameterization (using new key names without "_prior" suffix)
     if parameterization == "standard":

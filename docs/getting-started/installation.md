@@ -65,6 +65,29 @@ To install docs + CLI/Hydra tooling together:
 uv sync --group dev --group docs --extra hydra
 ```
 
+## Paper analysis extras
+
+The `paper` dependency group adds optional tooling for paper figures and
+benchmarks. It includes `pertpy` and GPU-accelerated
+[rapids-singlecell](https://rapids-singlecell.readthedocs.io/) via the CUDA 12
+wheel stack, aligned with the project's `jax[cuda12]` install (NVIDIA driver
+525+, CUDA 12.x).
+
+```bash
+uv sync --group paper
+```
+
+This pulls `rapids-singlecell-cu12[rapids]` and RAPIDS dependencies (`cupy`,
+`cudf`, `cuml`, …) from PyPI and the
+[NVIDIA Python index](https://pypi.nvidia.com). The download is large (several GB).
+
+On GPU nodes, configure JAX before using either stack:
+
+```bash
+source scripts/setup_cuda_env.sh --gpu
+python -c "import jax, rapids_singlecell as rsc; print(jax.devices()); print(rsc.__version__)"
+```
+
 ## Breaking Change Note (Hydra Boundary)
 
 - Base `scribe` installs no longer require `hydra-core` or `omegaconf`.
@@ -75,10 +98,14 @@ uv sync --group dev --group docs --extra hydra
 ## GPU Support
 
 SCRIBE uses [JAX](https://jax.readthedocs.io/en/latest/) for GPU-accelerated
-computation. The default installation includes CUDA 12 support. If you are on a
-system without a GPU, JAX will automatically fall back to CPU execution.
+computation. The default installation includes CUDA 12 support via
+`jax[cuda12]` (NVIDIA driver 525+). If you are on a system without a GPU,
+JAX will automatically fall back to CPU execution.
 
-For specific JAX installation instructions (e.g., different CUDA versions or
+After `uv sync`, source `scripts/setup_cuda_env.sh` on GPU nodes to configure
+the environment and verify JAX can see your device.
+
+For specific JAX installation instructions (e.g., CPU-only installs or
 TPU support), see the
 [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).
 

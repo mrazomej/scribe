@@ -83,10 +83,15 @@ def _(mo):
 
 @app.cell
 def _(Path, scribe):
-    # Define data directory
-    data_dir = Path(
-        "/path/to/5050_jurkat-293t/"
-    )
+    # Load the local tutorial path configuration.
+    import json
+    with Path(__file__).with_name("tutorial_paths.local.json").open(
+        "r", encoding="utf-8"
+    ) as _f:
+        _data_root = json.load(_f)["SCRIBE_TUTORIAL_DATA_ROOT"]
+
+    # Build the dataset-specific path relative to the configured root.
+    data_dir = Path(_data_root).expanduser() / "5050_jurkat-293t"
 
     # Load the data
     adata = scribe.data_loader.load_and_preprocess_anndata(

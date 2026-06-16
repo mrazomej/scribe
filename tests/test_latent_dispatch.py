@@ -42,11 +42,11 @@ def _set_device(request):
     """Use --device (default: cpu) so these tests match the rest of the suite."""
     device = request.config.getoption("--device", default="cpu")
     if device == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+        os.environ["JAX_PLATFORMS"] = "cpu"
         jax.config.update("jax_platform_name", "cpu")
     else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+        os.environ.pop("JAX_PLATFORMS", None)
+        os.environ.pop("JAX_PLATFORM_NAME", None)
 
 
 @pytest.fixture

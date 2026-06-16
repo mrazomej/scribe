@@ -203,11 +203,11 @@ def trained_vae(request, vae_guide_family, model_config, small_counts, rng_key):
     """
     device_type = request.config.getoption("--device", default="cpu")
     if device_type == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+        os.environ["JAX_PLATFORMS"] = "cpu"
         jax.config.update("jax_platform_name", "cpu")
     else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+        os.environ.pop("JAX_PLATFORMS", None)
+        os.environ.pop("JAX_PLATFORM_NAME", None)
 
     params, losses = _build_and_train_vae(
         vae_guide_family, model_config, small_counts, rng_key

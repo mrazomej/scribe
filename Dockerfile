@@ -1,8 +1,6 @@
-# Use the NVIDIA JAX image as the base
-# FROM nvcr.io/nvidia/jax:25.04-py3
-# CUDA 12.6 compatible
-FROM ghcr.io/nvidia/jax:jax-2025-07-02  
-# FROM ghcr.io/nvidia/jax:jax  # Latest may have compatibility issues
+# Use the NVIDIA JAX image as the base.
+# Pin a recent tag when building; verify it matches jax[cuda12] in pyproject.toml.
+FROM ghcr.io/nvidia/jax:jax-2025-07-02
 
 # Install zsh and other required packages
 RUN apt-get update && apt-get install -y \
@@ -41,9 +39,7 @@ COPY src/ ./src/
 # Verify the directory structure
 RUN ls -la /app && ls -la /app/src && ls -la /app/src/scribe
 
-# JAX-Toolbox image should have compatible JAX/CUDA plugin versions
-# RUN --mount=type=cache,target=/root/.cache/uv \
-#     uv pip install --system --break-system-packages --upgrade jax-cuda12-plugin
+# Project deps (including jax[cuda13]) are installed from pyproject.toml below.
 
 # Install dependencies using uv with the system Python
 ENV PYTHONPATH=/usr/lib/python3/dist-packages

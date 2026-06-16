@@ -47,11 +47,11 @@ def pytest_configure(config):
     """Configure JAX device before any imports happen."""
     device = config.getoption("--device")
     if device == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+        os.environ["JAX_PLATFORMS"] = "cpu"
     else:
-        # Remove the environment variable to allow JAX to use GPU
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+        os.environ.pop("JAX_PLATFORMS", None)
+    # Legacy env var; ignored by JAX 0.10+ but clear it to avoid confusion.
+    os.environ.pop("JAX_PLATFORM_NAME", None)
 
 
 @pytest.fixture(scope="session")
