@@ -747,7 +747,7 @@ def _compare_empirical(
     mu_layout = param_layouts.get("mu") if param_layouts else None
     phi_layout = param_layouts.get("phi") if param_layouts else None
 
-    r_bio_A, _ = _slice_component(
+    r_bio_A, r_post_layout = _slice_component(
         r_samples_A, component_A, "A", layout=r_layout
     )
     r_bio_B, _ = _slice_component(
@@ -826,6 +826,13 @@ def _compare_empirical(
     del r_samples_A, r_samples_B, p_samples_A, p_samples_B
     del mu_samples_A, mu_samples_B, phi_samples_A, phi_samples_B
 
+    _composition_layouts = {}
+    if r_post_layout is not None:
+        _composition_layouts["r"] = r_post_layout
+    if p_post_layout is not None:
+        _composition_layouts["p"] = p_post_layout
+    _composition_layouts = _composition_layouts or None
+
     simplex_A, simplex_B = sample_compositions(
         r_samples_A=r_bio_A,
         r_samples_B=r_bio_B,
@@ -837,6 +844,7 @@ def _compare_empirical(
         batch_size=batch_size,
         p_samples_A=p_bio_A,
         p_samples_B=p_bio_B,
+        param_layouts=_composition_layouts,
     )
 
     # simplex_A/B and delta_samples are numpy (CPU) arrays -- the
