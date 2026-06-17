@@ -35,6 +35,66 @@ def _is_results_object(obj) -> bool:
     )
 
 
+def _resolve_de_param_layouts(results):
+    """Resolve canonical posterior layouts for DE component slicing.
+
+    Parameters
+    ----------
+    results : object
+        Fitted results object exposing posterior samples and model metadata.
+
+    Returns
+    -------
+    dict of str to AxisLayout or None
+        Canonical layout mapping keyed by posterior parameter names
+        (for example ``"r"``, ``"p"``, ``"mu"``, ``"phi"``). Returns
+        ``None`` when layouts cannot be resolved.
+    """
+    posterior_samples = getattr(results, "posterior_samples", None)
+    model_config = getattr(results, "model_config", None)
+
+    # Preferred path: build canonical posterior layouts from the actual
+    # posterior tensors. This yields keys DE expects ("r", "p", ...).
+    if posterior_samples is not None and model_config is not None:
+        n_genes = getattr(results, "n_genes", None)
+        if n_genes is None:
+            _r = posterior_samples.get("r")
+            if _r is not None and hasattr(_r, "shape") and len(_r.shape) >= 1:
+                n_genes = int(_r.shape[-1])
+
+        if n_genes is not None:
+            try:
+                from ..sampling import _build_canonical_layouts
+
+                canonical = _build_canonical_layouts(
+                    posterior_samples,
+                    model_config,
+                    n_genes=int(n_genes),
+                    n_cells=getattr(results, "n_cells", None),
+                    n_components=getattr(results, "n_components", None),
+                    has_sample_dim=True,
+                )
+            except Exception:
+                _log.debug(
+                    "Could not build canonical posterior layouts for DE; "
+                    "falling back to results.layouts when available.",
+                    exc_info=True,
+                )
+            else:
+                if canonical is not None and "r" in canonical:
+                    return canonical
+
+    # Backward-compat fallback for objects that already expose canonical
+    # layouts through results.layouts.
+    layouts_prop = getattr(results, "layouts", None)
+    if layouts_prop is not None:
+        fallback = dict(layouts_prop)
+        if "r" in fallback:
+            return fallback
+
+    return None
+
+
 def _extract_de_inputs(results, component=None):
     """Extract arrays and layout metadata needed by empirical DE.
 
@@ -69,13 +129,9 @@ def _extract_de_inputs(results, component=None):
     if results.var is not None:
         gene_names = results.var.index.tolist()
 
-    # Extract axis layouts from the results object.  Posterior samples
-    # have a leading draw dimension, so layouts already carry
-    # has_sample_dim=True via results.layouts.
-    param_layouts = None
-    layouts_prop = getattr(results, "layouts", None)
-    if layouts_prop is not None:
-        param_layouts = dict(layouts_prop)
+    # Resolve canonical posterior layouts (keys: r/p/mu/phi/...) so DE can
+    # slice components by semantic axis metadata instead of ndim heuristics.
+    param_layouts = _resolve_de_param_layouts(results)
 
     return (
         r_samples,

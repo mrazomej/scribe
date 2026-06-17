@@ -1079,8 +1079,9 @@ class TestCompareGeneMask:
 class _MockModelConfig:
     """Lightweight mock of ModelConfig with is_hierarchical property."""
 
-    def __init__(self, is_hierarchical=False):
+    def __init__(self, is_hierarchical=False, n_components=None):
         self._is_hierarchical = is_hierarchical
+        self.n_components = n_components
 
     @property
     def is_hierarchical(self):
@@ -1096,17 +1097,26 @@ class _MockResults:
         p_samples=None,
         gene_names=None,
         is_hierarchical=False,
+        layouts=None,
     ):
         self.posterior_samples = {"r": r_samples}
         if p_samples is not None:
             self.posterior_samples["p"] = p_samples
-        self.model_config = _MockModelConfig(is_hierarchical=is_hierarchical)
+        n_components = r_samples.shape[1] if r_samples.ndim == 3 else None
+        self.model_config = _MockModelConfig(
+            is_hierarchical=is_hierarchical, n_components=n_components
+        )
         import pandas as pd
 
         if gene_names is not None:
             self.var = pd.DataFrame(index=gene_names)
         else:
             self.var = None
+        self.n_genes = int(r_samples.shape[-1])
+        self.n_cells = 1
+        self.n_components = n_components
+        if layouts is not None:
+            self.layouts = layouts
 
 
 class TestResultsObjectDispatch:
@@ -1176,6 +1186,44 @@ class TestResultsObjectDispatch:
         result = de.gene_level(tau=0.0)
         assert result["delta_mean"].shape == (D,)
         assert np.all(np.isfinite(np.array(result["delta_mean"])))
+
+    def test_compare_builds_canonical_layouts_from_posterior_samples(
+        self, rng, scribe_caplog
+    ):
+        """Non-canonical results.layouts should not force DE ndim fallbacks."""
+        import logging
+
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        # Mimic legacy/non-canonical layout keys from results.layouts.
+        # DE should ignore these and derive canonical posterior layouts.
+        noncanonical_layouts = {
+            "mu_loc": object(),
+            "phi_scale": object(),
+        }
+        res_A = _MockResults(
+            r,
+            gene_names=names,
+            is_hierarchical=False,
+            layouts=noncanonical_layouts,
+        )
+        res_B = _MockResults(
+            r,
+            gene_names=names,
+            is_hierarchical=False,
+            layouts=noncanonical_layouts,
+        )
+
+        scribe_caplog.set_level(logging.WARNING, logger="scribe.de._empirical")
+        de = compare(res_A, res_B, method="empirical", rng_key=rng)
+        result = de.gene_level(tau=0.0)
+
+        assert result["delta_mean"].shape == (D,)
+        assert not any(
+            "_slice_component" in record.message for record in scribe_caplog.records
+        )
 
     def test_gene_names_auto_extracted(self, rng):
         """Gene names are taken from results.var.index when not provided."""
