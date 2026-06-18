@@ -957,6 +957,115 @@ def _apply_gene_level_mu_hierarchy(
         )
 
 
+def _resolve_multifactor_mu_factors(
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    target: str,
+) -> List[Tuple[Any, str]]:
+    """Return ``[(factor, site_prefix), ...]`` for the multi-factor mu/r prior.
+
+    The additive multi-factor decomposition (see :func:`_multifactor_hier` in
+    the preset factory) applies only when the grouping spec has more than one
+    factor and at least one factor carries a non-"none" expression family.  The
+    per-factor NumPyro site prefix mirrors ``_multifactor_site_prefix`` exactly
+    (``f"{target}_{name.replace(':', '__')}"``).  Returns an empty list when the
+    fit is not a multi-factor expression model, so callers fall back to the
+    single-axis dataset-hierarchy path.
+    """
+    gs = getattr(model_config, "grouping_spec", None)
+    factors = getattr(gs, "factors", ()) if gs is not None else ()
+    if len(factors) <= 1:
+        return []
+    resolved: List[Tuple[Any, str]] = []
+    for fac in factors:
+        if fac.priors.get("expression", "none") == "none":
+            continue
+        prefix = f"{target}_{fac.name.replace(':', '__')}"
+        if f"{prefix}_raw_loc" in params:
+            resolved.append((fac, prefix))
+    return resolved
+
+
+def _build_multifactor_leaf_posterior(
+    params: Dict[str, jnp.ndarray],
+    mf_factors: List[Tuple[Any, str]],
+    hyper_loc: str,
+    is_mixture: bool,
+    split: bool,
+    *,
+    transform=None,
+) -> Union[dist.Distribution, List[dist.Distribution]]:
+    """Reconstruct the leaf-level mu/r posterior for the multi-factor hierarchy.
+
+    Mirrors :meth:`MultiFactorNormalWithTransformSpec.sample_hierarchical` but
+    on the variational *parameters* instead of in a trace: the unconstrained
+    leaf location is the population intercept plus a sum of per-factor zero-mean
+    effects gathered onto the leaf axis::
+
+        acc^(leaf) = loc + sum_f  scale_f * z_f[level_f(leaf)]
+        mu^(leaf)  = transform(acc^(leaf))
+
+    Each latent is mean-field Normal in unconstrained space, so the assembled
+    leaf location/variance are sums of the component locations/variances (the
+    factor scale ``scale_f`` enters as a point estimate: the fixed constant for
+    a fixed effect, ``softplus(loc)`` for a gaussian random effect, or the
+    regularized-horseshoe combination of the trio's medians).  The result is a
+    ``TransformedDistribution(Normal(acc_loc, acc_std), transform)`` of shape
+    ``(K?, n_leaves, G)`` — the same shape the single-axis dataset hierarchy
+    produces, so downstream MAP / canonical conversion is unchanged.
+    """
+    n_lead = 1 if is_mixture else 0
+
+    loc_loc = params[f"{hyper_loc}_loc"]  # (K?, G)
+    loc_scale = params[f"{hyper_loc}_scale"]  # (K?, G)
+
+    # Insert the leaf axis right after any leading (component) axes so it
+    # broadcasts against the per-leaf gathered effects -> (K?, 1, G).
+    acc_loc = jnp.expand_dims(loc_loc, axis=n_lead)
+    acc_var = jnp.expand_dims(jnp.asarray(loc_scale) ** 2, axis=n_lead)
+
+    for fac, prefix in mf_factors:
+        raw_loc = params[f"{prefix}_raw_loc"]  # (K?, L_f, G)
+        raw_scale = params[f"{prefix}_raw_scale"]  # (K?, L_f, G)
+        family = fac.priors.get("expression", "none")
+
+        if fac.effect_type == "fixed":
+            scale = fac.fixed_scale if fac.fixed_scale is not None else 1.0
+        elif family == "gaussian":
+            # SoftplusNormal scale site -> median point estimate softplus(loc).
+            scale = jnp.logaddexp(0.0, params[f"{prefix}_scale_loc"])
+        elif family == "horseshoe":
+            # LogNormal hyper-posteriors -> median exp(loc); per-gene lambda.
+            tau = jnp.exp(params[f"tau_{prefix}_loc"])
+            lam = jnp.exp(params[f"lambda_{prefix}_loc"])
+            c_sq = jnp.exp(params[f"c_sq_{prefix}_loc"])
+            scale = tau * jnp.sqrt(c_sq) * lam / jnp.sqrt(
+                c_sq + tau**2 * lam**2
+            )
+        else:  # neg or unknown — not emitted by the factory for multi-factor.
+            raise NotImplementedError(
+                f"multi-factor expression family {family!r} for factor "
+                f"{fac.name!r} has no analytic MAP reconstruction; use "
+                "get_posterior_samples()-based summaries instead."
+            )
+
+        effect_loc = scale * raw_loc
+        effect_var = (scale**2) * jnp.asarray(raw_scale) ** 2
+        level_idx = jnp.asarray(fac.leaf_to_level)
+        acc_loc = acc_loc + jnp.take(effect_loc, level_idx, axis=n_lead)
+        acc_var = acc_var + jnp.take(effect_var, level_idx, axis=n_lead)
+
+    if transform is None:
+        transform = dist.transforms.ExpTransform()
+    base = dist.Normal(acc_loc, jnp.sqrt(acc_var))
+    posterior = dist.TransformedDistribution(base, transform)
+    if split:
+        return _split_transformed_distribution(
+            posterior, acc_loc.shape, is_mixture
+        )
+    return posterior
+
+
 def _apply_dataset_hierarchy_mu(
     distributions: Dict[str, Any],
     params: Dict[str, jnp.ndarray],
@@ -999,6 +1108,22 @@ def _apply_dataset_hierarchy_mu(
         hyper_scale = "log_mu_dataset_scale"
         target = "mu"
         hs_prefix = "mu_dataset"
+
+    # Multi-factor additive expression hierarchy: the leaf parameter is the
+    # population intercept plus a sum of per-factor effects (no single
+    # ``{hyper_scale}`` site), so reconstruct it directly rather than via the
+    # single-axis dataset-hierarchy builders below.
+    mf_factors = _resolve_multifactor_mu_factors(params, model_config, target)
+    if mf_factors:
+        distributions[target] = _build_multifactor_leaf_posterior(
+            params,
+            mf_factors,
+            hyper_loc,
+            is_mixture,
+            split,
+            transform=pos_transform,
+        )
+        return
 
     if horseshoe_dataset_mu:
         raw_name = f"{target}_raw"
