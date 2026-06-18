@@ -73,6 +73,31 @@ def _build_cell_specific_keys(
 class DatasetMixin:
     """Mixin providing dataset subsetting for MCMC multi-dataset models."""
 
+    def get_group(self, **factor_levels):
+        """Slice the leaf grid by fixed grouping-factor level(s).
+
+        For a multi-factor fit, returns a :class:`GroupView` over the leaves
+        whose coordinates match the given ``factor=level`` filters — e.g.
+        ``results.get_group(sample="D3")`` yields that sample's leaves across
+        the remaining (contrast) factor, indexable as ``g["control"]`` /
+        ``g["panobinostat"]``. Works for N-level contrasts, not just pairs.
+        """
+        from ..core.grouping_view import get_group as _get_group
+
+        return _get_group(self, **factor_levels)
+
+    def iter_groups(self, by: str):
+        """Yield ``(level, GroupView)`` for each present level of ``by``."""
+        from ..core.grouping_view import iter_groups as _iter_groups
+
+        return _iter_groups(self, by)
+
+    def group_levels(self, factor: str):
+        """Present levels of a base grouping ``factor``, in declared order."""
+        from ..core.grouping_view import group_levels as _group_levels
+
+        return _group_levels(self, factor)
+
     def get_dataset(self, dataset_index: int) -> "ScribeMCMCResults":
         """Extract a single-dataset view from multi-dataset MCMC results.
 
