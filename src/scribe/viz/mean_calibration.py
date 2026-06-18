@@ -41,7 +41,9 @@ from ._common import _is_pln_model, console
 from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
+    _resolve_factor_grid,
     _resolve_panel_grid,
+    _viz_opts_get,
     plot_function,
 )
 from .dispatch import _get_layouts_for_plot, _get_map_estimates_for_plot
@@ -407,6 +409,7 @@ def _compute_per_dataset_means(
         results.append(
             {
                 "name": name,
+                "code": int(d),
                 "obs_mean": obs_mean,
                 "pred_mean": pred_mean,
             }
@@ -1259,12 +1262,24 @@ def plot_mean_calibration(
     n_rows : int, optional
         Number of grid rows for multi-dataset panels.  Overrides
         ``viz_cfg.mean_calibration_opts.n_rows``.  When ``n_cols`` is
-        ``None``, columns are ``ceil(n_panels / n_rows)``.
+        ``None``, columns are ``ceil(n_panels / n_rows)``.  Passing either
+        ``n_rows`` or ``n_cols`` opts out of the factor-structured layout (see
+        below) in favour of a generic wrapped grid.
     n_cols : int, optional
         Number of grid columns for multi-dataset panels.  Overrides
         ``viz_cfg.mean_calibration_opts.n_cols``.  When ``n_rows`` is
         ``None``, rows are ``ceil(n_panels / n_cols)``.  Ignored for
         single-dataset plots.
+
+    Notes
+    -----
+    When the fit is a crossed hierarchy with exactly two base grouping factors
+    (``results.model_config.grouping_spec``) and no explicit layout override,
+    panels are arranged on a factor x factor grid: the factor with fewer levels
+    indexes the rows and the other indexes the columns, so the panel at
+    ``(row, col)`` is the present leaf for that level combination.  Absent
+    combinations leave their cell blank.  Any explicit ``n_rows`` / ``n_cols``
+    (kwarg or ``viz_cfg``) reverts to the generic wrapped grid.
 
     Returns
     -------
@@ -1292,19 +1307,34 @@ def plot_mean_calibration(
         is_multi_dataset = (
             _n_datasets >= 2 and _ds_idx is not None and ax is None
         )
+    _grouping_spec = getattr(
+        getattr(results, "model_config", None), "grouping_spec", None
+    )
     if is_multi_dataset:
         if dataset_codes is None and _ds_idx is not None:
             dataset_codes = np.asarray(_ds_idx)
         if dataset_names is None and dataset_codes is not None:
-            _n_ds = max(
-                int(np.max(np.asarray(dataset_codes, dtype=int))) + 1,
-                _n_datasets,
-            )
-            dataset_names = [f"dataset_{i}" for i in range(_n_ds)]
-            console.print(
-                f"[dim]Per-dataset mean calibration enabled ({_n_ds} "
-                "datasets); pass dataset_names=[...] for category labels.[/dim]"
-            )
+            # Prefer the model's leaf labels (e.g. "control | D1") over generic
+            # ``dataset_{i}`` so a multi-factor hierarchy self-labels its panels.
+            _leaf_labels = getattr(_grouping_spec, "leaf_labels", None)
+            if _leaf_labels is not None:
+                dataset_names = list(_leaf_labels)
+                console.print(
+                    f"[dim]Per-dataset mean calibration enabled "
+                    f"({len(dataset_names)} leaves); labelled from the "
+                    "grouping spec.[/dim]"
+                )
+            else:
+                _n_ds = max(
+                    int(np.max(np.asarray(dataset_codes, dtype=int))) + 1,
+                    _n_datasets,
+                )
+                dataset_names = [f"dataset_{i}" for i in range(_n_ds)]
+                console.print(
+                    f"[dim]Per-dataset mean calibration enabled ({_n_ds} "
+                    "datasets); pass dataset_names=[...] for category "
+                    "labels.[/dim]"
+                )
 
     if ax is not None and is_multi_dataset:
         raise ValueError(
@@ -1327,44 +1357,131 @@ def plot_mean_calibration(
     if prep["mode"] == "multi_dataset":
         ds_results = prep["ds_results"]
         n_panels = len(ds_results)
-        grid = _resolve_panel_grid(
-            n_panels=n_panels,
-            n_rows=n_rows,
-            n_cols=n_cols,
-            viz_cfg=viz_cfg,
-        )
-        n_grid_rows = grid["n_rows"]
-        n_grid_cols = grid["n_cols"]
-        console.print(
-            f"[dim]Using n_rows={n_grid_rows}, n_cols={n_grid_cols} for "
-            f"mean-calibration ({n_panels} datasets)[/dim]"
-        )
-        fig, _, axes_flat = _create_or_validate_grid_axes(
-            n_rows=n_grid_rows,
-            n_cols=n_grid_cols,
-            fig=fig,
-            axes=axes,
-            figsize=figsize or (5.5 * n_grid_cols, 5.0 * n_grid_rows),
-        )
         colors = plt.cm.Set2(np.linspace(0, 1, max(n_panels, 2)))
-        for i, panel_ax in enumerate(axes_flat):
-            if i >= n_panels:
+
+        # Dispatch on the model: a crossed 2-factor hierarchy lays panels out
+        # on a factor x factor grid (rows = one factor's levels, cols = the
+        # other's) so paired contrasts read down a column.  Any explicit layout
+        # override (kwarg or viz_cfg) opts back into the generic wrapped grid.
+        _cfg_rows = _viz_opts_get(viz_cfg, "mean_calibration_opts", "n_rows", None)
+        _cfg_cols = _viz_opts_get(viz_cfg, "mean_calibration_opts", "n_cols", None)
+        _has_override = any(
+            v is not None for v in (n_rows, n_cols, _cfg_rows, _cfg_cols)
+        )
+        factor_grid = None
+        if not _has_override:
+            factor_grid = _resolve_factor_grid(_grouping_spec)
+            # Trust it only if every panel's leaf code maps into the grid.
+            if factor_grid is not None and not all(
+                ds.get("code") in factor_grid["leaf_to_cell"] for ds in ds_results
+            ):
+                factor_grid = None
+
+        if factor_grid is not None:
+            n_grid_rows = factor_grid["n_rows"]
+            n_grid_cols = factor_grid["n_cols"]
+            console.print(
+                f"[dim]Factor-structured layout: rows="
+                f"{factor_grid['row_factor']} ({n_grid_rows}), cols="
+                f"{factor_grid['col_factor']} ({n_grid_cols})[/dim]"
+            )
+            fig, axes2d, axes_flat = _create_or_validate_grid_axes(
+                n_rows=n_grid_rows,
+                n_cols=n_grid_cols,
+                fig=fig,
+                axes=axes,
+                figsize=figsize or (5.5 * n_grid_cols, 5.0 * n_grid_rows),
+            )
+            # Hide every cell first; turn on only those holding a present leaf.
+            for panel_ax in axes_flat:
                 panel_ax.axis("off")
-                continue
-            ds = ds_results[i]
-            _scatter_panel(
-                panel_ax,
-                ds["obs_mean"],
-                ds["pred_mean"],
-                color=colors[i],
+
+            # Edge-most occupied cells drive axis labels (robust to holes).
+            occupied = set(factor_grid["leaf_to_cell"].values())
+            bottom_by_col, top_by_col, left_by_row = {}, {}, {}
+            for ri, ci in occupied:
+                bottom_by_col[ci] = max(bottom_by_col.get(ci, -1), ri)
+                top_by_col[ci] = min(top_by_col.get(ci, n_grid_rows), ri)
+                left_by_row[ri] = min(left_by_row.get(ri, n_grid_cols), ci)
+
+            for i, ds in enumerate(ds_results):
+                ri, ci = factor_grid["leaf_to_cell"][ds["code"]]
+                panel_ax = axes2d[ri, ci]
+                panel_ax.axis("on")
+                _scatter_panel(
+                    panel_ax,
+                    ds["obs_mean"],
+                    ds["pred_mean"],
+                    color=colors[i],
+                )
+                if ci == left_by_row.get(ri):
+                    panel_ax.set_ylabel(
+                        r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$"
+                    )
+                if ri == bottom_by_col.get(ci):
+                    panel_ax.set_xlabel(
+                        r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$"
+                    )
+
+            # Column headers (col-factor level) above each column's top panel.
+            for ci, lv in enumerate(factor_grid["col_levels"]):
+                if ci in top_by_col:
+                    axes2d[top_by_col[ci], ci].set_title(
+                        f"{factor_grid['col_factor']} = {lv}", fontsize=10
+                    )
+            # Row headers (row-factor level) left of each row's first panel.
+            for ri, lv in enumerate(factor_grid["row_levels"]):
+                if ri in left_by_row:
+                    axes2d[ri, left_by_row[ri]].annotate(
+                        f"{factor_grid['row_factor']} = {lv}",
+                        xy=(0.0, 0.5),
+                        xycoords="axes fraction",
+                        xytext=(-48, 0),
+                        textcoords="offset points",
+                        ha="right",
+                        va="center",
+                        rotation=90,
+                        fontsize=10,
+                        fontweight="bold",
+                    )
+        else:
+            grid = _resolve_panel_grid(
+                n_panels=n_panels,
+                n_rows=n_rows,
+                n_cols=n_cols,
+                viz_cfg=viz_cfg,
             )
-            panel_ax.set_xlabel(
-                r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$"
+            n_grid_rows = grid["n_rows"]
+            n_grid_cols = grid["n_cols"]
+            console.print(
+                f"[dim]Using n_rows={n_grid_rows}, n_cols={n_grid_cols} for "
+                f"mean-calibration ({n_panels} datasets)[/dim]"
             )
-            panel_ax.set_ylabel(
-                r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$"
+            fig, _, axes_flat = _create_or_validate_grid_axes(
+                n_rows=n_grid_rows,
+                n_cols=n_grid_cols,
+                fig=fig,
+                axes=axes,
+                figsize=figsize or (5.5 * n_grid_cols, 5.0 * n_grid_rows),
             )
-            panel_ax.set_title(ds["name"], fontsize=10)
+            for i, panel_ax in enumerate(axes_flat):
+                if i >= n_panels:
+                    panel_ax.axis("off")
+                    continue
+                ds = ds_results[i]
+                _scatter_panel(
+                    panel_ax,
+                    ds["obs_mean"],
+                    ds["pred_mean"],
+                    color=colors[i],
+                )
+                panel_ax.set_xlabel(
+                    r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$"
+                )
+                panel_ax.set_ylabel(
+                    r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$"
+                )
+                panel_ax.set_title(ds["name"], fontsize=10)
 
     # ---- Single-dataset (with or without mixture) ---------------------------
     else:

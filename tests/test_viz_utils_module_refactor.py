@@ -3605,6 +3605,234 @@ def test_plot_mean_calibration_multi_dataset_grid(monkeypatch):
 
 
 # -----------------------------------------------------------------------
+# Factor-structured panel layout (_resolve_factor_grid + dispatch)
+# -----------------------------------------------------------------------
+
+_GROUPING_PRIORS = {
+    t: "none"
+    for t in ("expression", "prob", "zero_inflation", "overdispersion", "regime")
+}
+
+
+def _make_grouping_spec(condition, donor):
+    """Build a crossed condition x donor GroupingSpec from per-cell columns."""
+    import pandas as pd
+
+    from scribe.models.config.grouping import normalize_grouping
+
+    obs = pd.DataFrame({"condition": condition, "donor": donor})
+    return normalize_grouping(
+        dataset_key=["condition", "donor"],
+        hierarchy=None,
+        interactions=None,
+        obs=obs,
+        dataset_priors=_GROUPING_PRIORS,
+    )
+
+
+def test_resolve_factor_grid_two_factors():
+    """A 2-factor crossed spec maps to a fewer-levels-as-rows grid."""
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    # condition (2 levels) x donor (3 levels), fully crossed.
+    spec, _ = _make_grouping_spec(
+        condition=["control", "drug"] * 3,
+        donor=["D1", "D1", "D2", "D2", "D3", "D3"],
+    )
+    grid = _resolve_factor_grid(spec)
+    assert grid["row_factor"] == "condition"  # fewer levels -> rows
+    assert grid["col_factor"] == "donor"
+    assert grid["n_rows"] == 2
+    assert grid["n_cols"] == 3
+    # Complete crossed design -> every cell occupied exactly once.
+    cells = list(grid["leaf_to_cell"].values())
+    assert len(cells) == 6
+    assert len(set(cells)) == 6
+    # Each leaf lands at the cell matching its factor coordinates.
+    coords = spec.leaf_coords()
+    for leaf, (ri, ci) in grid["leaf_to_cell"].items():
+        assert grid["row_levels"][ri] == coords[leaf]["condition"]
+        assert grid["col_levels"][ci] == coords[leaf]["donor"]
+
+
+def test_resolve_factor_grid_incomplete_crossed():
+    """A missing level combination simply leaves its cell unmapped."""
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    # drug | D2 is absent -> 5 leaves in a 2x3 grid.
+    spec, _ = _make_grouping_spec(
+        condition=["control", "drug", "control", "control", "drug"],
+        donor=["D1", "D1", "D2", "D3", "D3"],
+    )
+    grid = _resolve_factor_grid(spec)
+    assert grid["n_rows"] == 2
+    assert grid["n_cols"] == 3
+    assert len(grid["leaf_to_cell"]) == 5
+    occupied = set(grid["leaf_to_cell"].values())
+    missing = (
+        grid["row_levels"].index("drug"),
+        grid["col_levels"].index("D2"),
+    )
+    assert missing not in occupied
+
+
+def test_resolve_factor_grid_single_factor_returns_none():
+    """A single base factor has no 2-D structure -> generic grid."""
+    import pandas as pd
+
+    from scribe.models.config.grouping import normalize_grouping
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    spec, _ = normalize_grouping(
+        dataset_key=["donor"],
+        hierarchy=None,
+        interactions=None,
+        obs=pd.DataFrame({"donor": ["D1", "D2", "D3"]}),
+        dataset_priors=_GROUPING_PRIORS,
+    )
+    assert _resolve_factor_grid(spec) is None
+
+
+def test_resolve_factor_grid_three_factors_returns_none():
+    """More than two base factors falls back to the generic grid."""
+    import pandas as pd
+
+    from scribe.models.config.grouping import normalize_grouping
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    obs = pd.DataFrame(
+        {
+            "condition": ["control", "drug", "control", "drug"],
+            "donor": ["D1", "D1", "D2", "D2"],
+            "batch": ["b1", "b1", "b2", "b2"],
+        }
+    )
+    spec, _ = normalize_grouping(
+        dataset_key=["condition", "donor", "batch"],
+        hierarchy=None,
+        interactions=None,
+        obs=obs,
+        dataset_priors=_GROUPING_PRIORS,
+    )
+    assert _resolve_factor_grid(spec) is None
+
+
+def test_resolve_factor_grid_none_and_mock_safe():
+    """``None`` and structurally-foreign objects resolve to ``None``."""
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    assert _resolve_factor_grid(None) is None
+    assert _resolve_factor_grid(MagicMock()) is None
+
+
+def _fake_multi_dataset_prep(ds_results):
+    def _prep(*_args, **_kwargs):
+        return {
+            "mode": "multi_dataset",
+            "ds_results": ds_results,
+            "obs_mean": None,
+            "pred_mean": None,
+            "is_mixture": False,
+            "annotations": [],
+        }
+
+    return _prep
+
+
+def test_plot_mean_calibration_factor_grid_complete(monkeypatch):
+    """A complete 2-factor hierarchy lays panels on a factor x factor grid."""
+    import scribe.viz.mean_calibration as mc
+
+    spec, leaf_index = _make_grouping_spec(
+        condition=["control", "drug"] * 3,
+        donor=["D1", "D1", "D2", "D2", "D3", "D3"],
+    )
+    genes = np.array([1.0, 2.0, 3.0])
+    ds_results = [
+        {
+            "name": spec.leaf_labels[leaf],
+            "code": leaf,
+            "obs_mean": genes,
+            "pred_mean": genes,
+        }
+        for leaf in range(spec.n_leaves)
+    ]
+    monkeypatch.setattr(
+        mc, "_prepare_calibration_data", _fake_multi_dataset_prep(ds_results)
+    )
+
+    class _FakeResults:
+        n_components = 1
+        model_config = MagicMock(
+            n_datasets=spec.n_leaves,
+            uses_variable_capture=False,
+            grouping_spec=spec,
+        )
+        _dataset_indices = np.asarray(leaf_index)
+
+    result = mc.plot_mean_calibration(
+        _FakeResults(),
+        counts=np.ones((6, 3)),
+        is_multi_dataset=True,
+        save=False,
+    )
+    # condition (2 rows) x donor (3 cols) -> 6 axes, all occupied.
+    assert result.n_panels == 6
+    assert len(result.axes) == 6
+    assert all(ax.axison for ax in result.axes)
+    plt.close(result.fig)
+
+
+def test_plot_mean_calibration_factor_grid_incomplete(monkeypatch):
+    """A missing donor x condition cell is rendered as a blank (off) panel."""
+    import scribe.viz.mean_calibration as mc
+    from scribe.viz._interactive import _resolve_factor_grid
+
+    # drug | D2 absent -> 5 present leaves in a 2x3 grid.
+    spec, leaf_index = _make_grouping_spec(
+        condition=["control", "drug", "control", "control", "drug"],
+        donor=["D1", "D1", "D2", "D3", "D3"],
+    )
+    genes = np.array([1.0, 2.0, 3.0])
+    ds_results = [
+        {
+            "name": spec.leaf_labels[leaf],
+            "code": leaf,
+            "obs_mean": genes,
+            "pred_mean": genes,
+        }
+        for leaf in range(spec.n_leaves)
+    ]
+    monkeypatch.setattr(
+        mc, "_prepare_calibration_data", _fake_multi_dataset_prep(ds_results)
+    )
+
+    class _FakeResults:
+        n_components = 1
+        model_config = MagicMock(
+            n_datasets=spec.n_leaves,
+            uses_variable_capture=False,
+            grouping_spec=spec,
+        )
+        _dataset_indices = np.asarray(leaf_index)
+
+    result = mc.plot_mean_calibration(
+        _FakeResults(),
+        counts=np.ones((5, 3)),
+        is_multi_dataset=True,
+        save=False,
+    )
+    grid = _resolve_factor_grid(spec)
+    assert result.n_panels == 6  # full 2x3 grid of axes
+    # Exactly the one absent combination is turned off.
+    off = [i for i, ax in enumerate(result.axes) if not ax.axison]
+    miss_r = grid["row_levels"].index("drug")
+    miss_c = grid["col_levels"].index("D2")
+    assert off == [miss_r * grid["n_cols"] + miss_c]
+    plt.close(result.fig)
+
+
+# -----------------------------------------------------------------------
 # get_ppc_render_options viz_cfg=None safety
 # -----------------------------------------------------------------------
 

@@ -837,6 +837,81 @@ def _resolve_panel_grid(
     return {"n_rows": auto_rows, "n_cols": auto_cols}
 
 
+def _resolve_factor_grid(grouping_spec):
+    """Resolve a 2-D, factor-structured panel layout from a grouping spec.
+
+    For a crossed design with **exactly two** base grouping factors (for
+    example ``condition`` x ``donor``), arrange panels on a grid whose rows
+    index the levels of one factor and whose columns index the levels of the
+    other, so the leaf at ``(row, col)`` is the present combination of those
+    two levels.  The factor with *fewer* present levels becomes the rows (ties
+    resolved by declaration order), which keeps a paired contrast aligned
+    vertically within each column.
+
+    Returns ``None`` whenever no 2-factor structure applies — no spec, a single
+    base factor, more than two base factors, or any structural surprise (e.g. a
+    mock object) — signalling the caller to fall back to the generic wrapped
+    grid from :func:`_resolve_panel_grid`.
+
+    Parameters
+    ----------
+    grouping_spec : GroupingSpec-like or None
+        Object exposing ``base_factors`` (each with ``name`` and ``levels``)
+        and ``leaf_coords()``.  Duck-typed and defensively guarded.
+
+    Returns
+    -------
+    dict or None
+        ``{"n_rows", "n_cols", "row_factor", "col_factor", "row_levels",
+        "col_levels", "leaf_to_cell"}`` where ``leaf_to_cell`` maps each leaf
+        index to its ``(row, col)`` grid position.  ``None`` when inapplicable.
+    """
+    if grouping_spec is None:
+        return None
+    try:
+        bases = tuple(grouping_spec.base_factors)
+        if len(bases) != 2:
+            return None
+        coords = grouping_spec.leaf_coords()
+
+        def _present_levels(factor):
+            seen = {c.get(factor.name) for c in coords}
+            return [lv for lv in factor.levels if lv in seen]
+
+        f0, f1 = bases
+        lv0, lv1 = _present_levels(f0), _present_levels(f1)
+        if not lv0 or not lv1:
+            return None
+
+        # Fewer present levels -> rows; ties keep the first-declared as rows.
+        if len(lv1) < len(lv0):
+            f_row, row_levels, f_col, col_levels = f1, lv1, f0, lv0
+        else:
+            f_row, row_levels, f_col, col_levels = f0, lv0, f1, lv1
+
+        row_pos = {lv: i for i, lv in enumerate(row_levels)}
+        col_pos = {lv: i for i, lv in enumerate(col_levels)}
+        leaf_to_cell = {}
+        for leaf, c in enumerate(coords):
+            rl, cl = c.get(f_row.name), c.get(f_col.name)
+            if rl not in row_pos or cl not in col_pos:
+                return None
+            leaf_to_cell[leaf] = (row_pos[rl], col_pos[cl])
+    except (AttributeError, TypeError, KeyError, ValueError):
+        # Any structural mismatch (including mock objects) -> generic grid.
+        return None
+
+    return {
+        "n_rows": len(row_levels),
+        "n_cols": len(col_levels),
+        "row_factor": f_row.name,
+        "col_factor": f_col.name,
+        "row_levels": row_levels,
+        "col_levels": col_levels,
+        "leaf_to_cell": leaf_to_cell,
+    }
+
+
 def _resolve_ppc_grid(
     *,
     n_rows=None,
