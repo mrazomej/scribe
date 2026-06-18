@@ -98,6 +98,13 @@ class GroupLevel(BaseModel):
     effect_type: str = Field("random")
     fixed_scale: Optional[float] = None
 
+    def __init__(self, name: Optional[str] = None, **data):
+        # Allow the ergonomic positional form ``GroupLevel("treatment")`` in
+        # addition to the keyword form ``GroupLevel(name="treatment")``.
+        if name is not None:
+            data["name"] = name
+        super().__init__(**data)
+
     @field_validator("effect_type")
     @classmethod
     def _check_effect_type(cls, v: str) -> str:

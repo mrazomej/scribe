@@ -71,6 +71,15 @@ def test_grouplevel_fixed_scale_positive():
         GroupLevel(name="t", effect_type="fixed", fixed_scale=-1.0)
 
 
+def test_grouplevel_positional_and_keyword_name():
+    # Positional ergonomic form.
+    assert GroupLevel("treatment").name == "treatment"
+    gl = GroupLevel("treatment", effect_type="fixed", fixed_scale=0.5)
+    assert gl.name == "treatment" and gl.effect_type == "fixed"
+    # Keyword form still works.
+    assert GroupLevel(name="sample").name == "sample"
+
+
 # ------------------------------------------------------------------------------
 # resolve_dataset_prior_dict
 # ------------------------------------------------------------------------------
