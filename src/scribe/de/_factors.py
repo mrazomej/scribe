@@ -311,6 +311,7 @@ def compare_groups(
         contrib = w * np.asarray(arr, dtype=float)
         acc[key] = contrib if acc[key] is None else acc[key] + contrib
 
+    last_pair = None
     for w, (_pv, leaf_A, leaf_B) in zip(weights, present):
         de_pair = compare(
             model_A=working.get_dataset(leaf_A),
@@ -320,6 +321,7 @@ def compare_groups(
             compute_biological=compute_biological,
             **kwargs,
         )
+        last_pair = de_pair
         if gene_names is None:
             gene_names = de_pair.gene_names
         _accumulate("delta_samples", w, de_pair.delta_samples)
@@ -331,7 +333,7 @@ def compare_groups(
 
     label_A = f"{factor_name}={level_A}"
     label_B = f"{factor_name}={level_B}"
-    return ScribeEmpiricalDEResults(
+    result = ScribeEmpiricalDEResults(
         delta_samples=_final("delta_samples"),
         gene_names=gene_names,
         label_A=label_A,
@@ -339,3 +341,14 @@ def compare_groups(
         method="empirical",
         **{k: _final(k) for k in _ARM_FIELDS},
     )
+
+    # The aggregated mu_map vectors are full-gene length (like compare()'s),
+    # while delta_samples / gene_names are kept-gene length when a gene_mask
+    # pools the rest into "other". Propagate the pairs' (shared) mask bookkeeping
+    # so to_dataframe() masks the per-arm vectors down to the kept genes instead
+    # of raising a length mismatch on the dropped "other" pseudo-gene.
+    if last_pair is not None:
+        result._gene_mask = getattr(last_pair, "_gene_mask", None)
+        result._all_gene_names = getattr(last_pair, "_all_gene_names", None)
+
+    return result

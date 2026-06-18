@@ -279,3 +279,39 @@ def test_compare_groups_drops_arm_field_missing_in_any_pair(
     de = compare_groups(results, "perturbation", "control", "drug")
     assert de.mu_map_A is None  # dropped (one pair lacked it)
     np.testing.assert_allclose(de.mu_map_B, 4.0)  # still aggregated
+
+
+def test_compare_groups_propagates_gene_mask(complete_spec, monkeypatch):
+    """The pairs' shared gene-mask bookkeeping is carried to the result.
+
+    compare() stores mu_map at full-gene length plus a ``_gene_mask`` and lets
+    to_dataframe() mask it down to the kept genes (the rest pooled into the
+    dropped "other" pseudo-gene). compare_groups must propagate that mask so the
+    aggregated full-length per-arm vectors align with the kept-gene delta table
+    rather than raising an off-by-one length mismatch.
+    """
+    mask = np.array([True, True, True, False])  # 1 gene pooled into "other"
+    all_names = ["g0", "g1", "g2", "g3"]
+
+    def fake_compare(
+        model_A, model_B, method, paired, compute_biological=False, **kwargs
+    ):
+        ns = SimpleNamespace(
+            delta_samples=np.zeros((5, 3)),  # kept = 3 (other dropped)
+            gene_names=["g0", "g1", "g2"],  # kept names
+            mu_map_A=np.full(4, float(model_A)),  # full-gene length = 4
+            mu_map_B=np.full(4, float(model_B)),
+        )
+        ns._gene_mask = mask
+        ns._all_gene_names = all_names
+        return ns
+
+    monkeypatch.setattr("scribe.de.results.compare", fake_compare)
+    results = _make_results(complete_spec)
+    de = compare_groups(results, "perturbation", "control", "drug")
+
+    np.testing.assert_array_equal(np.asarray(de._gene_mask), mask)
+    assert de._all_gene_names == all_names
+    # Full-length per-arm vector retained; kept-length delta table.
+    assert np.asarray(de.mu_map_A).shape == (4,)
+    assert np.asarray(de.delta_samples).shape == (5, 3)
