@@ -209,3 +209,73 @@ def test_compare_groups_requires_grouping():
     )
     with pytest.raises(ValueError, match="requires a multi-factor fit"):
         compare_groups(results, "perturbation", "control", "drug")
+
+
+# ------------------------------------------------------------------------------
+# Per-arm population fields (mu_map / biological samples) for DE plots
+# ------------------------------------------------------------------------------
+
+
+def _patch_compare_bio(monkeypatch, N=5, D=4, drop_mu_map_A_for=None):
+    """compare() stub returning per-arm fields encoded from the leaf indices."""
+
+    def fake_compare(
+        model_A, model_B, method, paired, compute_biological=False, **kwargs
+    ):
+        assert method == "empirical" and paired is True
+        # compare_groups defaults biological summaries on so mu_map is built.
+        assert compute_biological is True
+        mu_map_A = (
+            None
+            if model_A == drop_mu_map_A_for
+            else np.full(D, float(model_A))
+        )
+        return SimpleNamespace(
+            delta_samples=np.full((N, D), float(model_B * 10 + model_A)),
+            gene_names=[f"g{i}" for i in range(D)],
+            mu_map_A=mu_map_A,
+            mu_map_B=np.full(D, float(model_B)),
+            mu_samples_A=np.full((N, D), float(model_A)),
+            mu_samples_B=np.full((N, D), float(model_B)),
+            # r/p/phi samples intentionally absent -> dropped on aggregation.
+        )
+
+    monkeypatch.setattr("scribe.de.results.compare", fake_compare)
+
+
+def test_compare_groups_aggregates_arm_population_fields(
+    complete_spec, monkeypatch
+):
+    """Per-arm fields are donor-weighted averages; simplex stays unset."""
+    _patch_compare_bio(monkeypatch)
+    results = _make_results(complete_spec)
+    de = compare_groups(results, "perturbation", "control", "drug")
+
+    # leaves: control|{D1,D2,D3}={0,1,2}; drug|{D1,D2,D3}={3,4,5}.
+    # mu_map_A = leaf_A index, uniform mean over (0,1,2) = 1.0;
+    # mu_map_B = leaf_B index, uniform mean over (3,4,5) = 4.0.
+    np.testing.assert_allclose(de.mu_map_A, 1.0)
+    np.testing.assert_allclose(de.mu_map_B, 4.0)
+    np.testing.assert_allclose(de.mu_samples_A, 1.0)
+    np.testing.assert_allclose(de.mu_samples_B, 4.0)
+    assert de.mu_map_A.shape == (4,)
+    assert de.mu_samples_A.shape == (5, 4)
+
+    # The paired estimand averages within-pair CLR deltas, so simplices are
+    # deliberately NOT aggregated (CLR(avg) != avg CLR).
+    assert de.simplex_A is None
+    assert de.simplex_B is None
+    # Fields absent from every pair are dropped, not zero-filled.
+    assert de.r_samples_A is None
+
+
+def test_compare_groups_drops_arm_field_missing_in_any_pair(
+    complete_spec, monkeypatch
+):
+    """A per-arm field absent from even one pair is dropped entirely."""
+    # control|D1 has leaf index 0; make that pair return mu_map_A=None.
+    _patch_compare_bio(monkeypatch, drop_mu_map_A_for=0)
+    results = _make_results(complete_spec)
+    de = compare_groups(results, "perturbation", "control", "drug")
+    assert de.mu_map_A is None  # dropped (one pair lacked it)
+    np.testing.assert_allclose(de.mu_map_B, 4.0)  # still aggregated

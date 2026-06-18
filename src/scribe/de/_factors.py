@@ -207,7 +207,13 @@ def compare_groups(
     -------
     ScribeEmpiricalDEResults
         DE result on the averaged per-draw CLR deltas; compatible with the
-        standard gene-level / lfsr / PEFP analysis.
+        standard gene-level / lfsr / PEFP analysis.  The per-arm summaries
+        (``mu_map_A``/``mu_map_B`` and the biological sample tensors) are the
+        donor-weighted-average population value for each contrast level, so the
+        object also drives the mean-expression DE plots and ``biological_level``
+        like a leaf-vs-leaf ``compare()`` result.  ``simplex_A``/``simplex_B``
+        are not aggregated (see Notes), so a post-hoc mask recompute is
+        unavailable — pass ``gene_mask`` here to re-mask within each pair.
 
     Notes
     -----
@@ -272,30 +278,64 @@ def compare_groups(
     if component is not None:
         working = working.get_component(component)
 
-    # Per-pair within-pair CLR deltas, then weighted average over pairs.
-    delta_bar = None
+    # Biological summaries are needed for the per-arm population fields
+    # (mu_map_A/B drive the mean-expression DE plots; the per-arm sample
+    # tensors drive biological_level()). Default them on; allow opt-out.
+    compute_biological = kwargs.pop("compute_biological", True)
+
+    # Per-pair within-pair quantities, then a weighted average over pairs:
+    #   - ``delta`` is the paired main effect (avg of within-pair CLR deltas);
+    #   - every per-arm field is the population (donor-weighted-average) value
+    #     for that contrast level, so the resulting object summarises and plots
+    #     exactly like a leaf-vs-leaf ``compare()`` result.
+    # ``simplex_A/B`` are intentionally NOT aggregated: the paired estimand
+    # averages within-pair CLR deltas, and CLR(avg simplex) != avg CLR delta,
+    # so storing averaged simplices would let a post-hoc mask recompute return a
+    # different estimand. Re-mask by passing ``gene_mask`` through to the pairs.
+    _ARM_FIELDS = (
+        "mu_map_A", "mu_map_B",
+        "r_samples_A", "r_samples_B",
+        "p_samples_A", "p_samples_B",
+        "mu_samples_A", "mu_samples_B",
+        "phi_samples_A", "phi_samples_B",
+    )
+    acc = {"delta_samples": None}
+    acc.update({k: None for k in _ARM_FIELDS})
+    _missing = set()  # fields absent from at least one pair -> drop entirely
     gene_names = None
+
+    def _accumulate(key, w, arr):
+        if arr is None:
+            _missing.add(key)
+            return
+        contrib = w * np.asarray(arr, dtype=float)
+        acc[key] = contrib if acc[key] is None else acc[key] + contrib
+
     for w, (_pv, leaf_A, leaf_B) in zip(weights, present):
         de_pair = compare(
             model_A=working.get_dataset(leaf_A),
             model_B=working.get_dataset(leaf_B),
             method="empirical",
             paired=True,
+            compute_biological=compute_biological,
             **kwargs,
         )
-        delta = np.asarray(de_pair.delta_samples)
-        if delta_bar is None:
-            delta_bar = w * delta
+        if gene_names is None:
             gene_names = de_pair.gene_names
-        else:
-            delta_bar = delta_bar + w * delta
+        _accumulate("delta_samples", w, de_pair.delta_samples)
+        for key in _ARM_FIELDS:
+            _accumulate(key, w, getattr(de_pair, key, None))
+
+    def _final(key):
+        return None if key in _missing else acc[key]
 
     label_A = f"{factor_name}={level_A}"
     label_B = f"{factor_name}={level_B}"
     return ScribeEmpiricalDEResults(
-        delta_samples=delta_bar,
+        delta_samples=_final("delta_samples"),
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
         method="empirical",
+        **{k: _final(k) for k in _ARM_FIELDS},
     )
