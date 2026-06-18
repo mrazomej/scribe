@@ -148,6 +148,18 @@ class DatasetMixin:
 
         return _group_levels(self, factor)
 
+    def get_factor_effect(self, factor_name: str):
+        """Expose the fitted additive effect of a grouping factor.
+
+        Returns a :class:`FactorEffectView` over the per-level log-mean effects
+        (e.g. ``view.contrast("drug", "control")`` for the treatment effect,
+        ``view["D3"]`` for a donor deviation, ``view.scale`` for the learned
+        heterogeneity). Inspection only — see ``compare_groups`` for DE.
+        """
+        from ..core.factor_effect_view import get_factor_effect as _gfe
+
+        return _gfe(self, factor_name)
+
     def get_dataset(self, dataset_index: int) -> "ScribeSVIResults":
         """Extract a single-dataset view from multi-dataset results.
 
