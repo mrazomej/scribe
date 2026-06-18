@@ -114,7 +114,7 @@ from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults, ScribeVariationalResults
 from .svi.vae_results import ScribeVAEResults
 from .laplace import ScribeLaplaceResults
-from .de import ScribeDEResults, compare, compare_datasets
+from .de import ScribeDEResults, compare, compare_datasets, compare_groups
 from .mc import ScribeModelComparisonResults, compare_models
 from . import mc
 

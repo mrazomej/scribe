@@ -1396,10 +1396,11 @@ to leaves where they are matched, or by averaging over them.
 **Paired main-effect contrast (the default for paired designs).** Choose a **pairing factor**
 $h$ — the grouping factor held in common across the contrast (e.g. the donor). For each level
 $d$ of $h$ that is present at *both* $A$ and $B$, let $\ell(d,A)$ and $\ell(d,B)$ denote the
-corresponding leaves, and define the within-pair centred-log difference at draw $s$,
+corresponding leaves, and define the within-pair centred-log difference at draw $s$ (using
+the same $A - B$ orientation as @eq-hdata-de-delta),
 
 $$
-\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,B),\,s)} - z_{g,\text{CLR}}^{(\ell(d,A),\,s)},
+\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,A),\,s)} - z_{g,\text{CLR}}^{(\ell(d,B),\,s)},
 $${#eq-hdata-mf-paired-delta}
 
 using the CLR transform of @eq-hdata-de-clr. The factor-level statistic is the weighted
@@ -1451,7 +1452,7 @@ z \sim \mathcal{N}(0,1), \; s^{(f)} \text{ fixed (no adaptive shrinkage)}, \\[2p
 \;\alpha_g^{(f)}[a]-\alpha_g^{(f)}[b]\; \text{identified (centred per draw);} \\
 &\hphantom{\textbf{Identifiability:}\quad} \text{interactions need zero-margin (sum-to-zero) constraints,} \\[2pt]
 &\textbf{Paired factor DE:}\quad
-\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,B),s)} - z_{g,\text{CLR}}^{(\ell(d,A),s)}, \quad
+\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,A),s)} - z_{g,\text{CLR}}^{(\ell(d,B),s)}, \quad
 \bar{\Delta}_g^{(s)} = \sum_d w_d \Delta_g^{(d,s)}, \;\; \sum_d w_d = 1.
 \end{aligned}
 }

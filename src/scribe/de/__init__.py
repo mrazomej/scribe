@@ -58,6 +58,7 @@ from .results import (
     compare,
     compare_datasets,
 )
+from ._factors import compare_groups
 
 from ..models.components.likelihoods.lnm import select_alr_reference
 
@@ -137,6 +138,7 @@ __all__ = [
     "ScribeShrinkageDEResults",
     "compare",
     "compare_datasets",
+    "compare_groups",
     # Extraction
     "extract_alr_params",
     "select_alr_reference",
