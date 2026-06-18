@@ -281,6 +281,32 @@ def test_compare_groups_drops_arm_field_missing_in_any_pair(
     np.testing.assert_allclose(de.mu_map_B, 4.0)  # still aggregated
 
 
+def test_compare_groups_mask_builders_without_simplex(
+    complete_spec, monkeypatch
+):
+    """expression_mask / composition_coverage_mask work without a stored simplex.
+
+    compare_groups does not store simplex_A/B, so the apply-in-place
+    set_expression_threshold / set_composition_coverage cannot recompute deltas.
+    The mask *builders* read only mu_map and must still work, so a coverage /
+    expression filter can be passed up front via gene_mask=.
+    """
+    _patch_compare_bio(monkeypatch, D=6)
+    results = _make_results(complete_spec)
+    de = compare_groups(results, "perturbation", "control", "drug")
+    assert getattr(de, "simplex_A", None) is None  # no simplex stored
+
+    # mu_map_A == 1.0 (control leaves 0,1,2 averaged); mu_map_B == 4.0.
+    assert np.asarray(de.expression_mask(2.0)).all()  # 4 >= 2 everywhere
+    assert not np.asarray(de.expression_mask(5.0)).any()  # neither arm >= 5
+    cm = de.composition_coverage_mask(0.95)
+    assert cm.dtype == bool and cm.size == 6
+
+    # The apply-in-place variant needs the simplex compare_groups omits.
+    with pytest.raises(ValueError, match="simplex"):
+        de.set_composition_coverage(0.95)
+
+
 def test_compare_groups_propagates_gene_mask(complete_spec, monkeypatch):
     """The pairs' shared gene-mask bookkeeping is carried to the result.
 

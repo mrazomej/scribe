@@ -370,6 +370,71 @@ class EmpiricalResultsMixin:
 
         return self
 
+    def expression_mask(self, min_expression: float):
+        """Build (but do not apply) a min-expression mask from MAP means.
+
+        A gene is retained if either condition has MAP mean expression at least
+        ``min_expression``. Unlike :meth:`set_expression_threshold`, this only
+        reads ``mu_map_A`` / ``mu_map_B`` and never touches the simplex samples,
+        so it also works on results that do not store the simplex (e.g.
+        :func:`scribe.compare_groups`). Pass the returned mask up front via
+        ``gene_mask=`` to pool the rest into "other" before CLR.
+
+        Parameters
+        ----------
+        min_expression : float
+            Minimum MAP mean expression (in either condition) to retain a gene.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean mask over genes.
+        """
+        import numpy as np
+
+        if self.mu_map_A is None or self.mu_map_B is None:
+            raise ValueError(
+                "Cannot build expression mask: MAP mean expression "
+                "(mu_map_A / mu_map_B) was not stored in the results object."
+            )
+        mu_A = np.asarray(self.mu_map_A)
+        mu_B = np.asarray(self.mu_map_B)
+        return (mu_A >= min_expression) | (mu_B >= min_expression)
+
+    def composition_coverage_mask(self, coverage: float = 0.95):
+        """Build (but do not apply) a cumulative-composition coverage mask.
+
+        Keeps the smallest set of genes whose MAP composition reaches
+        ``coverage`` of the total mass in *either* condition (the union of the
+        two per-condition coverage sets). Reads only ``mu_map_A`` /
+        ``mu_map_B`` — no simplex required — so it works on
+        :func:`scribe.compare_groups` results; pass the mask up front via
+        ``gene_mask=``.
+
+        Parameters
+        ----------
+        coverage : float, default=0.95
+            Cumulative compositional coverage target in ``(0, 1]``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean mask over genes.
+        """
+        import numpy as np
+        from ._empirical import _coverage_mask_from_mu
+
+        if self.mu_map_A is None or self.mu_map_B is None:
+            raise ValueError(
+                "Cannot build coverage mask: MAP mean expression "
+                "(mu_map_A / mu_map_B) was not stored in the results object."
+            )
+        mu_A = np.asarray(self.mu_map_A)
+        mu_B = np.asarray(self.mu_map_B)
+        return _coverage_mask_from_mu(mu_A, coverage) | _coverage_mask_from_mu(
+            mu_B, coverage
+        )
+
     def set_expression_threshold(
         self, min_expression: float
     ) -> "ScribeEmpiricalDEResults":
@@ -386,18 +451,7 @@ class EmpiricalResultsMixin:
         ScribeEmpiricalDEResults
             Returns ``self`` for method chaining.
         """
-        import numpy as np
-
-        if self.mu_map_A is None or self.mu_map_B is None:
-            raise ValueError(
-                "Cannot set expression threshold: MAP mean expression "
-                "(mu_map_A / mu_map_B) was not stored in the results object."
-            )
-
-        mu_A = np.asarray(self.mu_map_A)
-        mu_B = np.asarray(self.mu_map_B)
-        mask = (mu_A >= min_expression) | (mu_B >= min_expression)
-        self.set_gene_mask(mask)
+        self.set_gene_mask(self.expression_mask(min_expression))
         return self
 
     def set_composition_coverage(
@@ -427,22 +481,7 @@ class EmpiricalResultsMixin:
             If MAP mean expression vectors are unavailable or if coverage
             is outside ``(0, 1]``.
         """
-        import numpy as np
-        from ._empirical import _coverage_mask_from_mu
-
-        if self.mu_map_A is None or self.mu_map_B is None:
-            raise ValueError(
-                "Cannot set composition coverage: MAP mean expression "
-                "(mu_map_A / mu_map_B) was not stored in the results object."
-            )
-
-        # Build condition-specific coverage masks and preserve genes that
-        # are compositionally important in either condition.
-        mu_A = np.asarray(self.mu_map_A)
-        mu_B = np.asarray(self.mu_map_B)
-        mask_A = _coverage_mask_from_mu(mu_A, coverage=coverage)
-        mask_B = _coverage_mask_from_mu(mu_B, coverage=coverage)
-        self.set_gene_mask(mask_A | mask_B)
+        self.set_gene_mask(self.composition_coverage_mask(coverage))
         return self
 
     def clear_mask(self) -> "ScribeEmpiricalDEResults":
