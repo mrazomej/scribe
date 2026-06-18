@@ -58,6 +58,12 @@ viz:
   compositional_corner_ppc: false  # Compositional corner PPC; needs get_compositional_samples
   w_shrinkage: false             # W-perp column-norm spectrum; needs w_prior_diagnostics
 
+  # Mean-calibration multi-dataset panel layout
+  mean_calibration_opts:
+    n_rows: null  # Auto when null; explicit rows override auto layout
+    n_cols: null  # Auto when null; explicit columns override auto layout
+    max_cols: 4  # Max columns when both n_rows and n_cols are auto
+
   # ---------------------------------------------------------------------------
   # ECDF options
   # ---------------------------------------------------------------------------

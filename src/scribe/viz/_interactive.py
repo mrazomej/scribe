@@ -628,7 +628,7 @@ def _finalize_figure(
 
 
 # ---------------------------------------------------------------------------
-# PPC grid resolution
+# Grid layout resolution (shared by PPC and fixed-panel plots)
 # ---------------------------------------------------------------------------
 
 # Built-in defaults matching conf/viz/default.yaml so that
@@ -638,6 +638,203 @@ _PPC_DEFAULTS = {
     "n_cols": 5,
     "n_samples": 512,
 }
+
+_PANEL_GRID_DEFAULTS = {
+    "max_cols": 4,
+}
+
+
+def _viz_opts_get(viz_cfg, opts_key, key, default):
+    """Read one option from ``viz_cfg[opts_key]``.
+
+    Parameters
+    ----------
+    viz_cfg : OmegaConf or mapping-like or None
+        Visualization configuration.
+    opts_key : str
+        Section under ``viz_cfg`` (for example ``"ppc_opts"``).
+    key : str
+        Option name within that section.
+    default
+        Value returned when ``viz_cfg`` is ``None`` or the key is absent.
+
+    Returns
+    -------
+    object
+        Resolved option value.
+    """
+    if viz_cfg is None:
+        return default
+    opts = viz_cfg.get(opts_key, {}) if hasattr(viz_cfg, "get") else {}
+    return opts.get(key, default) if hasattr(opts, "get") else default
+
+
+def _ceil_grid_span(n_items, span):
+    """Return ``ceil(n_items / span)`` for the opposite grid axis.
+
+    Parameters
+    ----------
+    n_items : int
+        Number of panels or genes that must fit in the grid.
+    span : int
+        Known row count (to derive columns) or column count (to derive rows).
+
+    Returns
+    -------
+    int
+        Minimum opposite-axis span that fits all items.
+
+    Raises
+    ------
+    ValueError
+        If ``span`` is not positive.
+    """
+    import math
+
+    span = int(span)
+    if span <= 0:
+        raise ValueError(f"Grid span must be positive; got {span}.")
+    return math.ceil(int(n_items) / span)
+
+
+def _resolve_rows_cols_from_item_count(
+    *,
+    n_items,
+    n_rows=None,
+    n_cols=None,
+    items_label="n_items",
+):
+    """Derive or validate ``(n_rows, n_cols)`` for a fixed panel count.
+
+    At least one of ``n_rows`` or ``n_cols`` must be provided. When both
+    are given, ``n_rows * n_cols`` must be at least ``n_items``.
+
+    Parameters
+    ----------
+    n_items : int
+        Number of panels that must fit in the grid.
+    n_rows : int or None
+        Requested row count.
+    n_cols : int or None
+        Requested column count.
+    items_label : str
+        Name used in error messages (for example ``"n_panels"``).
+
+    Returns
+    -------
+    tuple of int
+        ``(n_rows, n_cols)``.
+
+    Raises
+    ------
+    ValueError
+        If ``n_items`` is non-positive, both dimensions are ``None``, or
+        the requested grid is too small.
+    """
+    n_items = int(n_items)
+    if n_items <= 0:
+        raise ValueError(f"{items_label} must be positive; got {n_items}.")
+
+    if n_rows is not None and n_cols is not None:
+        rows, cols = int(n_rows), int(n_cols)
+        if rows * cols < n_items:
+            raise ValueError(
+                f"Grid ({rows}, {cols}) has {rows * cols} axes but "
+                f"{items_label}={n_items} requires at least that many panels."
+            )
+        return rows, cols
+
+    if n_rows is not None:
+        rows = int(n_rows)
+        return rows, _ceil_grid_span(n_items, rows)
+
+    if n_cols is not None:
+        cols = int(n_cols)
+        return _ceil_grid_span(n_items, cols), cols
+
+    raise ValueError(
+        "At least one of n_rows or n_cols must be provided to resolve "
+        f"the grid for {items_label}={n_items}."
+    )
+
+
+def _resolve_panel_grid(
+    *,
+    n_panels,
+    n_rows=None,
+    n_cols=None,
+    viz_cfg=None,
+    opts_key="mean_calibration_opts",
+    default_max_cols=None,
+):
+    """Resolve grid dimensions for fixed-panel plots (e.g. per-dataset panels).
+
+    Priority order for ``n_rows`` / ``n_cols``:
+
+    1. Explicit keyword arguments.
+    2. ``viz_cfg.<opts_key>.n_rows`` / ``n_cols`` when present.
+    3. Auto layout: ``n_cols = min(max_cols, n_panels)``,
+       ``n_rows = ceil(n_panels / n_cols)``.
+
+    Parameters
+    ----------
+    n_panels : int
+        Number of panels to display.
+    n_rows, n_cols : int or None
+        Explicit grid overrides.
+    viz_cfg : OmegaConf or mapping-like or None
+        Visualization configuration.
+    opts_key : str
+        Key under ``viz_cfg`` holding layout options.
+    default_max_cols : int or None
+        Override for the auto-layout column cap.  ``None`` falls through
+        to ``viz_cfg`` then ``_PANEL_GRID_DEFAULTS``.
+
+    Returns
+    -------
+    dict
+        ``{"n_rows": int, "n_cols": int}``.
+    """
+    n_panels = int(n_panels)
+    if n_panels <= 0:
+        raise ValueError(f"n_panels must be positive; got {n_panels}.")
+
+    max_cols = (
+        int(default_max_cols)
+        if default_max_cols is not None
+        else int(
+            _viz_opts_get(
+                viz_cfg,
+                opts_key,
+                "max_cols",
+                _PANEL_GRID_DEFAULTS["max_cols"],
+            )
+        )
+    )
+
+    rows = (
+        n_rows
+        if n_rows is not None
+        else _viz_opts_get(viz_cfg, opts_key, "n_rows", None)
+    )
+    cols = (
+        n_cols
+        if n_cols is not None
+        else _viz_opts_get(viz_cfg, opts_key, "n_cols", None)
+    )
+
+    if rows is not None or cols is not None:
+        resolved_rows, resolved_cols = _resolve_rows_cols_from_item_count(
+            n_items=n_panels,
+            n_rows=rows,
+            n_cols=cols,
+            items_label="n_panels",
+        )
+        return {"n_rows": resolved_rows, "n_cols": resolved_cols}
+
+    auto_cols = min(max_cols, n_panels)
+    auto_rows = _ceil_grid_span(n_panels, auto_cols)
+    return {"n_rows": auto_rows, "n_cols": auto_cols}
 
 
 def _resolve_ppc_grid(
@@ -699,25 +896,20 @@ def _resolve_ppc_grid(
         else _PPC_DEFAULTS["n_samples"]
     )
 
-    # Read from viz_cfg when available
-    def _cfg_get(key, default):
-        if viz_cfg is None:
-            return default
-        opts = viz_cfg.get(opts_key, {}) if hasattr(viz_cfg, "get") else {}
-        return opts.get(key, default) if hasattr(opts, "get") else default
-
-    rows = n_rows if n_rows is not None else int(_cfg_get("n_rows", d_rows))
+    rows = (
+        n_rows
+        if n_rows is not None
+        else int(_viz_opts_get(viz_cfg, opts_key, "n_rows", d_rows))
+    )
     cols = n_cols if n_cols is not None else None
     samples = (
         n_samples
         if n_samples is not None
-        else int(_cfg_get("n_samples", d_samples))
+        else int(_viz_opts_get(viz_cfg, opts_key, "n_samples", d_samples))
     )
 
-    import math
-
     if n_genes is not None:
-        derived_cols = math.ceil(int(n_genes) / rows)
+        derived_cols = _ceil_grid_span(n_genes, rows)
         if cols is not None and cols != derived_cols:
             raise ValueError(
                 f"n_genes={n_genes} with n_rows={rows} requires "
@@ -726,7 +918,7 @@ def _resolve_ppc_grid(
         cols = derived_cols
 
     if cols is None:
-        cols = int(_cfg_get("n_cols", d_cols))
+        cols = int(_viz_opts_get(viz_cfg, opts_key, "n_cols", d_cols))
 
     return {"n_rows": int(rows), "n_cols": int(cols), "n_samples": int(samples)}
 

@@ -3480,6 +3480,131 @@ def test_resolve_ppc_grid_default_samples_override():
 
 
 # -----------------------------------------------------------------------
+# Shared grid helpers and _resolve_panel_grid
+# -----------------------------------------------------------------------
+
+
+def test_ceil_grid_span():
+    """_ceil_grid_span should return the minimum covering opposite-axis span."""
+    from scribe.viz._interactive import _ceil_grid_span
+
+    assert _ceil_grid_span(6, 3) == 2
+    assert _ceil_grid_span(5, 3) == 2
+    assert _ceil_grid_span(4, 4) == 1
+
+
+def test_resolve_rows_cols_from_item_count_derives_columns():
+    """n_rows alone should derive n_cols = ceil(n_items / n_rows)."""
+    from scribe.viz._interactive import _resolve_rows_cols_from_item_count
+
+    assert _resolve_rows_cols_from_item_count(n_items=6, n_rows=2) == (2, 3)
+    assert _resolve_rows_cols_from_item_count(n_items=5, n_rows=2) == (2, 3)
+
+
+def test_resolve_rows_cols_from_item_count_derives_rows():
+    """n_cols alone should derive n_rows = ceil(n_items / n_cols)."""
+    from scribe.viz._interactive import _resolve_rows_cols_from_item_count
+
+    assert _resolve_rows_cols_from_item_count(n_items=6, n_cols=3) == (2, 3)
+
+
+def test_resolve_rows_cols_from_item_count_both_given_validates():
+    """Both dimensions should be accepted when the grid fits all panels."""
+    from scribe.viz._interactive import _resolve_rows_cols_from_item_count
+
+    assert _resolve_rows_cols_from_item_count(
+        n_items=6, n_rows=2, n_cols=4
+    ) == (2, 4)
+
+
+def test_resolve_rows_cols_from_item_count_too_small_raises():
+    """An undersized grid should raise ValueError."""
+    from scribe.viz._interactive import _resolve_rows_cols_from_item_count
+    import pytest
+
+    with pytest.raises(ValueError, match="Grid \\(2, 2\\)"):
+        _resolve_rows_cols_from_item_count(n_items=6, n_rows=2, n_cols=2)
+
+
+def test_resolve_panel_grid_auto_layout():
+    """Auto layout should cap columns at max_cols and derive rows."""
+    from scribe.viz._interactive import _resolve_panel_grid
+
+    assert _resolve_panel_grid(n_panels=6) == {"n_rows": 2, "n_cols": 4}
+    assert _resolve_panel_grid(n_panels=2) == {"n_rows": 1, "n_cols": 2}
+
+
+def test_resolve_panel_grid_explicit_rows():
+    """Explicit n_rows should derive columns from the panel count."""
+    from scribe.viz._interactive import _resolve_panel_grid
+
+    assert _resolve_panel_grid(n_panels=6, n_rows=2) == {
+        "n_rows": 2,
+        "n_cols": 3,
+    }
+
+
+def test_resolve_panel_grid_viz_cfg_override():
+    """viz_cfg.mean_calibration_opts should override auto layout defaults."""
+    from scribe.viz._interactive import _resolve_panel_grid
+
+    viz_cfg = OmegaConf.create(
+        {"mean_calibration_opts": {"n_rows": 3, "max_cols": 2}}
+    )
+    assert _resolve_panel_grid(n_panels=6, viz_cfg=viz_cfg) == {
+        "n_rows": 3,
+        "n_cols": 2,
+    }
+
+
+def test_plot_mean_calibration_multi_dataset_grid(monkeypatch):
+    """Multi-dataset mean calibration should honour n_rows for grid layout."""
+    import scribe.viz.mean_calibration as mean_calibration_module
+
+    class _FakeResults:
+        """Minimal hierarchical result stub."""
+
+        n_components = 1
+        model_config = MagicMock(n_datasets=3, uses_variable_capture=False)
+        _dataset_indices = np.array([0, 0, 1, 1, 2, 2])
+
+    def _fake_prepare(*_args, **_kwargs):
+        genes = np.array([1.0, 2.0, 3.0])
+        return {
+            "mode": "multi_dataset",
+            "ds_results": [
+                {"name": "a", "obs_mean": genes, "pred_mean": genes},
+                {"name": "b", "obs_mean": genes, "pred_mean": genes},
+                {"name": "c", "obs_mean": genes, "pred_mean": genes},
+            ],
+            "obs_mean": None,
+            "pred_mean": None,
+            "is_mixture": False,
+            "annotations": [],
+        }
+
+    monkeypatch.setattr(
+        mean_calibration_module,
+        "_prepare_calibration_data",
+        _fake_prepare,
+    )
+
+    result = mean_calibration_module.plot_mean_calibration(
+        _FakeResults(),
+        counts=np.ones((6, 3)),
+        is_multi_dataset=True,
+        dataset_codes=np.array([0, 0, 1, 1, 2, 2]),
+        dataset_names=["a", "b", "c"],
+        n_rows=2,
+        save=False,
+    )
+    assert result.n_panels == 4
+    assert len(result.axes) == 4
+    assert result.axes[3].axison is False
+    plt.close(result.fig)
+
+
+# -----------------------------------------------------------------------
 # get_ppc_render_options viz_cfg=None safety
 # -----------------------------------------------------------------------
 

@@ -59,7 +59,9 @@ plotting from raw `adata` counts against filtered model results.
   dataset, filling `dataset_codes` from the results and falling back to
   generic `dataset_{i}` labels (pass `dataset_names=[...]` for real category
   names, as the CLI pipeline does). Pass `is_multi_dataset=False` to force a
-  single pooled panel.
+  single pooled panel. Multi-dataset layout follows the PPC pattern:
+  optional `n_rows` / `n_cols` (or `viz_cfg.mean_calibration_opts`) with
+  auto layout capping width at `max_cols` (default 4) when both are unset.
 - `plot_mean_calibration` has dedicated paths for the two TSLN variants:
   - **TSLN-Rate**: the observation model is a Poisson-Beta compound, so the
     per-cell predicted mean is `exp(x_cg − η_c) · α_g / (α_g + β_g)`. The

@@ -106,6 +106,12 @@ viz:
     point_size: 5.0  # Marker size for pairwise scatter points
     pseudocount: 1.0  # Additive constant c used in log10(mu + c)
 
+  # Mean-calibration multi-dataset panel layout
+  mean_calibration_opts:
+    n_rows: null  # Auto when null; explicit rows override auto layout
+    n_cols: null  # Auto when null; explicit columns override auto layout
+    max_cols: 4  # Max columns when both n_rows and n_cols are auto
+
   # Corner PPC options (count-space and compositional corner plots)
   corner_ppc_opts:
     n_genes: 5

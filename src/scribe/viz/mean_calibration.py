@@ -41,6 +41,7 @@ from ._common import _is_pln_model, console
 from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
+    _resolve_panel_grid,
     plot_function,
 )
 from .dispatch import _get_layouts_for_plot, _get_map_estimates_for_plot
@@ -1210,6 +1211,8 @@ def plot_mean_calibration(
     is_multi_dataset=None,
     dataset_codes=None,
     dataset_names=None,
+    n_rows=None,
+    n_cols=None,
     figsize=None,
     fig=None,
     axes=None,
@@ -1253,6 +1256,15 @@ def plot_mean_calibration(
         Category names for each dataset code.  Defaults to ``dataset_{i}``
         when multi-dataset is enabled and this is ``None``; pass explicit
         names for readable panel titles.
+    n_rows : int, optional
+        Number of grid rows for multi-dataset panels.  Overrides
+        ``viz_cfg.mean_calibration_opts.n_rows``.  When ``n_cols`` is
+        ``None``, columns are ``ceil(n_panels / n_rows)``.
+    n_cols : int, optional
+        Number of grid columns for multi-dataset panels.  Overrides
+        ``viz_cfg.mean_calibration_opts.n_cols``.  When ``n_rows`` is
+        ``None``, rows are ``ceil(n_panels / n_cols)``.  Ignored for
+        single-dataset plots.
 
     Returns
     -------
@@ -1315,28 +1327,44 @@ def plot_mean_calibration(
     if prep["mode"] == "multi_dataset":
         ds_results = prep["ds_results"]
         n_panels = len(ds_results)
+        grid = _resolve_panel_grid(
+            n_panels=n_panels,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            viz_cfg=viz_cfg,
+        )
+        n_grid_rows = grid["n_rows"]
+        n_grid_cols = grid["n_cols"]
+        console.print(
+            f"[dim]Using n_rows={n_grid_rows}, n_cols={n_grid_cols} for "
+            f"mean-calibration ({n_panels} datasets)[/dim]"
+        )
         fig, _, axes_flat = _create_or_validate_grid_axes(
-            n_rows=1,
-            n_cols=n_panels,
+            n_rows=n_grid_rows,
+            n_cols=n_grid_cols,
             fig=fig,
             axes=axes,
-            figsize=figsize or (5.5 * n_panels, 5.0),
+            figsize=figsize or (5.5 * n_grid_cols, 5.0 * n_grid_rows),
         )
         colors = plt.cm.Set2(np.linspace(0, 1, max(n_panels, 2)))
-        for i, ds in enumerate(ds_results):
+        for i, panel_ax in enumerate(axes_flat):
+            if i >= n_panels:
+                panel_ax.axis("off")
+                continue
+            ds = ds_results[i]
             _scatter_panel(
-                axes_flat[i],
+                panel_ax,
                 ds["obs_mean"],
                 ds["pred_mean"],
                 color=colors[i],
             )
-            axes_flat[i].set_xlabel(
+            panel_ax.set_xlabel(
                 r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$"
             )
-            axes_flat[i].set_ylabel(
+            panel_ax.set_ylabel(
                 r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$"
             )
-            axes_flat[i].set_title(ds["name"], fontsize=10)
+            panel_ax.set_title(ds["name"], fontsize=10)
 
     # ---- Single-dataset (with or without mixture) ---------------------------
     else:
@@ -1366,4 +1394,9 @@ def plot_mean_calibration(
 
     fig.tight_layout()
 
-    return fig, axes_flat, len(axes_flat)
+    n_return_panels = (
+        n_grid_rows * n_grid_cols
+        if prep["mode"] == "multi_dataset"
+        else len(axes_flat)
+    )
+    return fig, axes_flat, n_return_panels
