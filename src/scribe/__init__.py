@@ -38,6 +38,7 @@ from .models.config import (
     MCMCConfig,
     DataConfig,
     InferenceConfig,
+    GroupLevel,
 )
 
 from . import viz
@@ -128,6 +129,7 @@ __all__ = [
     "MCMCConfig",
     "DataConfig",
     "InferenceConfig",
+    "GroupLevel",
     # Main inference functions
     "fit",  # Simplified API (recommended)
     "run_scribe",  # Lower-level API

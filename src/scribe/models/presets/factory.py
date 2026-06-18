@@ -59,6 +59,9 @@ from ..builders.parameter_specs import (
     HorseshoeHierarchicalPositiveNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
     InverseGammaSpec,
+    GroupingFactorSpec,
+    MultiFactorPositiveNormalSpec,
+    MultiFactorSigmoidNormalSpec,
     NEGDatasetPositiveNormalSpec,
     NEGDatasetSigmoidNormalSpec,
     NEGHierarchicalPositiveNormalSpec,
@@ -1097,6 +1100,14 @@ def create_model(
                 anchor_sigma=model_config.expression_anchor_sigma,
             )
 
+    # Multi-factor grouping: when >1 grouping factor is present, the
+    # expression target (mu/r) uses the additive multi-factor decomposition;
+    # p/gate/regime keep the single-axis dataset hierarchy over leaves.
+    _grouping_spec = model_config.grouping_spec
+    _multifactor = (
+        _grouping_spec is not None and len(_grouping_spec.factors) > 1
+    )
+
     # ==========================================================================
     # Step 4.6: Apply dataset-level hierarchy flags
     # ==========================================================================
@@ -1109,14 +1120,27 @@ def create_model(
         # Hierarchical mu/r across datasets
         if model_config.expression_dataset_prior != _NONE:
             _mu_target = "mu" if _expression_target_is_mu(param_key) else "r"
-            param_specs = _datasetify_mu(
-                param_specs=param_specs,
-                param_key=param_key,
-                guide_families=guide_families,
-                n_datasets=n_ds,
-                shared_component_indices=_sci,
-                positive_transform=_pos_transform_for_name(_mu_target),
-            )
+            if _multifactor:
+                param_specs = _multifactor_mu(
+                    param_specs=param_specs,
+                    param_key=param_key,
+                    guide_families=guide_families,
+                    grouping_spec=_grouping_spec,
+                    shared_component_indices=_sci,
+                    positive_transform=_pos_transform_for_name(_mu_target),
+                    horseshoe_kwargs=_horseshoe_kwargs_from_config(
+                        model_config
+                    ),
+                )
+            else:
+                param_specs = _datasetify_mu(
+                    param_specs=param_specs,
+                    param_key=param_key,
+                    guide_families=guide_families,
+                    n_datasets=n_ds,
+                    shared_component_indices=_sci,
+                    positive_transform=_pos_transform_for_name(_mu_target),
+                )
 
         # Dataset-level p/phi — resolve structural mode
         if model_config.prob_dataset_prior != _NONE:
@@ -1227,7 +1251,7 @@ def create_model(
     if model_config.zero_inflation_prior == _HS:
         param_specs = _horseshoe_gate(param_specs, **horseshoe_kwargs)
 
-    if model_config.expression_dataset_prior == _HS:
+    if model_config.expression_dataset_prior == _HS and not _multifactor:
         param_specs = _horseshoe_dataset_mu(
             param_specs, param_key, **horseshoe_kwargs
         )
@@ -1263,7 +1287,7 @@ def create_model(
     if model_config.zero_inflation_prior == _NEG:
         param_specs = _neg_gate(param_specs, **neg_kwargs)
 
-    if model_config.expression_dataset_prior == _NEG:
+    if model_config.expression_dataset_prior == _NEG and not _multifactor:
         param_specs = _neg_dataset_mu(param_specs, param_key, **neg_kwargs)
 
     if model_config.prob_dataset_prior == _NEG:
@@ -2119,6 +2143,191 @@ def _datasetify_mu(
         else:
             new_specs.append(spec)
     return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Additive multi-factor hierarchy construction
+# ------------------------------------------------------------------------------
+
+
+def _multifactor_site_prefix(target_name: str, factor_name: str) -> str:
+    """NumPyro-safe site prefix for a (target, factor) pair."""
+    return f"{target_name}_{factor_name.replace(':', '__')}"
+
+
+def _multifactor_hier(
+    param_specs: List,
+    *,
+    target_name: str,
+    hyper_loc_name: str,
+    shape_dims: Tuple[str, ...],
+    is_gene_specific: bool,
+    target_kwarg: str,
+    grouping_spec,
+    guide_families,
+    spec_cls,
+    transform=None,
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
+    horseshoe_kwargs: Optional[dict] = None,
+) -> List:
+    """Replace a flat target (mu/r or p/phi) with an additive multi-factor prior.
+
+    For each grouping factor carrying a non-"none" family under ``target_kwarg``
+    (``"expression"`` or ``"prob"``), build the per-factor hyperparameter specs
+    (by family / effect type) and a ``GroupingFactorSpec``; the flat target spec
+    is replaced by ``spec_cls`` (a ``MultiFactor*NormalWithTransformSpec``) that
+    sums the factors' zero-mean effects onto the leaf axis.
+
+    Random gaussian factors get a learned scalar scale; random horseshoe factors
+    get the (tau, lambda, c_sq) trio (gene-specific targets only); fixed factors
+    use a constant scale and add no hyperparameters. NEG per-factor priors are
+    not yet implemented here.
+    """
+    horseshoe_kwargs = horseshoe_kwargs or {}
+    target_family = guide_families.get(target_name)
+
+    hyper_specs: List = []
+    factor_specs: List = []
+    for fac in grouping_spec.factors:
+        family = fac.priors.get(target_kwarg, "none")
+        if family == "none":
+            continue
+        prefix = _multifactor_site_prefix(target_name, fac.name)
+        raw_name = f"{prefix}_raw"
+        effect_name = f"{prefix}_effect"
+        common = dict(
+            name=fac.name,
+            n_levels=fac.n_levels,
+            leaf_to_level=fac.leaf_to_level,
+            raw_name=raw_name,
+            effect_name=effect_name,
+        )
+        if fac.effect_type == "fixed":
+            factor_specs.append(
+                GroupingFactorSpec(
+                    effect_type="fixed",
+                    fixed_scale=(
+                        fac.fixed_scale if fac.fixed_scale is not None else 1.0
+                    ),
+                    **common,
+                )
+            )
+        elif family == "gaussian":
+            scale_name = f"{prefix}_scale"
+            hyper_specs.append(
+                SoftplusNormalSpec(
+                    name=scale_name,
+                    shape_dims=(),
+                    default_params=(-2.0, 0.5),
+                )
+            )
+            factor_specs.append(
+                GroupingFactorSpec(
+                    prior="gaussian", scale_name=scale_name, **common
+                )
+            )
+        elif family == "horseshoe":
+            if not is_gene_specific:
+                raise NotImplementedError(
+                    f"horseshoe multi-factor prior on {target_name!r} requires "
+                    "a gene-specific target (the local scale is per-gene)."
+                )
+            tau_spec, lam_spec, c_sq_spec = _make_horseshoe_hypers(
+                prefix=prefix, **horseshoe_kwargs
+            )
+            hyper_specs.extend([tau_spec, lam_spec, c_sq_spec])
+            factor_specs.append(
+                GroupingFactorSpec(
+                    prior="horseshoe",
+                    tau_name=tau_spec.name,
+                    lambda_name=lam_spec.name,
+                    c_sq_name=c_sq_spec.name,
+                    **common,
+                )
+            )
+        elif family == "neg":
+            raise NotImplementedError(
+                "Per-factor NEG prior is not yet implemented for the "
+                "multi-factor hierarchy; use 'gaussian' or 'horseshoe'."
+            )
+        else:
+            raise ValueError(
+                f"Unknown {target_kwarg} family {family!r} for factor "
+                f"{fac.name!r}."
+            )
+
+    if not factor_specs:
+        return param_specs
+
+    new_specs: List = []
+    for spec in param_specs:
+        if spec.name != target_name:
+            new_specs.append(spec)
+            continue
+        orig_is_mixture = getattr(spec, "is_mixture", False)
+        hyper_loc = NormalWithTransformSpec(
+            name=hyper_loc_name,
+            shape_dims=shape_dims,
+            default_params=(0.0, 1.0),
+            is_gene_specific=is_gene_specific,
+            is_mixture=orig_is_mixture,
+        )
+        mf = spec_cls(
+            name=target_name,
+            shape_dims=shape_dims,
+            default_params=(0.0, 1.0),
+            hyper_loc_name=hyper_loc_name,
+            is_gene_specific=is_gene_specific,
+            is_dataset=True,
+            is_mixture=orig_is_mixture,
+            guide_family=target_family,
+            shared_component_indices=shared_component_indices,
+            factors=tuple(factor_specs),
+            **({"transform": transform} if transform is not None else {}),
+        )
+        new_specs.append(hyper_loc)
+        new_specs.extend(hyper_specs)
+        new_specs.append(mf)
+    return new_specs
+
+
+def _multifactor_mu(
+    param_specs: List,
+    param_key: str,
+    guide_families,
+    grouping_spec,
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
+    positive_transform=None,
+    horseshoe_kwargs: Optional[dict] = None,
+) -> List:
+    """Additive multi-factor hierarchy for mean expression (mu) or dispersion (r)."""
+    if _expression_target_is_mu(param_key):
+        target_name, hyper_loc_name = "mu", "log_mu_dataset_loc"
+    else:
+        target_name, hyper_loc_name = "r", "log_r_dataset_loc"
+    return _multifactor_hier(
+        param_specs,
+        target_name=target_name,
+        hyper_loc_name=hyper_loc_name,
+        shape_dims=("n_genes",),
+        is_gene_specific=True,
+        target_kwarg="expression",
+        grouping_spec=grouping_spec,
+        guide_families=guide_families,
+        spec_cls=MultiFactorPositiveNormalSpec,
+        transform=positive_transform,
+        shared_component_indices=shared_component_indices,
+        horseshoe_kwargs=horseshoe_kwargs,
+    )
+
+
+# NOTE: In the multi-factor setting only the expression target (mu/r) receives
+# the additive factor decomposition (its per-factor effects drive factor-level
+# DE). The technical parameters p/phi, gate, and regime keep the existing
+# single-axis dataset hierarchy with the present leaf combinations as the
+# dataset axis (``_datasetify_p`` etc.), so leaves are treated as exchangeable
+# datasets for those parameters. A future step can give p/gate their own
+# additive decomposition via ``_multifactor_hier`` with the appropriate target.
 
 
 # ------------------------------------------------------------------------------

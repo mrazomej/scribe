@@ -37,7 +37,7 @@ Examples
 ... )
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import logging
 
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 from ..models.config import (
     AmortizationConfig,
     EarlyStoppingConfig,
+    GroupLevel,
     InferenceConfig,
     KLAnnealingConfig,
     ModelConfig,
@@ -128,16 +129,18 @@ def fit(
     zero_inflation_prior: str = "none",
     # Multi-dataset hierarchy options
     n_datasets: Optional[int] = None,
-    dataset_key: Optional[str] = None,
+    dataset_key: Optional[Union[str, List[str]]] = None,
+    hierarchy: Optional[List[GroupLevel]] = None,
+    interactions: Optional[List[Tuple[str, ...]]] = None,
     dataset_params: Optional[List[str]] = None,
     dataset_mixing: Optional[bool] = None,
-    expression_dataset_prior: str = "none",
-    prob_dataset_prior: str = "none",
+    expression_dataset_prior: Union[str, Dict[str, str]] = "none",
+    prob_dataset_prior: Union[str, Dict[str, str]] = "none",
     prob_dataset_mode: str = "gene_specific",
-    zero_inflation_dataset_prior: str = "none",
-    overdispersion_dataset_prior: str = "none",
+    zero_inflation_dataset_prior: Union[str, Dict[str, str]] = "none",
+    overdispersion_dataset_prior: Union[str, Dict[str, str]] = "none",
     # Two-state dataset-level regime hierarchy + free overdispersion
-    regime_dataset_prior: str = "none",
+    regime_dataset_prior: Union[str, Dict[str, str]] = "none",
     regime_dataset_target: Optional[str] = None,
     overdispersion_dataset_independent: bool = True,
     auto_downgrade_single_dataset_hierarchy: bool = True,
@@ -1110,6 +1113,8 @@ def fit(
             zero_inflation_prior=zero_inflation_prior,
             n_datasets=n_datasets,
             dataset_key=dataset_key,
+            hierarchy=hierarchy,
+            interactions=interactions,
             dataset_params=dataset_params,
             dataset_mixing=dataset_mixing,
             expression_dataset_prior=expression_dataset_prior,

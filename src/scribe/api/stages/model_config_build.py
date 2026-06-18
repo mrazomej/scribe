@@ -84,6 +84,7 @@ def _build_from_kwargs(ctx, kw, d_mode):
         prob_prior=kw.get("prob_prior", "none"),
         zero_inflation_prior=kw.get("zero_inflation_prior", "none"),
         n_datasets=ctx.n_datasets,
+        grouping_spec=ctx.grouping_spec,
         dataset_params=kw.get("dataset_params"),
         dataset_mixing=kw.get("dataset_mixing"),
         expression_dataset_prior=kw.get(

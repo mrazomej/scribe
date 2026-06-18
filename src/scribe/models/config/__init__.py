@@ -30,6 +30,13 @@ from .groups import (
 )
 from .base import ModelConfig
 from .builder import ModelConfigBuilder
+from .grouping import (
+    GroupLevel,
+    Factor,
+    GroupingSpec,
+    normalize_grouping,
+    resolve_dataset_prior_dict,
+)
 from .parameter_mapping import (
     FREEZE_KEY_ALIASES,
     PRIOR_KEY_ALIASES,
@@ -46,6 +53,12 @@ __all__ = [
     "ModelConfigBuilder",
     # Config types
     "ModelConfig",
+    # Multi-factor grouping
+    "GroupLevel",
+    "Factor",
+    "GroupingSpec",
+    "normalize_grouping",
+    "resolve_dataset_prior_dict",
     # Parameter groups
     "AmortizationConfig",
     "EarlyStoppingConfig",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Union, TYPE_CHECKING
 
 import numpy as _np
 import jax.numpy as jnp
@@ -1327,30 +1327,76 @@ def _compare_shrinkage(
     )
 
 
+def _grouping_spec(results):
+    """Return the multi-factor grouping spec on ``results``, or ``None``."""
+    return getattr(
+        getattr(results, "model_config", None), "grouping_spec", None
+    )
+
+
+def _resolve_leaf_index(results, leaf: Union[int, Dict[str, str]]) -> int:
+    """Resolve a leaf address to an integer leaf index.
+
+    ``leaf`` may be an integer (used as-is) or a ``{factor: level}`` dict that
+    is matched against the present-combination table on the fitted
+    ``grouping_spec``. The dict must match exactly one leaf.
+    """
+    if isinstance(leaf, dict):
+        gs = _grouping_spec(results)
+        if gs is None:
+            raise ValueError(
+                "dict leaf addressing requires a multi-factor grouping_spec "
+                "on the fitted results; pass an integer leaf index instead."
+            )
+        coords = gs.leaf_coords()
+        matches = [
+            i
+            for i, c in enumerate(coords)
+            if all(c.get(k) == str(v) for k, v in leaf.items())
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"leaf selector {leaf!r} matched {len(matches)} leaves; it "
+                f"must match exactly one. Available leaves: {coords}."
+            )
+        return matches[0]
+    return int(leaf)
+
+
+def _leaf_label(results, idx: int) -> str:
+    """Human-readable label for leaf ``idx`` (falls back to ``dataset_<i>``)."""
+    gs = _grouping_spec(results)
+    if gs is not None and 0 <= idx < len(gs.leaf_labels):
+        return gs.leaf_labels[idx]
+    return f"dataset_{idx}"
+
+
 def compare_datasets(
     results,
-    dataset_A: int,
-    dataset_B: int,
+    dataset_A: Union[int, Dict[str, str]],
+    dataset_B: Union[int, Dict[str, str]],
     label_A: Optional[str] = None,
     label_B: Optional[str] = None,
     method: str = "shrinkage",
     component: Optional[int] = None,
     **kwargs,
 ) -> "ScribeDEResults":
-    """Compare two datasets from a jointly fitted multi-dataset model.
+    """Compare two datasets (leaves) from a jointly fitted multi-dataset model.
 
     Parameters
     ----------
     results : object
         Multi-dataset results object supporting ``get_dataset``.
-    dataset_A : int
-        First dataset index.
-    dataset_B : int
-        Second dataset index.
+    dataset_A, dataset_B : int or dict
+        Leaf addresses. An integer leaf index, or a ``{factor: level}`` dict
+        (e.g. ``{"treatment": "panobinostat", "sample": "D3"}``) matched
+        against the fitted grouping's present-combination table.
     label_A : str, optional
-        Label for dataset A.
+        Label for dataset A. Defaults to the leaf's human-readable label
+        (e.g. ``"panobinostat | D3"``) when a grouping spec is available,
+        otherwise ``dataset_<i>``.
     label_B : str, optional
-        Label for dataset B.
+        Label for dataset B (see ``label_A``).
     method : str, default='shrinkage'
         Method forwarded to :func:`compare`.
     component : int, optional
@@ -1372,10 +1418,13 @@ def compare_datasets(
             "(model_config.n_datasets must be set)."
         )
 
+    dataset_A = _resolve_leaf_index(results, dataset_A)
+    dataset_B = _resolve_leaf_index(results, dataset_B)
+
     if label_A is None:
-        label_A = f"dataset_{dataset_A}"
+        label_A = _leaf_label(results, dataset_A)
     if label_B is None:
-        label_B = f"dataset_{dataset_B}"
+        label_B = _leaf_label(results, dataset_B)
 
     # Early guard: mixture models require an explicit component selection.
     # Without it, dataset views still carry a component axis and the

@@ -341,6 +341,15 @@ class ParamSpec(BaseModel):
             "(n_datasets, n_genes)."
         ),
     )
+    is_factor: bool = Field(
+        False,
+        description=(
+            "If True, the site carries a grouping-FACTOR level axis (size "
+            "L_f, distinct from the leaf/dataset axis). Used for the additive "
+            "multi-factor hierarchy's per-factor effect/raw sites so the "
+            "layout system assigns them a FACTORS axis."
+        ),
+    )
     guide_family: Optional[GuideFamily] = Field(
         None, description="Variational family for this parameter"
     )
@@ -2062,6 +2071,171 @@ class DatasetHierarchicalSigmoidNormalSpec(
     ...     hyper_scale_name="logit_p_dataset_scale",
     ...     is_dataset=True,
     ... )
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+
+# ==============================================================================
+# Additive Multi-Factor Hierarchical Specifications
+# ==============================================================================
+
+
+class GroupingFactorSpec(BaseModel):
+    """Per-factor descriptor for an additive multi-factor hierarchical prior.
+
+    Carries the factor's level count, the leaf->level gather map, its effect
+    type (random/fixed) and prior family, and the NumPyro site names used by
+    :meth:`MultiFactorNormalWithTransformSpec.sample_hierarchical` and the
+    matching guide dispatch. Random-effect hyperparameters are sampled as
+    separate specs by the factory and read here from ``param_values`` by name.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    name: str
+    n_levels: int
+    leaf_to_level: Tuple[int, ...]
+    effect_type: str = "random"  # "random" | "fixed"
+    prior: str = "gaussian"  # "gaussian" | "horseshoe" | "neg" (random only)
+    fixed_scale: float = 1.0  # used when effect_type == "fixed"
+    raw_name: str  # NCP z site, shape (K?, L_f, [G])
+    effect_name: str  # deterministic effect site, shape (K?, L_f, [G])
+    # Random-effect hyperparameter site names (read from param_values):
+    scale_name: Optional[str] = None  # gaussian: learned scale
+    tau_name: Optional[str] = None  # horseshoe global shrinkage
+    lambda_name: Optional[str] = None  # horseshoe per-gene local scale
+    c_sq_name: Optional[str] = None  # horseshoe slab
+    psi_name: Optional[str] = None  # neg per-gene scale^2
+
+
+class MultiFactorNormalWithTransformSpec(
+    DatasetHierarchicalNormalWithTransformSpec
+):
+    """Additive multi-factor hierarchical prior on a leaf-axis parameter.
+
+    The leaf-level (per present factor-combination) unconstrained location is
+    the population intercept plus a sum of per-factor zero-mean NCP effects,
+    each gathered onto the leaf by its factor's ``leaf_to_level`` map::
+
+        unconstrained^(leaf) = loc + sum_f  scale_f * z_f[level_f(leaf)]
+        param^(leaf)         = transform(unconstrained^(leaf))
+
+    where ``z_f ~ Normal(0, 1)`` (NCP) and ``scale_f`` is a fixed constant
+    (``effect_type="fixed"``) or a learned shrinkage scale read from the
+    factor's hyperparameter sites (``effect_type="random"``: gaussian /
+    horseshoe / neg). Each factor's effect is exposed as a deterministic site
+    (``effect_name``) for downstream factor-level differential expression.
+
+    The constrained leaf parameter keeps the existing per-dataset shape
+    ``(K?, n_leaves, [G])`` (``is_dataset=True``), so the per-cell likelihood
+    indexing is unchanged. Reduces to the single-factor dataset hierarchy when
+    there is one factor whose ``leaf_to_level`` is the identity permutation.
+    """
+
+    # Each factor carries its own scale, so the parent's single scale
+    # hyperparameter is unused here.
+    hyper_scale_name: str = ""
+    factors: Tuple[GroupingFactorSpec, ...] = ()
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Assemble the leaf parameter from population loc + factor effects."""
+        loc = param_values[self.hyper_loc_name]
+        lead = (dims["n_components"],) if self.is_mixture else ()
+        n_lead = len(lead)
+        trailing = tuple(dims[d] for d in self.shape_dims)  # () or (n_genes,)
+
+        # Population loc broadcast: insert the leaf axis right after any
+        # leading (component) axes so it broadcasts against the gathered
+        # per-leaf effects.
+        acc = jnp.expand_dims(loc, axis=n_lead)
+
+        for f in self.factors:
+            z_shape = lead + (f.n_levels,) + trailing
+            z = numpyro.sample(
+                f.raw_name,
+                dist.Normal(0.0, 1.0).expand(z_shape).to_event(len(z_shape)),
+            )
+            if f.effect_type == "fixed":
+                scale = f.fixed_scale
+            elif f.prior == "horseshoe":
+                tau = param_values[f.tau_name]
+                lam = param_values[f.lambda_name]
+                c_sq = param_values[f.c_sq_name]
+                c = jnp.sqrt(c_sq)
+                scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+            elif f.prior == "neg":
+                scale = jnp.sqrt(param_values[f.psi_name])
+            else:  # gaussian
+                scale = param_values[f.scale_name]
+
+            effect = scale * z
+            numpyro.deterministic(f.effect_name, effect)
+
+            # Gather each factor's effect onto the leaf axis (the level axis is
+            # immediately after the leading component axes).
+            level_idx = jnp.asarray(f.leaf_to_level)
+            acc = acc + jnp.take(effect, level_idx, axis=n_lead)
+
+        constrained = self.transform(acc)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+    @property
+    def companion_specs(self) -> list:
+        """Layout-only descriptors for the per-factor raw/effect sites.
+
+        Each factor's NCP ``z`` (``raw_name``) and deterministic effect
+        (``effect_name``) carry a FACTORS level axis (size ``L_f``), so they
+        are exposed with ``is_factor=True`` for the layout system.
+        """
+        out: list = []
+        base = dict(shape_dims=self.shape_dims, default_params=(0.0, 1.0))
+        for f in self.factors:
+            out.append(
+                LayoutOnlySpec(
+                    name=f.raw_name,
+                    is_factor=True,
+                    is_mixture=self.is_mixture,
+                    is_gene_specific=self.is_gene_specific,
+                    **base,
+                )
+            )
+            out.append(
+                LayoutOnlySpec(
+                    name=f.effect_name,
+                    is_factor=True,
+                    is_mixture=self.is_mixture,
+                    is_gene_specific=self.is_gene_specific,
+                    **base,
+                )
+            )
+        return out
+
+
+class MultiFactorPositiveNormalSpec(MultiFactorNormalWithTransformSpec):
+    """Additive multi-factor hierarchy with a positive (exp) transform.
+
+    For mean expression ``mu`` (or dispersion ``r``): the leaf parameter lives
+    in ``(0, inf)``.
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+
+class MultiFactorSigmoidNormalSpec(MultiFactorNormalWithTransformSpec):
+    """Additive multi-factor hierarchy with a sigmoid transform.
+
+    For success probability ``p`` (or gate ``pi``): the leaf parameter lives
+    in ``(0, 1)``.
     """
 
     transform: Transform = Field(

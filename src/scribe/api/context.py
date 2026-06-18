@@ -104,6 +104,7 @@ class FitContext:
     n_components: Optional[int] = None
     n_datasets: Optional[int] = None
     dataset_indices: Any = None
+    grouping_spec: Any = None
     model_config: Optional["ModelConfig"] = None
     inference_config: Optional["InferenceConfig"] = None
     annotation_prior_logits: Any = None

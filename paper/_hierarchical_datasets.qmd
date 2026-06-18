@@ -1205,6 +1205,261 @@ Furthermore, when `n_datasets = 1`, the multi-dataset model degenerates to the
 standard single-dataset model, and all existing analysis workflows remain
 unchanged.
 
+## Multi-factor (crossed and nested) hierarchies {#sec-hdata-multifactor}
+
+The development so far treats the dataset assignment $\sigma(c)$ as a **single** grouping
+axis: each cell belongs to exactly one dataset, and the dataset-level parameters are drawn
+from one population distribution. Many experimental designs, however, are described by
+**several** grouping factors at once. A canonical example is a panel of $D$ donors, each
+measured under $T$ experimental conditions: a cell is jointly indexed by *which donor* and
+*which condition* produced it. When the same donors recur across conditions, the donor
+identity is **crossed** with the condition, and a single grouping axis cannot represent the
+fact that a donor's measurements under different conditions share a common donor identity.
+
+This section generalises the single grouping axis to an arbitrary number of grouping
+factors, accommodating **crossed**, **nested**, and **interaction** structure, while
+preserving the composition-sampling and differential-expression machinery developed above.
+
+### Setup: factors, levels, and leaves {#sec-hdata-mf-setup}
+
+We observe $F$ grouping **factors**. Factor $f \in \{1,\dots,F\}$ partitions the cells into
+$L_f$ **levels**. A cell $c$ is jointly described by the tuple of its factor levels; we call
+the realised combination its **leaf**. Writing $\ell(c)$ for the leaf of cell $c$, the leaf
+assignment generalises the dataset assignment of @eq-hdata-assignment:
+
+$$
+\ell(c) = \bigl(\lambda_1(c), \lambda_2(c), \dots, \lambda_F(c)\bigr),
+\qquad \lambda_f(c) \in \{1,\dots,L_f\},
+$${#eq-hdata-mf-leaf}
+
+where $\lambda_f(c)$ is the level of factor $f$ to which cell $c$ belongs. Only the
+**present** combinations — tuples realised by at least one cell — define leaves; we index
+them $\ell = 1,\dots,L$, with $L \le \prod_f L_f$ (typically far smaller, and equal to the
+product only for a fully crossed, complete design). For each factor we retain the map
+
+$$
+\kappa_f(\ell) \in \{1,\dots,L_f\},
+$${#eq-hdata-mf-levelmap}
+
+returning the level of factor $f$ associated with leaf $\ell$. Like the dataset assignment of
+@sec-hdata-setup, these maps are **observed and fixed**; nothing here is inferred. The
+single-dataset model of the preceding sections is the special case $F = 1$, for which the
+leaf index coincides with the dataset index and $\kappa_1$ is the identity.
+
+### Factor structure: crossed, nested, interaction {#sec-hdata-mf-structure}
+
+The level maps $\kappa_f$ encode the design's structure:
+
+- **Crossed factors.** Two factors are crossed when their levels vary independently — every
+  (or nearly every) combination of their levels is present. The donor $\times$ condition
+  design is crossed: each donor appears under each condition.
+- **Nested factors.** Factor $f'$ is nested in $f$ when each level of $f'$ occurs within
+  exactly one level of $f$ (e.g. replicate wells nested within a sequencing plate). Nesting
+  is the constraint that $\kappa_{f'}(\ell)$ determines $\kappa_f(\ell)$.
+- **Interaction factors.** An interaction between $f$ and $f'$ is itself represented as an
+  additional factor whose levels are the present pairs
+  $(\kappa_f(\ell), \kappa_{f'}(\ell))$; its level map is the joint index of the two parents.
+
+Crossing is the generic situation and needs no special encoding; nesting and interaction are
+particular patterns of the level maps. All three are handled uniformly by the additive model
+of the next subsection.
+
+### Additive generative model {#sec-hdata-mf-additive}
+
+We promote the population-level mean $\mu_g$ to a global intercept and write each
+**leaf-level** mean as the intercept plus a sum of per-factor **effects**, in log space:
+
+$$
+\log \mu_g^{(\ell)} = \log \mu_g + \sum_{f=1}^{F} \alpha_{g}^{(f)}\!\bigl[\kappa_f(\ell)\bigr],
+\qquad \ell = 1,\dots,L,
+$${#eq-hdata-mf-additive-mu}
+
+where $\alpha_g^{(f)}[k]$ is the effect of level $k$ of factor $f$ on gene $g$. The same
+additive structure applies to the other unconstrained parameters — in logit space for the
+success probability $p$ and the zero-inflation gate $\pi$:
+
+$$
+\text{logit}(p^{(\ell)}) = \text{logit}(p) + \sum_{f=1}^{F} \beta^{(f)}\!\bigl[\kappa_f(\ell)\bigr],
+\qquad
+\text{logit}(\pi_g^{(\ell)}) = \text{logit}(\pi_g) + \sum_{f=1}^{F} \gamma_g^{(f)}\!\bigl[\kappa_f(\ell)\bigr].
+$${#eq-hdata-mf-additive-p-gate}
+
+The crucial property is that a factor's effect is **shared across all leaves with the same
+level of that factor**. In the donor $\times$ condition design, the donor effect
+$\alpha_g^{(\text{donor})}[d]$ enters every leaf belonging to donor $d$ — under *both*
+conditions — so a donor's two condition-specific leaves are coupled through their common
+donor effect. This is precisely the shared identity the single-axis model could not express.
+Setting $F = 1$ recovers @eq-hdata-mu-dataset, with the single factor's effect playing the
+role of the dataset deviation.
+
+### Effect types: random and fixed {#sec-hdata-mf-effect-types}
+
+Each factor's effects are assigned one of two prior structures.
+
+**Random effects.** When a factor has enough levels to support an estimate of its spread —
+for example a panel of donors — its effects are modelled as zero-mean draws from a common
+distribution whose scale is learned from the data, exactly as in @sec-hdata-hierarchical-mu
+and @sec-hdata-horseshoe. In non-centred form,
+
+$$
+z_{g,k}^{(f)} \sim \mathcal{N}(0,1), \qquad
+\alpha_g^{(f)}[k] = s_g^{(f)} \, z_{g,k}^{(f)},
+$${#eq-hdata-mf-random}
+
+where the effective scale $s_g^{(f)}$ is supplied by the chosen shrinkage prior — a single
+learned scale $\tau_f$ (Normal hierarchy), a per-gene regularised-horseshoe scale
+$\tau_f \tilde{\lambda}_g^{(f)}$ (@eq-hdata-regularized-lambda), or the corresponding
+heavy-tailed alternative. The learned scale adapts the degree of shrinkage of factor $f$
+toward zero, and may differ between factors.
+
+**Fixed effects.** When a factor encodes a deliberate contrast of primary interest with few
+levels — most importantly a two-level treatment condition — there are too few levels to
+estimate a spread, and shrinking the effect toward zero would bias the very contrast being
+sought. Such a factor is given a fixed, weakly-informative scale that is *not* learned:
+
+$$
+z_{g,k}^{(f)} \sim \mathcal{N}(0,1), \qquad
+\alpha_g^{(f)}[k] = s^{(f)} \, z_{g,k}^{(f)}, \qquad s^{(f)} \text{ fixed}.
+$${#eq-hdata-mf-fixed}
+
+A fixed effect still carries a prior pull toward zero of magnitude set by $s^{(f)}$, but it
+performs no *adaptive* shrinkage: the data move the contrast freely, undamped by an estimated
+scale that a two-level factor cannot identify. In a treatment study the condition factor is
+fixed, while donor and any donor $\times$ condition interaction are random.
+
+### Identifiability {#sec-hdata-mf-identifiability}
+
+The decomposition @eq-hdata-mf-additive-mu is invariant under shifting all of a factor's
+effects by a per-gene constant and compensating in the intercept,
+
+$$
+\log \mu_g \;\to\; \log \mu_g + c_g^{(f)}, \qquad
+\alpha_g^{(f)}[k] \;\to\; \alpha_g^{(f)}[k] - c_g^{(f)} \quad \text{for all } k,
+$${#eq-hdata-mf-shift}
+
+so the effects are identified only up to such per-factor shifts. Three observations make the
+model well posed:
+
+1. **The intercept is the only unshrunk overall level.** With zero-mean effects and a single
+   intercept $\mu_g$, the shift ambiguity is resolved softly by the priors: the zero-mean
+   prior on each factor pins its effects near zero, and the intercept absorbs the overall
+   level. Heavy-tailed (horseshoe) priors make this anchoring strong.
+2. **Main-effect contrasts are shift-invariant.** A contrast between two levels of the *same*
+   factor,
+   $$
+   \alpha_g^{(f)}[a] - \alpha_g^{(f)}[b],
+   $${#eq-hdata-mf-contrast}
+   is unchanged by @eq-hdata-mf-shift, because the per-factor constant cancels. Such contrasts
+   are therefore identified even under the soft (prior-only) resolution; in practice we
+   additionally **centre** the contrast across genes per posterior draw, placing it in the
+   centred-log space used for compositional comparison (@sec-hdata-de).
+3. **Interactions require an explicit margin constraint.** An interaction factor's effects are
+   aliased with the main effects of its parents unless the interaction is constrained to have
+   zero margins along each parent. Without such a constraint the split of variation between a
+   main effect and an interaction is not identified, and interaction *level contrasts* are not
+   interpretable as such. A hard sum-to-zero (contrast-basis) reparameterisation removes both
+   the per-factor shift ambiguity of (1) and the interaction aliasing of (3) exactly; it is a
+   stricter alternative to the soft resolution and is compatible with the same generative form.
+
+### Shrinkage-scale diagnostics {#sec-hdata-mf-diagnostics}
+
+For a **random** factor with many levels, the learned scale is informative about how much its
+levels vary: a small posterior scale means the levels are nearly exchangeable (little
+factor-to-factor variation), a large scale means substantial heterogeneity. For a donor
+factor this is a useful read-out of donor-to-donor variability. These scales are **posterior
+shrinkage-scale diagnostics**, not variance components in the classical sense: they are
+reliable only when the factor has enough levels to estimate a spread. For a two-level
+condition factor (modelled as a fixed effect), or for a small interaction (e.g. a handful of
+donors crossed with two conditions), the corresponding scale is weakly identified and should
+not be read as a reproducibility estimand without validation.
+
+### Composition sampling and paired structure {#sec-hdata-mf-composition}
+
+Composition sampling proceeds exactly as in @sec-hdata-composition once the leaf-level
+parameters have been assembled. At posterior draw $s$, @eq-hdata-mf-additive-mu (with its $p$
+and gate analogues) produces the leaf-level dispersion $r_g^{(\ell,s)}$ and success
+probability, from which the simplex $\underline{\rho}^{(\ell,s)}$ is drawn by the Dirichlet
+or Gamma procedure of @sec-hdata-composition. Because every leaf at draw $s$ is built from the
+*same* intercept and factor effects, the leaves are **jointly correlated** through the shared
+latent variables — a generalisation of the paired structure of @eq-hdata-paired-samples. In
+particular, the two condition-specific leaves of one donor are coupled both through the shared
+donor effect and through the shared draw of the condition effect.
+
+### Factor-level differential expression {#sec-hdata-mf-de}
+
+The single-axis framework compares two leaves directly (@sec-hdata-de). With several factors
+we additionally define **factor-level** contrasts that summarise one factor while accounting
+for the others. Let the factor of interest be $f$ with levels $A, B$ to be contrasted; the
+remaining grouping factors are handled either by holding them at chosen levels, by restricting
+to leaves where they are matched, or by averaging over them.
+
+**Paired main-effect contrast (the default for paired designs).** Choose a **pairing factor**
+$h$ — the grouping factor held in common across the contrast (e.g. the donor). For each level
+$d$ of $h$ that is present at *both* $A$ and $B$, let $\ell(d,A)$ and $\ell(d,B)$ denote the
+corresponding leaves, and define the within-pair centred-log difference at draw $s$,
+
+$$
+\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,B),\,s)} - z_{g,\text{CLR}}^{(\ell(d,A),\,s)},
+$${#eq-hdata-mf-paired-delta}
+
+using the CLR transform of @eq-hdata-de-clr. The factor-level statistic is the weighted
+average of these paired differences over the pairing levels,
+
+$$
+\bar{\Delta}_g^{(s)} = \sum_{d} w_d \, \Delta_g^{(d,s)}, \qquad \sum_d w_d = 1,
+$${#eq-hdata-mf-paired-mean}
+
+with weights $w_d$ determined by the two leaves of pairing level $d$ (uniform, or weighted by
+their cell counts). All gene-level statistics are then computed from
+$\{\bar{\Delta}_g^{(s)}\}$ by the Monte-Carlo counting of @sec-hdata-de, exactly as for a
+leaf-versus-leaf comparison.
+
+Because @eq-hdata-mf-paired-delta differences two genuine leaf compositions and
+@eq-hdata-mf-paired-mean averages a quantity that is **linear in CLR space**, the estimand is
+well defined regardless of the nonlinearities in the transform–normalise–CLR chain. Averaging
+dispersions, means, or logits *before* transforming would target a different and generally
+incoherent quantity.
+
+**Interpretation with interactions.** When a donor $\times$ condition interaction is present,
+@eq-hdata-mf-paired-mean estimates the **average over the observed pairing levels** of the
+within-pair effect — including the average interaction deviation across those donors. This is a
+legitimate and often desirable estimand (the mean effect over the donors actually studied),
+but it is *not* identical to the pure main-effect parameter; the two coincide only when the
+interaction averages to zero over the observed donors.
+
+**Marginal-composition contrast (alternative).** A different summary first averages the leaf
+*compositions* across the other factors within each level of $f$, per draw, and then forms the
+CLR difference between the two averaged compositions. This targets the contrast of **average
+population compositions** under $A$ and $B$, rather than the average of within-pair contrasts,
+and is reported as such.
+
+### Summary of the multi-factor model {#sec-hdata-mf-summary}
+
+$$
+\boxed{
+\begin{aligned}
+&\textbf{Leaves:}\quad \ell(c) = (\lambda_1(c),\dots,\lambda_F(c)), \quad
+\kappa_f(\ell) = \text{level of factor } f \text{ at leaf } \ell \;\; (\text{observed}), \\[2pt]
+&\textbf{Additive model:}\quad
+\log \mu_g^{(\ell)} = \log \mu_g + \sum_{f=1}^F \alpha_g^{(f)}\!\bigl[\kappa_f(\ell)\bigr]
+\;\; (\text{and } \text{logit}\,p,\ \text{logit}\,\pi), \\[2pt]
+&\textbf{Random effect:}\quad \alpha_g^{(f)}[k] = s_g^{(f)} z_{g,k}^{(f)}, \;
+z \sim \mathcal{N}(0,1), \; s_g^{(f)} \text{ learned (Normal / horseshoe / heavy-tailed)}, \\[2pt]
+&\textbf{Fixed effect:}\quad \alpha_g^{(f)}[k] = s^{(f)} z_{g,k}^{(f)}, \;
+z \sim \mathcal{N}(0,1), \; s^{(f)} \text{ fixed (no adaptive shrinkage)}, \\[2pt]
+&\textbf{Identifiability:}\quad \text{shift-invariant per factor; main-effect contrasts}
+\;\alpha_g^{(f)}[a]-\alpha_g^{(f)}[b]\; \text{identified (centred per draw);} \\
+&\hphantom{\textbf{Identifiability:}\quad} \text{interactions need zero-margin (sum-to-zero) constraints,} \\[2pt]
+&\textbf{Paired factor DE:}\quad
+\Delta_g^{(d,s)} = z_{g,\text{CLR}}^{(\ell(d,B),s)} - z_{g,\text{CLR}}^{(\ell(d,A),s)}, \quad
+\bar{\Delta}_g^{(s)} = \sum_d w_d \Delta_g^{(d,s)}, \;\; \sum_d w_d = 1.
+\end{aligned}
+}
+$${#eq-hdata-mf-summary}
+
+Setting $F = 1$ reduces every expression in this section to the single-dataset hierarchy of
+@sec-hdata-generative.
+
 ## Mathematical summary {#sec-hdata-summary}
 
 We collect the key mathematical results of this section for reference.

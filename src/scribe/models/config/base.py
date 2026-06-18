@@ -25,6 +25,7 @@ from .groups import (
     PriorOverrides,
 )
 from .parameter_mapping import get_active_parameters
+from .grouping import GroupingSpec
 from ..builders.parameter_specs import ParamSpec
 
 # ==============================================================================
@@ -208,6 +209,7 @@ class ModelConfig(BaseModel):
 
         # --- Backfill missing fields for very old pickles ----------------
         d.setdefault("n_datasets", None)
+        d.setdefault("grouping_spec", None)
         d.setdefault("dataset_params", None)
         d.setdefault("dataset_mixing", None)
         # Migrate old hierarchical_mu boolean → expression_prior enum
@@ -333,6 +335,15 @@ class ModelConfig(BaseModel):
         description=(
             "Number of datasets for joint multi-dataset modeling. "
             "Dataset assignments are fixed (observed), not inferred."
+        ),
+    )
+    grouping_spec: Optional[GroupingSpec] = Field(
+        None,
+        description=(
+            "Canonical multi-factor grouping descriptor (factor names, level "
+            "sets, leaf->level maps, per-factor prior families, leaf labels). "
+            "The leaf axis coincides with the n_datasets axis; n_leaves must "
+            "equal n_datasets. None for single-factor or non-grouped fits."
         ),
     )
     dataset_params: Optional[List[str]] = Field(
@@ -808,6 +819,28 @@ class ModelConfig(BaseModel):
             # Provide default VAE config
             return VAEConfig()
         return v
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_grouping_spec(self) -> "ModelConfig":
+        """Ensure the multi-factor grouping descriptor is consistent.
+
+        The leaf axis of the grouping spec is the dataset axis, so a present
+        ``grouping_spec`` must declare exactly ``n_datasets`` leaves.
+        """
+        if self.grouping_spec is not None:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "grouping_spec is set but n_datasets is None; the leaf "
+                    "axis must coincide with the dataset axis."
+                )
+            if self.grouping_spec.n_leaves != self.n_datasets:
+                raise ValueError(
+                    f"grouping_spec.n_leaves ({self.grouping_spec.n_leaves}) "
+                    f"must equal n_datasets ({self.n_datasets})."
+                )
+        return self
 
     # --------------------------------------------------------------------------
 

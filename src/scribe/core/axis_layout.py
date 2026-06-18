@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 # Canonical axis names, in the order that ``resolve_shape`` prepends them.
 COMPONENTS = "components"
 DATASETS = "datasets"
+FACTORS = "factors"
 GENES = "genes"
 CELLS = "cells"
 SAMPLES = "samples"
@@ -74,9 +75,12 @@ _DIM_TO_AXIS = {
     "n_cells": CELLS,
 }
 
-# Canonical ordering: components > datasets > genes/cells.
-# This matches the convention in ``resolve_shape``.
-_AXIS_ORDER = {COMPONENTS: 0, DATASETS: 1, GENES: 2, CELLS: 2}
+# Canonical ordering: components > datasets > factors > genes/cells.
+# This matches the convention in ``resolve_shape``. The FACTORS axis carries a
+# grouping-factor's level dimension (size L_f) on the additive multi-factor
+# hierarchy's per-factor effect/raw sites; it is distinct from the DATASETS
+# (leaf) axis and never appears on the per-cell likelihood path.
+_AXIS_ORDER = {COMPONENTS: 0, DATASETS: 1, FACTORS: 2, GENES: 3, CELLS: 3}
 
 # Frozen parameter name tables for backward-compat layout reconstruction.
 #
@@ -149,6 +153,13 @@ class AxisLayout:
         """Integer index of the dataset axis, or ``None``."""
         if DATASETS in self.axes:
             return self.axes.index(DATASETS) + self._offset
+        return None
+
+    @property
+    def factor_axis(self) -> Optional[int]:
+        """Integer index of the grouping-factor level axis, or ``None``."""
+        if FACTORS in self.axes:
+            return self.axes.index(FACTORS) + self._offset
         return None
 
     @property
@@ -379,6 +390,8 @@ def layout_from_param_spec(
         axes.append(COMPONENTS)
     if getattr(spec, "is_dataset", False):
         axes.append(DATASETS)
+    if getattr(spec, "is_factor", False):
+        axes.append(FACTORS)
     for dim in spec.shape_dims:
         mapped = _DIM_TO_AXIS.get(dim)
         if mapped is not None:

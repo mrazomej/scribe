@@ -86,6 +86,7 @@ class ModelConfigBuilder:
         self._prob_prior: str = "none"
         self._zero_inflation_prior: str = "none"
         self._n_datasets: Optional[int] = None
+        self._grouping_spec = None
         self._dataset_params: Optional[List[str]] = None
         self._dataset_mixing: Optional[bool] = None
         self._expression_dataset_prior: str = "none"
@@ -778,6 +779,7 @@ class ModelConfigBuilder:
             prob_prior=self._prob_prior,
             zero_inflation_prior=self._zero_inflation_prior,
             n_datasets=self._n_datasets,
+            grouping_spec=self._grouping_spec,
             dataset_params=self._dataset_params,
             dataset_mixing=self._dataset_mixing,
             expression_dataset_prior=self._expression_dataset_prior,

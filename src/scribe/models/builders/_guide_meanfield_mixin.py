@@ -18,14 +18,68 @@ from .parameter_specs import (
     BetaSpec,
     DirichletSpec,
     LogNormalSpec,
+    MultiFactorNormalWithTransformSpec,
     NormalWithTransformSpec,
     resolve_shape,
 )
 from scribe.stats.distributions import BetaPrime
-from ..components.guide_families import MeanFieldGuide
+from ..components.guide_families import MeanFieldGuide, LowRankGuide
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
+
+
+def _multifactor_guide_params(spec, dims):
+    """Register + sample per-factor NCP ``z`` sites for a multi-factor spec.
+
+    Each factor's ``z`` has shape ``(K?, L_f, [G])`` (component axis, the
+    factor's level axis, then any gene axis). The deterministic leaf parameter
+    is not a guide latent. Fixed-effect factors still have a guided ``z`` here;
+    only their *scale* is a fixed constant in the model (no hyper site).
+    """
+    lead = (dims["n_components"],) if spec.is_mixture else ()
+    trailing = tuple(dims[d] for d in spec.shape_dims)
+    last = None
+    for f in spec.factors:
+        shape = lead + (f.n_levels,) + trailing
+        loc = numpyro.param(f"{f.raw_name}_loc", jnp.zeros(shape))
+        scale = numpyro.param(
+            f"{f.raw_name}_scale",
+            jnp.full(shape, 1.0),
+            constraint=constraints.positive,
+        )
+        last = numpyro.sample(
+            f.raw_name, dist.Normal(loc, scale).to_event(len(shape))
+        )
+    return last
+
+@dispatch(MultiFactorNormalWithTransformSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: MultiFactorNormalWithTransformSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for the additive multi-factor hierarchy.
+
+    Registers per-factor NCP ``z`` variational params and samples them; the
+    deterministic leaf parameter is not a guide latent.
+    """
+    return _multifactor_guide_params(spec, dims)
+
+
+@dispatch(MultiFactorNormalWithTransformSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: MultiFactorNormalWithTransformSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide: per-factor NCP ``z`` sites use mean-field params."""
+    return _multifactor_guide_params(spec, dims)
+
 
 @dispatch(BetaSpec, MeanFieldGuide, dict, object)
 def setup_guide(

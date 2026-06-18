@@ -63,6 +63,7 @@ def build_config_from_preset(
     prob_prior: str = "none",
     zero_inflation_prior: str = "none",
     n_datasets: Optional[int] = None,
+    grouping_spec: Optional["GroupingSpec"] = None,
     dataset_params: Optional[List[str]] = None,
     dataset_mixing: Optional[bool] = None,
     expression_dataset_prior: str = "none",
@@ -659,6 +660,9 @@ def build_config_from_preset(
     else:
         # Keep user intent explicit even when currently not multi-dataset.
         builder._dataset_mixing = dataset_mixing
+
+    # Multi-factor grouping descriptor (None for single-factor / non-grouped).
+    builder._grouping_spec = grouping_spec
 
     # Horseshoe hyperparameters
     builder._horseshoe_tau0 = horseshoe_tau0
