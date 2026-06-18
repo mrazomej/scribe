@@ -75,6 +75,7 @@ dev = [
 
 paper = [
     "pertpy>=1.1.1",
+    "pydeseq2>=0.5.4",
     "rapids-singlecell-cu12[rapids]>=0.15.0",
 ]
 
