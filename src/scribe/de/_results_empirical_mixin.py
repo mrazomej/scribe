@@ -492,6 +492,76 @@ class EmpiricalResultsMixin:
         )
         return self._drop_other_from_mask(mask)
 
+    def exclude_gene_name_mask(
+        self,
+        prefixes: Sequence[str] = (),
+        patterns: Sequence[str] = (),
+        case_sensitive: bool = False,
+    ):
+        """Build a keep-mask that drops genes by name (prefix or regex).
+
+        A gene is **dropped** (mask ``False``) if its name starts with any of
+        ``prefixes`` or matches any of the regular-expression ``patterns``
+        (via :func:`re.search`); every other gene is kept. This is the
+        principled way to remove *known* technical confounders —
+        mitochondrial, ribosomal, hemoglobin genes — from the reported
+        composition before CLR: the decision is made from gene identity,
+        decided **independently of the contrast** (unlike thresholding on the
+        effect size itself, which is circular).
+
+        Reads only gene names, so it works on
+        :func:`scribe.compare_groups` results. The ``"_other"`` aggregate is
+        always dropped (pooled), matching the other builders. Combine with
+        :meth:`composition_coverage_mask` (boolean ``&``) and pass the result
+        up front via ``gene_mask=``.
+
+        Parameters
+        ----------
+        prefixes : sequence of str
+            Drop genes whose name starts with any of these, e.g.
+            ``("MT-", "RPL", "RPS", "MRPL", "MRPS")``.
+        patterns : sequence of str
+            Drop genes whose name matches any of these regexes — for finer
+            control such as mitochondrial pseudogenes (``r"^MT(RNR|CO|ND|ATP)"``)
+            or the hemoglobin loci (``r"^HB[ABDEGMQZ]"``).
+        case_sensitive : bool, default=False
+            Whether prefix/pattern matching is case-sensitive.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean keep-mask over genes (``True`` = keep).
+        """
+        import re
+
+        import numpy as np
+
+        names = (
+            self._all_gene_names
+            if self._all_gene_names is not None
+            else self.gene_names
+        )
+        if names is None:
+            raise ValueError(
+                "Cannot build a gene-name mask: gene names are not available "
+                "on this results object."
+            )
+        names = [str(n) for n in names]
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pre = tuple(prefixes) if case_sensitive else tuple(
+            p.lower() for p in prefixes
+        )
+        regexes = [re.compile(p, flags) for p in patterns]
+
+        def _excluded(name: str) -> bool:
+            hay = name if case_sensitive else name.lower()
+            if any(hay.startswith(p) for p in pre):
+                return True
+            return any(r.search(name) for r in regexes)
+
+        keep = np.array([not _excluded(n) for n in names], dtype=bool)
+        return self._drop_other_from_mask(keep)
+
     def set_expression_threshold(
         self, min_expression: float
     ) -> "ScribeEmpiricalDEResults":

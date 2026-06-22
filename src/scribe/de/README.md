@@ -115,6 +115,9 @@ When results objects are passed, `compare()`:
 | `de.set_gene_mask(mask)`                                  | Change expression mask and recompute CLR (from stored simplex) |
 | `de.set_expression_threshold(min_expression)`             | Build mask from MAP mu and apply                               |
 | `de.set_composition_coverage(coverage)`                   | Build mask from cumulative MAP composition coverage and apply  |
+| `de.exclude_gene_name_mask(prefixes, patterns)`           | Build keep-mask dropping genes by name (mito / ribo / HB)      |
+| `de.set_reference(reference)`                             | Recompute CLR under a new reference frame (`clr`/`iqlr`/explicit) |
+| `de.iqlr_reference_mask()`                                | Inspect which genes form the active IQLR reference             |
 | `de.clear_mask()`                                         | Remove mask, restore all genes                                 |
 | `de.shrink(sigma_grid, ...)`                              | Wrap empirical results with shrinkage layer (zero-copy)        |
 

@@ -685,6 +685,44 @@ class TestEmpiricalTestContrast:
         assert result["lfsr"] < 0.01
 
 
+class TestExcludeGeneNameMask:
+    """Tests for ``ScribeEmpiricalDEResults.exclude_gene_name_mask``."""
+
+    def _de(self, names):
+        return ScribeEmpiricalDEResults(
+            delta_samples=jnp.zeros((10, len(names))),
+            gene_names=list(names),
+        )
+
+    def test_prefix_exclusion(self):
+        de = self._de(["MT-ND6", "RPL3", "RPS6", "FOO", "BAR"])
+        keep = de.exclude_gene_name_mask(prefixes=("MT-", "RPL", "RPS"))
+        np.testing.assert_array_equal(keep, [False, False, False, True, True])
+
+    def test_regex_excludes_hemoglobin_only(self):
+        de = self._de(["HBB", "HBA1", "HBEGF", "HBS1L", "GENE"])
+        # ^HB[ABDEGMQZ]\d?$ catches hemoglobins but not HBEGF / HBS1L.
+        keep = de.exclude_gene_name_mask(patterns=(r"^HB[ABDEGMQZ]\d?$",))
+        np.testing.assert_array_equal(keep, [False, False, True, True, True])
+
+    def test_case_insensitive_by_default(self):
+        de = self._de(["mt-nd6", "Rpl3", "foo"])
+        keep = de.exclude_gene_name_mask(prefixes=("MT-", "RPL"))
+        np.testing.assert_array_equal(keep, [False, False, True])
+
+    def test_case_sensitive(self):
+        de = self._de(["mt-nd6", "MT-ND6", "foo"])
+        keep = de.exclude_gene_name_mask(prefixes=("MT-",), case_sensitive=True)
+        np.testing.assert_array_equal(keep, [True, False, True])
+
+    def test_other_always_dropped(self):
+        de = self._de(["FOO", "BAR", "_other"])
+        de._all_gene_names = ["FOO", "BAR", "_other"]
+        # No prefix matches, but "_other" is always pooled.
+        keep = de.exclude_gene_name_mask(prefixes=("MT-",))
+        np.testing.assert_array_equal(keep, [True, True, False])
+
+
 # --------------------------------------------------------------------------
 # Tests: Parametric backward compatibility
 # --------------------------------------------------------------------------
