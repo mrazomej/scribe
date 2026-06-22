@@ -168,6 +168,8 @@ def compare_groups(
     method: str = "empirical",
     component: Optional[int] = None,
     n_samples: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    convert_to_numpy: Optional[bool] = None,
     **kwargs,
 ):
     """Population-level differential expression for one grouping factor.
@@ -207,6 +209,16 @@ def compare_groups(
         samples if present, else 100. Pass a larger value (e.g. ``5000``) for
         smoother lfsr/PEFP estimates. Ignored for MCMC results (fixed at fit
         time). Note: more draws cost proportionally more memory and time.
+    batch_size : int, optional
+        Chunk size for the posterior draw and for each pair's composition
+        sampling. Lower it (e.g. ``500``) to cap peak memory for large
+        ``n_samples`` over many leaves/genes.
+    convert_to_numpy : bool, optional
+        Offload the posterior draw to host (NumPy) memory so the device stays
+        free for composition sampling — the recommended path when a large
+        ``n_samples`` would not fit in GPU memory. Defaults to ``True`` when
+        ``n_samples > 500`` and ``False`` otherwise; pass explicitly to force
+        either path.
     **kwargs
         Forwarded to :func:`compare` for each within-pair comparison
         (e.g. ``gene_mask``, ``n_samples_dirichlet``, ``rng_key``).
@@ -281,22 +293,39 @@ def compare_groups(
     # the default get_posterior_samples count is only 100, so expose n_samples to
     # raise it.
     if hasattr(results, "get_posterior_samples"):
-        if n_samples is not None:
-            # (Re)draw the requested number so the count is honoured even when a
-            # smaller set is already cached. MCMC results have a fixed sample
-            # count from the fit and ignore n_samples.
+        # Draw when a count is requested, or when nothing is cached yet.
+        _draw = n_samples is not None or (
+            getattr(results, "posterior_samples", None) is None
+        )
+        if _draw:
+            # Memory: a large posterior draw over every leaf x gene is the
+            # dominant allocation. Offload the draw to host RAM by default for
+            # large n_samples (the per-pair composition sampling then runs on the
+            # host too), and chunk the draw with batch_size. This keeps GPU
+            # headroom; pass convert_to_numpy=False to force the device path.
+            _to_numpy = (
+                bool(convert_to_numpy)
+                if convert_to_numpy is not None
+                else bool(n_samples is not None and int(n_samples) > 500)
+            )
+            _gps_kw = {"convert_to_numpy": _to_numpy}
+            if n_samples is not None:
+                _gps_kw["n_samples"] = int(n_samples)
+            if batch_size is not None:
+                _gps_kw["batch_size"] = int(batch_size)
             try:
-                results.get_posterior_samples(n_samples=int(n_samples))
+                results.get_posterior_samples(**_gps_kw)
             except TypeError:
+                # MCMC (or any results type lacking these kwargs): fixed sample
+                # count from the fit; fall back to its default draw.
                 warnings.warn(
-                    "n_samples is ignored for this results type (e.g. MCMC, "
-                    "whose posterior sample count is fixed at fit time).",
+                    "n_samples / batch_size / convert_to_numpy are not supported "
+                    "by this results type (e.g. MCMC, whose posterior sample "
+                    "count is fixed at fit time); using its default samples.",
                     stacklevel=2,
                 )
                 if getattr(results, "posterior_samples", None) is None:
                     results.get_posterior_samples()
-        elif getattr(results, "posterior_samples", None) is None:
-            results.get_posterior_samples()
 
     working = results
     if component is not None:
@@ -335,6 +364,12 @@ def compare_groups(
         contrib = w * np.asarray(arr, dtype=float)
         acc[key] = contrib if acc[key] is None else acc[key] + contrib
 
+    # Chunk each pair's composition sampling at the same batch_size (compare()
+    # defaults to 2048 otherwise).
+    _pair_kwargs = dict(kwargs)
+    if batch_size is not None and "batch_size" not in _pair_kwargs:
+        _pair_kwargs["batch_size"] = int(batch_size)
+
     last_pair = None
     for w, (_pv, leaf_A, leaf_B) in zip(weights, present):
         de_pair = compare(
@@ -343,7 +378,7 @@ def compare_groups(
             method="empirical",
             paired=True,
             compute_biological=compute_biological,
-            **kwargs,
+            **_pair_kwargs,
         )
         last_pair = de_pair
         if gene_names is None:

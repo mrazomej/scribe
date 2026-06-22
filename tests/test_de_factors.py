@@ -204,20 +204,27 @@ def test_compare_groups_estimand_and_method_guards(complete_spec):
 
 
 def test_compare_groups_n_samples_redraws(complete_spec, monkeypatch):
-    """n_samples drives the get_posterior_samples (re)draw count."""
+    """n_samples / batch_size / convert_to_numpy reach get_posterior_samples."""
     _patch_compare(monkeypatch)
     results = _make_results(complete_spec)
-    calls = []
+    seen = {}
 
-    def _gps(n_samples=100, **_kw):
-        calls.append(n_samples)
+    def _gps(n_samples=100, **kw):
+        seen["n_samples"] = n_samples
+        seen.update(kw)
         results.posterior_samples = {"r": np.zeros((n_samples, 1))}
         return results.posterior_samples
 
     results.get_posterior_samples = _gps
     results.posterior_samples = None
-    compare_groups(results, "perturbation", "control", "drug", n_samples=777)
-    assert calls == [777]
+    compare_groups(
+        results, "perturbation", "control", "drug",
+        n_samples=777, batch_size=200,
+    )
+    assert seen["n_samples"] == 777
+    assert seen["batch_size"] == 200
+    # Large draws offload to host RAM by default.
+    assert seen["convert_to_numpy"] is True
 
 
 def test_compare_groups_n_samples_ignored_for_mcmc(complete_spec, monkeypatch):
@@ -231,7 +238,7 @@ def test_compare_groups_n_samples_ignored_for_mcmc(complete_spec, monkeypatch):
 
     results.get_posterior_samples = _gps
     results.posterior_samples = None
-    with pytest.warns(UserWarning, match="n_samples is ignored"):
+    with pytest.warns(UserWarning, match="not supported by this results type"):
         compare_groups(results, "perturbation", "control", "drug", n_samples=777)
     assert results.posterior_samples is not None  # fell back to a default draw
 
