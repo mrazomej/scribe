@@ -293,9 +293,20 @@ def compare_groups(
     # the default get_posterior_samples count is only 100, so expose n_samples to
     # raise it.
     if hasattr(results, "get_posterior_samples"):
-        # Draw when a count is requested, or when nothing is cached yet.
-        _draw = n_samples is not None or (
-            getattr(results, "posterior_samples", None) is None
+        # Reuse cached draws when they already match the requested count — a
+        # second compare_groups call with the same n_samples must NOT redraw
+        # (re-sampling a large posterior is the dominant cost and can thrash GPU
+        # memory). Redraw only when nothing is cached, or the cached count
+        # differs from the request.
+        _cached = getattr(results, "posterior_samples", None)
+        _cached_n = None
+        if _cached:
+            try:
+                _cached_n = int(next(iter(_cached.values())).shape[0])
+            except (StopIteration, AttributeError, IndexError, TypeError):
+                _cached_n = None
+        _draw = _cached is None or (
+            n_samples is not None and _cached_n != int(n_samples)
         )
         if _draw:
             # Memory: a large posterior draw over every leaf x gene is the

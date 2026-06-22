@@ -370,6 +370,35 @@ class EmpiricalResultsMixin:
 
         return self
 
+    def _drop_other_from_mask(self, mask):
+        """Force the gene_coverage ``"_other"`` pseudo-gene out of a keep-mask.
+
+        ``scribe.fit(..., gene_coverage<1.0)`` pools the un-modelled tail into a
+        trailing ``"_other"`` category to preserve compositional closure. It is
+        the compositional anchor, never a reportable gene, so it must always
+        join the DE "other" pool rather than be kept as an explicit gene —
+        otherwise, because its pooled mass is typically large, a coverage /
+        expression mask keeps it and it leaks into the reported DE table. This
+        zeros the ``"_other"`` position so it is consistently pooled (matching
+        the no-mask behaviour, where the trailing category is the reference).
+        No-op when there is no ``"_other"`` category; idempotent.
+        """
+        import numpy as np
+
+        mask = np.asarray(mask, dtype=bool)
+        names = self._all_gene_names
+        if names is None:
+            names = self.gene_names
+        if names is None:
+            return mask
+        names = np.asarray([str(n) for n in names])
+        if names.shape[0] != mask.shape[0]:
+            return mask
+        mask = mask.copy()
+        # Matches scribe.core.gene_coverage's other_name default.
+        mask[names == "_other"] = False
+        return mask
+
     def expression_mask(self, min_expression: float):
         """Build (but do not apply) a min-expression mask from MAP means.
 
@@ -399,7 +428,9 @@ class EmpiricalResultsMixin:
             )
         mu_A = np.asarray(self.mu_map_A)
         mu_B = np.asarray(self.mu_map_B)
-        return (mu_A >= min_expression) | (mu_B >= min_expression)
+        return self._drop_other_from_mask(
+            (mu_A >= min_expression) | (mu_B >= min_expression)
+        )
 
     def composition_coverage_mask(self, coverage: float = 0.95):
         """Build (but do not apply) a cumulative-composition coverage mask.
@@ -431,9 +462,10 @@ class EmpiricalResultsMixin:
             )
         mu_A = np.asarray(self.mu_map_A)
         mu_B = np.asarray(self.mu_map_B)
-        return _coverage_mask_from_mu(mu_A, coverage) | _coverage_mask_from_mu(
+        mask = _coverage_mask_from_mu(mu_A, coverage) | _coverage_mask_from_mu(
             mu_B, coverage
         )
+        return self._drop_other_from_mask(mask)
 
     def set_expression_threshold(
         self, min_expression: float

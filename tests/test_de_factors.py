@@ -347,6 +347,50 @@ def test_compare_groups_mask_builders_without_simplex(
         de.set_composition_coverage(0.95)
 
 
+def test_mask_builders_exclude_other_pseudo_gene():
+    """The gene_coverage '_other' pseudo-gene is never kept by a mask builder."""
+    from scribe.de.results import ScribeEmpiricalDEResults
+
+    de = ScribeEmpiricalDEResults(
+        delta_samples=np.zeros((3, 2)),
+        gene_names=["g0", "g1"],
+        mu_map_A=np.array([10.0, 1.0, 50.0]),  # last (= _other) has the most mass
+        mu_map_B=np.array([10.0, 1.0, 50.0]),
+    )
+    de._all_gene_names = ["g0", "g1", "_other"]
+
+    cov = de.composition_coverage_mask(0.99)
+    assert bool(cov[-1]) is False  # _other pooled, never kept
+    assert bool(cov[0]) is True  # a real high-mass gene is kept
+
+    expr = de.expression_mask(5.0)
+    assert bool(expr[-1]) is False  # _other (mu 50) passes the floor but is excluded
+    assert bool(expr[0]) is True
+
+
+def test_compare_groups_reuses_matching_cached_posterior(
+    complete_spec, monkeypatch
+):
+    """A matching n_samples reuses the cached posterior; a different one redraws."""
+    _patch_compare(monkeypatch)
+    results = _make_results(complete_spec)
+    calls = []
+
+    def _gps(n_samples=100, **_kw):
+        calls.append(n_samples)
+        results.posterior_samples = {"r": np.zeros((n_samples, 1))}
+        return results.posterior_samples
+
+    results.get_posterior_samples = _gps
+    results.posterior_samples = {"r": np.zeros((200, 1))}  # cached: 200 draws
+
+    compare_groups(results, "perturbation", "control", "drug", n_samples=200)
+    assert calls == []  # matching count -> reuse, no expensive redraw
+
+    compare_groups(results, "perturbation", "control", "drug", n_samples=300)
+    assert calls == [300]  # mismatched count -> redraw
+
+
 def test_compare_groups_propagates_gene_mask(complete_spec, monkeypatch):
     """The pairs' shared gene-mask bookkeeping is carried to the result.
 
