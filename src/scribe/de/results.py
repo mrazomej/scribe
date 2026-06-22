@@ -156,6 +156,10 @@ class ScribeEmpiricalDEResults(EmpiricalResultsMixin, ScribeDEResults):
     _all_gene_names: Optional[List[str]] = field(
         default=None, repr=False, init=False
     )
+    # Log-ratio reference frame ("clr" | "iqlr" | gene-name list | mask).
+    # Stored as the original user spec so mask-recompute paths can
+    # re-resolve it against an updated keep-mask.
+    _reference: object = field(default="clr", repr=False, init=False)
 
     # Informational sample count exposed on repr.
     n_samples: int = field(default=0, repr=True)
@@ -229,3 +233,4 @@ class ScribeShrinkageDEResults(ShrinkageResultsMixin, ScribeEmpiricalDEResults):
         if emp is not None:
             self._gene_mask = emp._gene_mask
             self._all_gene_names = emp._all_gene_names
+            self._reference = emp._reference

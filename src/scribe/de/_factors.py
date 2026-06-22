@@ -280,6 +280,7 @@ def compare_groups(
     n_samples: Optional[int] = None,
     batch_size: Optional[int] = None,
     convert_to_numpy: Optional[bool] = None,
+    reference: Union[str, "np.ndarray", List[str]] = "clr",
     **kwargs,
 ):
     """Population-level differential expression for one grouping factor.
@@ -339,6 +340,13 @@ def compare_groups(
         ``n_samples`` would not fit in GPU memory. Defaults to ``True`` when
         ``n_samples > 500`` and ``False`` otherwise; pass explicitly to force
         either path.
+    reference : {"clr", "iqlr"} | list of str | boolean array, default="clr"
+        Log-ratio reference frame for the ``"paired_main_effect"`` estimand,
+        forwarded to each within-pair :func:`compare`. With ``"iqlr"`` (or an
+        explicit reference set) **each pair resolves its own reference**, so
+        the result records only the reference *mode* and keeps no aggregate
+        reference mask. Must be ``"clr"`` for ``estimand="effect"`` (that path
+        has no reference frame).
     **kwargs
         Forwarded to :func:`compare` for each within-pair comparison
         (e.g. ``gene_mask``, ``n_samples_dirichlet``, ``rng_key``).
@@ -383,6 +391,13 @@ def compare_groups(
         )
 
     if estimand == "effect":
+        if not (isinstance(reference, str) and reference == "clr"):
+            raise ValueError(
+                "reference applies only to estimand='paired_main_effect' "
+                "(the compositional CLR contrast). estimand='effect' reads "
+                "the fitted log-mean effect directly and has no reference "
+                "frame."
+            )
         return _compare_groups_effect(
             results,
             factor_name,
@@ -469,6 +484,9 @@ def compare_groups(
     _pair_kwargs = dict(kwargs)
     if batch_size is not None and "batch_size" not in _pair_kwargs:
         _pair_kwargs["batch_size"] = int(batch_size)
+    # Each within-pair compare() resolves and applies its own reference set
+    # (per-pair IQLR / explicit), so the reference is per-pair by design.
+    _pair_kwargs["reference"] = reference
 
     last_pair = None
     for w, (_pv, leaf_A, leaf_B) in zip(weights, present):
@@ -515,5 +533,11 @@ def compare_groups(
     if last_pair is not None:
         result._gene_mask = getattr(last_pair, "_gene_mask", None)
         result._all_gene_names = getattr(last_pair, "_all_gene_names", None)
+    # Record the reference *mode* only. Each pair resolved its own IQLR /
+    # explicit reference set, so there is no single aggregate mask; storing
+    # one would be misleading. set_reference()/pathway tests read this and
+    # behave correctly (no stored simplex -> set_reference rejects; a
+    # non-"clr" mode -> pathway tests reject).
+    result._reference = reference
 
     return result

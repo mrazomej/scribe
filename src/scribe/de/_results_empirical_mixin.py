@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import List, Union
 
 import jax.numpy as jnp
 
@@ -208,6 +209,20 @@ class EmpiricalResultsMixin:
         jnp.ndarray
             Matrix of CLR differences for pathway testing.
         """
+        # Pathway / balance tooling lives in the CLR sum-to-zero subspace
+        # (the full coordinate vector must sum to zero).  A subset reference
+        # (IQLR / curated) centers only its reference genes, so its
+        # coordinates are not valid ILR balances — reject rather than return
+        # silently-wrong enrichment.  See sec-diffexp-iqlr in the paper.
+        _ref = getattr(self, "_reference", "clr")
+        if not (isinstance(_ref, str) and _ref == "clr"):
+            raise ValueError(
+                "Pathway / gene-set tests require the CLR reference (the full "
+                "coordinate vector must sum to zero), but this result uses "
+                f"reference={_ref!r}. Rebuild the comparison with "
+                "reference='clr' for pathway / balance analysis."
+            )
+
         if respect_mask or self._gene_mask is None:
             return self.delta_samples
 
@@ -330,7 +345,7 @@ class EmpiricalResultsMixin:
             Returns ``self`` for method chaining.
         """
         import numpy as np
-        from ._empirical import compute_delta_from_simplex
+        from ._empirical import _resolve_reference, compute_delta_from_simplex
 
         if not self.has_simplex:
             raise ValueError(
@@ -347,8 +362,18 @@ class EmpiricalResultsMixin:
                 f"gene dimension ({D_full})."
             )
 
+        # Preserve the reference frame across the re-mask by re-resolving the
+        # stored spec against the new keep-mask (a gene-name list / "iqlr" /
+        # full-gene boolean re-resolves cleanly; an aggregated-length boolean
+        # spec raises a clear length error here).
+        _resolved_ref = _resolve_reference(
+            getattr(self, "_reference", "clr"), self._all_gene_names, mask_arr
+        )
         self.delta_samples = compute_delta_from_simplex(
-            self.simplex_A, self.simplex_B, gene_mask=jnp.asarray(mask_arr)
+            self.simplex_A,
+            self.simplex_B,
+            gene_mask=jnp.asarray(mask_arr),
+            reference=_resolved_ref,
         )
         self.n_samples = self.delta_samples.shape[0]
 
@@ -524,15 +549,22 @@ class EmpiricalResultsMixin:
         ScribeEmpiricalDEResults
             Returns ``self`` for method chaining.
         """
-        from ._empirical import compute_delta_from_simplex
+        from ._empirical import _resolve_reference, compute_delta_from_simplex
 
         if not self.has_simplex:
             raise ValueError(
                 "Cannot clear mask: simplex samples were not stored."
             )
 
+        # Preserve the reference frame over the full (unmasked) gene set.
+        _resolved_ref = _resolve_reference(
+            getattr(self, "_reference", "clr"), self._all_gene_names, None
+        )
         self.delta_samples = compute_delta_from_simplex(
-            self.simplex_A, self.simplex_B, gene_mask=None
+            self.simplex_A,
+            self.simplex_B,
+            gene_mask=None,
+            reference=_resolved_ref,
         )
         self.n_samples = self.delta_samples.shape[0]
 
@@ -551,6 +583,95 @@ class EmpiricalResultsMixin:
         self._cached_bio_taus = None
 
         return self
+
+    def set_reference(
+        self, reference: Union[str, jnp.ndarray, List[str]]
+    ) -> "ScribeEmpiricalDEResults":
+        """Recompute the log-ratio differences under a new reference frame.
+
+        Recomputes ``delta_samples`` from the stored simplex samples using
+        ``reference`` (``"clr"`` | ``"iqlr"`` | gene-name list | boolean
+        mask), preserving the current gene mask.  The reference is also
+        stored so subsequent mask changes keep it.
+
+        Requires stored simplex samples, so it works on leaf-vs-leaf
+        :func:`compare` results but **not** on grouped
+        :func:`compare_groups` results (which average within-pair deltas
+        and keep no per-pair simplex).  For those, pass ``reference=`` to
+        ``compare_groups`` directly.
+
+        Parameters
+        ----------
+        reference : {"clr", "iqlr"} | list of str | boolean array
+            The new reference frame, resolved against the full gene names
+            and the active gene mask.
+
+        Returns
+        -------
+        ScribeEmpiricalDEResults
+            Returns ``self`` for method chaining.
+        """
+        import numpy as np
+        from ._empirical import _resolve_reference, compute_delta_from_simplex
+
+        if not self.has_simplex:
+            raise ValueError(
+                "Cannot set reference: simplex samples were not stored. "
+                "compare_groups() results keep no per-pair simplex — pass "
+                "reference= to compare_groups() directly instead."
+            )
+
+        gm = None if self._gene_mask is None else np.asarray(
+            self._gene_mask, dtype=bool
+        ).ravel()
+        _resolved_ref = _resolve_reference(
+            reference, self._all_gene_names, gm
+        )
+        self.delta_samples = compute_delta_from_simplex(
+            self.simplex_A,
+            self.simplex_B,
+            gene_mask=(None if gm is None else jnp.asarray(gm)),
+            reference=_resolved_ref,
+        )
+        self.n_samples = self.delta_samples.shape[0]
+        self._reference = reference
+
+        # Clear every cache derived from the previous reference.
+        self._gene_results = None
+        self._cached_tau = None
+        self._biological_results = None
+        self._cached_bio_taus = None
+
+        return self
+
+    def iqlr_reference_mask(self) -> "np.ndarray":
+        """Return the IQLR reference set used for the current differences.
+
+        Recomputes the inter-quartile-variance reference set from the
+        stored simplex samples under the active gene mask, for inspection
+        (e.g. which genes anchor the IQLR reference).  Returns a boolean
+        array over the **aggregated** columns: kept genes in mask order,
+        plus a trailing ``False`` for the "other" aggregate when a mask is
+        active.  Requires stored simplex samples.
+        """
+        import numpy as np
+        from ._empirical import _aggregate_simplex, _clr_transform, _iqlr_reference_mask
+
+        if not self.has_simplex:
+            raise ValueError(
+                "Cannot compute the IQLR reference: simplex samples were "
+                "not stored."
+            )
+        s_A, s_B = self.simplex_A, self.simplex_B
+        has_other = self._gene_mask is not None
+        if has_other:
+            gm = np.asarray(self._gene_mask, dtype=bool).ravel()
+            s_A = _aggregate_simplex(s_A, gm)
+            s_B = _aggregate_simplex(s_B, gm)
+        clr_pooled = np.concatenate(
+            [_clr_transform(s_A), _clr_transform(s_B)], axis=0
+        )
+        return _iqlr_reference_mask(clr_pooled, exclude_last=has_other)
 
     def _resolve_dataframe_tau_grids(
         self,
@@ -1055,6 +1176,7 @@ class EmpiricalResultsMixin:
 
         obj._gene_mask = self._gene_mask
         obj._all_gene_names = self._all_gene_names
+        obj._reference = getattr(self, "_reference", "clr")
 
         return obj
 

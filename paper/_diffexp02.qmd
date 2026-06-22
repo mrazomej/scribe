@@ -276,6 +276,80 @@ This relationship is crucial for practical computations: given a Gaussian model
 in ALR space, we can transform it to CLR space by embedding and applying the
 centering matrix.
 
+### Reference frames and the generalized log-ratio
+
+The ALR and CLR transformations are two endpoints of a single construction. The
+ALR (@eq-diffexp-alr-recall) measures each gene against one distinguished
+reference component, while the CLR (@eq-diffexp-clr-definition) measures each
+gene against the geometric mean of *all* components. Both are log-ratios; they
+differ only in which set of genes defines the denominator. This observation
+motivates a unifying object that we call the *generalized reference log-ratio*.
+
+Let $\mathcal{R} \subseteq \{1, 2, \ldots, D\}$ be a nonempty *reference set* of
+genes, and define the reference log-ratio coordinate of gene $g$ as the
+log-proportion of $g$ minus the average log-proportion over $\mathcal{R}$:
+
+$$
+z_{\text{ref},g} = \log(\rho_g) - \frac{1}{|\mathcal{R}|}
+\sum_{j \in \mathcal{R}} \log(\rho_j),
+\quad g = 1, 2, \ldots, D.
+$${#eq-diffexp-reference-logratio}
+
+Equivalently, each coordinate is the log-ratio of $\rho_g$ to the geometric mean
+of the reference genes,
+$z_{\text{ref},g} = \log\!\big(\rho_g / \sqrt[|\mathcal{R}|]{\prod_{j \in
+\mathcal{R}} \rho_j}\big)$. The denominator is an *unweighted* average of
+log-proportions: every reference gene contributes equally in log-space,
+irrespective of its abundance.
+
+The familiar transformations are recovered as special cases of
+@eq-diffexp-reference-logratio:
+
+- **CLR.** Taking $\mathcal{R} = \{1, \ldots, D\}$ (all genes) reproduces the
+  CLR of @eq-diffexp-clr-definition exactly, with the geometric mean of all
+  components as the reference.
+
+- **ALR.** Taking $\mathcal{R} = \{D\}$ (a single reference gene) gives
+  $z_{\text{ref},g} = \log(\rho_g) - \log(\rho_D)$, which is the ALR of
+  @eq-diffexp-alr-recall (with $z_{\text{ref},D} = 0$).
+
+Two further choices are useful in practice and are developed later: a *curated*
+reference, in which $\mathcal{R}$ is a fixed set of housekeeping genes believed
+to be invariant across conditions, and the *inter-quartile log-ratio* (IQLR), in
+which $\mathcal{R}$ is selected automatically from the data to exclude the most
+variable genes. The empirical estimation of the IQLR reference set is detailed
+in @sec-diffexp-iqlr.
+
+**Centering of the generalized log-ratio.** A subtle but important point
+distinguishes the all-gene CLR from every proper-subset reference. Summing
+@eq-diffexp-reference-logratio over the reference genes alone gives, by the same
+algebra as @eq-diffexp-clr-sum-zero,
+
+$$
+\sum_{g \in \mathcal{R}} z_{\text{ref},g} =
+\sum_{g \in \mathcal{R}} \log(\rho_g) -
+\frac{|\mathcal{R}|}{|\mathcal{R}|}
+\sum_{j \in \mathcal{R}} \log(\rho_j) = 0.
+$${#eq-diffexp-reference-centering}
+
+Thus the coordinates of the *reference* genes always sum to zero, by
+construction. The coordinates of any gene outside $\mathcal{R}$, however, are
+not constrained: for a gene $g \notin \mathcal{R}$, the value $z_{\text{ref},g}$
+is simply its log-proportion minus the reference average, with no compensating
+relation. Consequently the *full* coordinate vector sums to zero only when
+$\mathcal{R} = \{1, \ldots, D\}$, i.e. only for the standard CLR. For any proper
+subset $\mathcal{R} \subsetneq \{1, \ldots, D\}$ we have, in general,
+$\sum_{g=1}^{D} z_{\text{ref},g} \neq 0$, and the generalized log-ratio does not
+lie in the sum-to-zero subspace orthogonal to $\underline{1}$.
+
+This has a concrete consequence for downstream analysis. Subset-reference
+coordinates (ALR, IQLR, curated references) remain valid for *gene-level*
+inference, because each coordinate is still an interpretable log-ratio against a
+common denominator. But they do **not** inhabit the CLR sum-to-zero subspace, so
+the orthonormal ILR machinery of the next section---and any balance, pathway, or
+isometric tool that presupposes a fully centered CLR vector---applies only to
+the all-gene CLR reference, not to a subset reference.
+
 ### The Isometric Log-Ratio (ILR) Transformation
 
 #### Motivation and definition

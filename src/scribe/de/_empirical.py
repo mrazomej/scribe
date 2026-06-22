@@ -960,18 +960,19 @@ def compute_delta_from_simplex(
     simplex_A: np.ndarray,
     simplex_B: np.ndarray,
     gene_mask: Optional[np.ndarray] = None,
+    reference: Union[str, np.ndarray] = "clr",
 ) -> np.ndarray:
-    """Aggregate, CLR-transform, and difference paired simplex samples.
+    """Aggregate, log-ratio-transform, and difference paired simplex samples.
 
     This is Stage 2 of the empirical DE pipeline.  Given full-dimensional
     simplex samples from :func:`sample_compositions`, it optionally
-    aggregates filtered genes into an "other" pseudo-gene, applies the
-    CLR transform, computes paired differences, and drops the "other"
-    column.
+    aggregates filtered genes into an "other" pseudo-gene, applies a
+    reference log-ratio transform, computes paired differences, and drops
+    the "other" column.
 
-    Because the CLR geometric mean defines the reference against which
+    Because the log-ratio reference defines the yardstick against which
     effects are measured, the gene mask **must** be applied before the
-    CLR transform—not as a post-hoc filter on the differences.
+    transform—not as a post-hoc filter on the differences.
     See :ref:`sec-diffexp-expression-mask` in the paper for details.
 
     All computation runs on CPU (numpy).  JAX inputs are converted
@@ -986,31 +987,84 @@ def compute_delta_from_simplex(
     gene_mask : numpy.ndarray, shape ``(D,)``, optional
         Boolean mask selecting genes to keep.  Genes marked ``False``
         are aggregated into a single "other" pseudo-gene via
-        :func:`_aggregate_simplex` before CLR.  The "other" column is
-        dropped from the returned differences.
+        :func:`_aggregate_simplex` before the transform.  The "other"
+        column is dropped from the returned differences.
         If ``None`` (default), all genes are kept and no aggregation
         is performed.
+    reference : {"clr", "iqlr"} or numpy.ndarray, default="clr"
+        Choice of log-ratio reference (the denominator):
+
+        - ``"clr"`` — geometric mean over **all** aggregated columns
+          (the "other" aggregate included).  Bit-identical to the legacy
+          behaviour.
+        - ``"iqlr"`` — inter-quartile-variance reference: the reference
+          set is selected by :func:`_iqlr_reference_mask` from the
+          variance of provisional CLR coordinates pooled across draws and
+          both arms; the "other" aggregate is excluded from the reference.
+        - boolean array of length ``D_kept(+1)`` (matching the aggregated
+          column count) — an explicit, pre-resolved reference set.  The
+          same set is applied to both arms.
 
     Returns
     -------
     numpy.ndarray, shape ``(N, D)`` or ``(N, D_kept)``
-        CLR-space differences ``CLR(rho_A) - CLR(rho_B)``.
+        Log-ratio-space differences ``ref_lr(rho_A) - ref_lr(rho_B)``.
         When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
     """
     s_A, s_B = simplex_A, simplex_B
 
-    # Aggregate filtered genes into "other" column before CLR so the
-    # geometric mean reference reflects only the expressed genes.
+    # Aggregate filtered genes into "other" column before the transform so
+    # the reference reflects only the expressed genes (+ the aggregate).
     if gene_mask is not None:
         s_A = _aggregate_simplex(s_A, gene_mask)
         s_B = _aggregate_simplex(s_B, gene_mask)
 
-    clr_A = _clr_transform(s_A)
-    clr_B = _clr_transform(s_B)
+    has_other = gene_mask is not None
+
+    # Resolve the reference set shared by both arms.
+    if isinstance(reference, str):
+        if reference == "clr":
+            reference_mask = None
+        elif reference == "iqlr":
+            # Provisional full-reference CLR, pooled over both arms, drives
+            # the variance-based reference-set selection.
+            clr_pooled = np.concatenate(
+                [_clr_transform(s_A), _clr_transform(s_B)], axis=0
+            )
+            reference_mask = _iqlr_reference_mask(
+                clr_pooled, exclude_last=has_other
+            )
+        else:
+            raise ValueError(
+                f"reference must be 'clr', 'iqlr', or a boolean array; "
+                f"got {reference!r}."
+            )
+    else:
+        # Explicit, pre-resolved reference mask over the aggregated columns.
+        reference_mask = np.asarray(reference, dtype=bool)
+        if (
+            reference_mask.ndim != 1
+            or reference_mask.shape[0] != s_A.shape[1]
+        ):
+            raise ValueError(
+                f"explicit reference mask must be 1-D of aggregated-column "
+                f"length {s_A.shape[1]}, got shape {reference_mask.shape}."
+            )
+        if has_other:
+            # The "other" aggregate is never a reference component.
+            reference_mask = reference_mask.copy()
+            reference_mask[-1] = False
+        if not reference_mask.any():
+            raise ValueError(
+                "explicit reference mask must select at least one gene."
+            )
+
+    clr_A = _clr_transform(s_A, reference_mask)
+    clr_B = _clr_transform(s_B, reference_mask)
     delta = clr_A - clr_B
 
     # Drop the "other" pseudo-gene column
-    if gene_mask is not None:
+    if has_other:
         delta = delta[:, :-1]
 
     return delta
@@ -1033,13 +1087,16 @@ def compute_clr_differences(
     gene_mask: Optional[Array] = None,
     p_samples_A: Optional[Array] = None,
     p_samples_B: Optional[Array] = None,
+    reference: Union[str, np.ndarray] = "clr",
 ) -> np.ndarray:
-    """Compute CLR-space posterior differences from Dirichlet concentration samples.
+    """Compute log-ratio posterior differences from Dirichlet concentration samples.
 
     Convenience wrapper that calls :func:`sample_compositions` followed
     by :func:`compute_delta_from_simplex`.  Use the two-stage API
     directly when you need to store the intermediate simplex samples for
-    interactive mask exploration.
+    interactive mask exploration.  ``reference`` selects the log-ratio
+    reference and is forwarded to :func:`compute_delta_from_simplex`
+    (``"clr"`` by default; ``"iqlr"`` or an explicit boolean mask).
 
     Parameters
     ----------
@@ -1096,7 +1153,9 @@ def compute_clr_differences(
         p_samples_A=p_samples_A,
         p_samples_B=p_samples_B,
     )
-    return compute_delta_from_simplex(simplex_A, simplex_B, gene_mask)
+    return compute_delta_from_simplex(
+        simplex_A, simplex_B, gene_mask, reference=reference
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1307,28 +1366,212 @@ def _slice_component(
 # ------------------------------------------------------------------------------
 
 
-def _clr_transform(simplex_samples: np.ndarray) -> np.ndarray:
-    """Centered log-ratio transform on simplex samples.
+def _clr_transform(
+    simplex_samples: np.ndarray,
+    reference_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Generalized reference log-ratio transform on simplex samples.
+
+    Each coordinate is the log-proportion of a component minus the
+    (unweighted) mean log-proportion over a **reference set** of
+    components.  With ``reference_mask=None`` the reference is *all*
+    components, recovering the standard centered log-ratio (CLR); with a
+    boolean mask the reference is the selected subset, giving the
+    inter-quartile (IQLR) or curated reference transforms.  See
+    :ref:`sec-diffexp-iqlr` in the paper.
 
     Operates on CPU (numpy) arrays.  JAX inputs are converted
     automatically.
 
     Parameters
     ----------
-    simplex_samples : numpy.ndarray, shape ``(N, D)``
-        Samples on the D-simplex (rows sum to 1).
+    simplex_samples : numpy.ndarray, shape ``(..., D)``
+        Samples on the D-simplex (last axis sums to 1).
+    reference_mask : numpy.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting the reference components (the denominator
+        of the log-ratio).  ``None`` (default) uses all components, which
+        is exactly the standard CLR.
 
     Returns
     -------
-    numpy.ndarray, shape ``(N, D)``
-        CLR-transformed samples.
+    numpy.ndarray, same shape as ``simplex_samples``
+        Reference-log-ratio-transformed samples.  When ``reference_mask``
+        is ``None`` the columns sum to zero (CLR); for a strict subset
+        only the reference columns sum to zero, not the full vector.
     """
     simplex_samples = np.asarray(simplex_samples)
     # Guard against exact zeros from Dirichlet sampling
     log_samples = np.log(np.maximum(simplex_samples, 1e-30))
-    # CLR: subtract the geometric mean (= arithmetic mean of logs)
-    geometric_mean = np.mean(log_samples, axis=-1, keepdims=True)
-    return log_samples - geometric_mean
+    if reference_mask is None:
+        # CLR: subtract the geometric mean (= arithmetic mean of logs)
+        reference = np.mean(log_samples, axis=-1, keepdims=True)
+    else:
+        reference_mask = np.asarray(reference_mask, dtype=bool)
+        if reference_mask.ndim != 1 or reference_mask.shape[0] != log_samples.shape[-1]:
+            raise ValueError(
+                f"reference_mask must be a 1-D boolean array of length "
+                f"D={log_samples.shape[-1]}, got shape {reference_mask.shape}."
+            )
+        if not reference_mask.any():
+            raise ValueError("reference_mask must select at least one component.")
+        # Unweighted mean log-proportion over the reference subset only.
+        reference = np.mean(
+            log_samples[..., reference_mask], axis=-1, keepdims=True
+        )
+    return log_samples - reference
+
+
+def _iqlr_reference_mask(
+    clr_pooled: np.ndarray,
+    exclude_last: bool = True,
+) -> np.ndarray:
+    """Select the inter-quartile-variance reference set (IQLR).
+
+    Given provisional CLR samples pooled across posterior draws and both
+    comparison arms, compute each component's CLR variance and keep the
+    components whose variance falls in the inter-quartile range
+    ``[Q1, Q3]``.  This excludes both the lowest- and highest-variance
+    quartiles, following the IQLR heuristic: the high-variance quartile
+    holds the driver / high-shift features (e.g. mitochondrial,
+    hemoglobin) that destabilise the all-gene reference, so dropping them
+    yields a robust, near-invariant reference.  See
+    :ref:`sec-diffexp-iqlr`.
+
+    The variance is an unweighted per-component statistic; this is *not*
+    mass weighting.  Contamination of the all-gene reference under a broad
+    perturbation arises from closure-induced log shifts, which this
+    heuristic sidesteps by referencing only middle-variance components.
+
+    Parameters
+    ----------
+    clr_pooled : numpy.ndarray, shape ``(M, D)``
+        Provisional CLR samples (full-reference), pooled over both arms
+        along the sample axis ``M``.
+    exclude_last : bool, default=True
+        When ``True`` the trailing column (the "other" aggregate
+        pseudo-gene) is never a reference component.  Set ``False`` when
+        no "other" column is present.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(D,)``
+        Boolean reference mask.
+    """
+    clr_pooled = np.asarray(clr_pooled)
+    n_cols = clr_pooled.shape[-1]
+    variances = np.var(clr_pooled, axis=0)  # (D,)
+
+    candidate = np.ones(n_cols, dtype=bool)
+    if exclude_last:
+        candidate[-1] = False  # never reference the "other" aggregate
+
+    cand_var = variances[candidate]
+    q1, q3 = np.percentile(cand_var, [25, 75])
+    mask = candidate & (variances >= q1) & (variances <= q3)
+
+    # Degenerate guard (e.g. all-equal variances collapse the IQR band to
+    # empty after the strict bounds): fall back to every candidate column.
+    if not mask.any():
+        mask = candidate.copy()
+    return mask
+
+
+def _reference_full_to_aggregated(
+    ref_full: np.ndarray, gene_mask: Optional[np.ndarray]
+) -> np.ndarray:
+    """Map a full-gene boolean reference to aggregated-column space.
+
+    The aggregated columns are the kept genes (in ``gene_mask`` order)
+    followed by the trailing "other" aggregate.  A reference gene that was
+    filtered into "other" is an error (matches the gene-name behaviour):
+    reference genes must be among the kept genes.
+    """
+    ref_full = np.asarray(ref_full, dtype=bool)
+    if gene_mask is None:
+        if not ref_full.any():
+            raise ValueError("reference mask must select at least one gene.")
+        return ref_full
+    gm = np.asarray(gene_mask, dtype=bool)
+    if bool((ref_full & ~gm).any()):
+        raise ValueError(
+            "reference set selects genes filtered into the 'other' pool; "
+            "reference genes must be among the kept genes."
+        )
+    agg = np.concatenate([ref_full[gm], np.array([False])])  # kept + "other"
+    if not agg.any():
+        raise ValueError("reference mask must select at least one kept gene.")
+    return agg
+
+
+def _resolve_reference(
+    reference: Union[str, np.ndarray, Sequence[str]],
+    gene_names: Optional[Sequence[str]] = None,
+    gene_mask: Optional[np.ndarray] = None,
+) -> Union[str, np.ndarray]:
+    """Resolve a user reference spec into a ``compute_delta_from_simplex`` value.
+
+    Returns ``"clr"`` / ``"iqlr"`` unchanged, or a boolean array aligned to
+    the **aggregated** columns (kept genes in ``gene_mask`` order, plus a
+    trailing "other" column when ``gene_mask`` is given; the full gene axis
+    when it is not).
+
+    Validation (no silent fallthrough):
+
+    - a **gene-name** reference must name genes present in ``gene_names`` and
+      not filtered into "other"; an unknown or filtered name raises;
+    - a **boolean** reference must have either the full gene length or the
+      aggregated length; full-gene length is preferred when both coincide;
+      any other length raises;
+    - a full-gene boolean that selects a filtered gene raises.
+    """
+    if isinstance(reference, str):
+        if reference not in ("clr", "iqlr"):
+            raise ValueError(
+                f"reference string must be 'clr' or 'iqlr', got {reference!r}."
+            )
+        return reference
+
+    gm = None if gene_mask is None else np.asarray(gene_mask, dtype=bool)
+
+    # Sequence of gene names?
+    seq = list(reference)
+    if len(seq) > 0 and all(isinstance(x, str) for x in seq):
+        if gene_names is None:
+            raise ValueError(
+                "a gene-name reference set requires gene_names to resolve."
+            )
+        index = {n: i for i, n in enumerate(gene_names)}
+        ref_full = np.zeros(len(gene_names), dtype=bool)
+        for nm in seq:
+            if nm not in index:
+                raise ValueError(
+                    f"reference gene {nm!r} is not among the comparison genes."
+                )
+            ref_full[index[nm]] = True
+        return _reference_full_to_aggregated(ref_full, gm)
+
+    # Otherwise a boolean/integer mask over genes or aggregated columns.
+    arr = np.asarray(reference, dtype=bool)
+    if arr.ndim != 1:
+        raise ValueError("a boolean reference must be 1-D.")
+    if gm is None:
+        if not arr.any():
+            raise ValueError("reference mask must select at least one gene.")
+        return arr
+    agg_len = int(gm.sum()) + 1
+    if arr.shape[0] == gm.shape[0]:
+        # Full-gene length (preferred when it coincides with agg_len).
+        return _reference_full_to_aggregated(arr, gm)
+    if arr.shape[0] == agg_len:
+        out = arr.copy()
+        out[-1] = False  # "other" is never a reference component
+        if not out.any():
+            raise ValueError("reference mask must select at least one gene.")
+        return out
+    raise ValueError(
+        f"boolean reference must have full gene length {gm.shape[0]} or "
+        f"aggregated length {agg_len}, got {arr.shape[0]}."
+    )
 
 
 # ------------------------------------------------------------------------------

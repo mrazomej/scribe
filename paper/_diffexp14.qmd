@@ -102,6 +102,15 @@ lacking closed-form inference
 covariance structure
 - Lack integrated frameworks for gene-set testing and error control
 
+The inter-quartile log-ratio (IQLR) used by ALDEx2 is precisely a
+reference-selection strategy: it replaces the all-gene CLR denominator with the
+geometric mean of the genes whose CLR variance lies in the inter-quartile range,
+yielding a robust reference under broad perturbations
+(@sec-diffexp-iqlr). Our framework now offers a *deterministic* variant of this
+strategy, in which the inter-quartile reference set is computed once from the
+per-gene CLR variance pooled across posterior draws and both comparison arms,
+rather than recomputed per Monte Carlo instance as in ALDEx2.
+
 Our approach combines:
 - Closed-form Gaussian inference with efficient low-rank representations
 - Unified treatment of gene-level and gene-set testing
@@ -151,6 +160,20 @@ on the initial model fitting. In principle, one could use Bayesian model
 selection to choose $k$ or even allow $k$ to vary across genes. However, the
 computational benefits of a fixed $k$ are substantial, and in practice, choosing
 $k$ to capture $\approx 80-90\%$ of variance works well across diverse datasets.
+
+**Reference-frame sensitivity.** Compositional differential expression is
+identified only up to a reference frame, and the all-gene CLR reference---the
+geometric mean of every kept gene---is an invariant anchor only when most genes
+are unchanged. Under a broad or asymmetric perturbation the all-gene reference
+itself drifts, biasing every gene's contrast by a common offset
+(@sec-diffexp-iqlr). The IQLR reference (which excludes the highest- and
+lowest-variance quartiles) and curated housekeeping references mitigate this by
+restricting the denominator to near-invariant genes, but they recover log-ratios
+relative to the chosen reference set rather than absolute log-fold changes, and
+their residual offset is reduced by heuristic rather than eliminated. A further
+caveat is that subset references do not lie in the CLR sum-to-zero subspace, so
+the ILR balance and pathway tooling of this chapter assumes the full all-gene
+CLR reference and does not apply unchanged to IQLR or curated coordinates.
 
 **Gene-set overlap.** Our pathway enrichment methods test each pathway
 independently, ignoring the fact that many pathways share genes. More

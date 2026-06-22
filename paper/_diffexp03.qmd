@@ -482,6 +482,157 @@ Dirichlet/Gamma sampling stage.
      See altos/exploratory/panfibrosis/panfibrosis_de_eda.py for the template. -->
 ```
 
+### Robust reference selection (IQLR) {#sec-diffexp-iqlr}
+
+The expression mask of the previous section fixes *which* genes are reported. It
+does not, by itself, dictate which genes define the reference against which
+those genes are measured. The standard CLR conflates the two: once the mask is
+applied, the geometric mean of the entire kept set serves as the denominator.
+As shown in @sec-diffexp-clr-ilr, this is the special case $\mathcal{R} =
+\mathcal{K}$ of the generalized reference log-ratio
+(@eq-diffexp-reference-logratio). We now separate the two roles and select the
+reference set robustly.
+
+**Kept set versus reference set.** Let $\mathcal{K}$ be the kept set of reported
+genes and let $\rho_{\mathrm{other}}^{(s)}$ be the aggregated "other"
+pseudo-gene, exactly as in @sec-diffexp-expression-mask. We introduce a separate
+*reference set* $\mathcal{R} \subseteq \mathcal{K}$, used only as the denominator
+of the log-ratio:
+
+$$
+z_{\text{ref},g}^{(s)} = \log \rho_g^{(s)} -
+\frac{1}{|\mathcal{R}|} \sum_{j \in \mathcal{R}} \log \rho_j^{(s)},
+\quad g \in \mathcal{K}.
+$$ {#eq-diffexp-iqlr-coordinate}
+
+Standard masked CLR is the choice $\mathcal{R} = \mathcal{K}$. The aggregate
+$\rho_{\mathrm{other}}^{(s)}$ is never admitted to $\mathcal{R}$: it is a pool
+of heterogeneous low-expression genes whose log-proportion is not a meaningful
+single-gene reference, so including it would distort the denominator.
+
+**The inter-quartile rule.** The IQLR heuristic, introduced for the ALDEx2
+method, chooses $\mathcal{R}$ to be the genes of intermediate compositional
+variability. For each kept gene we pool the CLR samples across posterior draws
+$s = 1, \ldots, N$ and across both comparison arms (here indexed generically by
+$\text{arm}$), and compute the per-gene CLR variance
+
+$$
+v_g = \operatorname{Var}\!\left[\,z_{\text{arm},g}^{(s)}\,\right],
+\qquad g \in \mathcal{K},
+$$ {#eq-diffexp-iqlr-variance}
+
+where the variance is taken over the pooled collection of CLR values for gene
+$g$. Let $Q_1$ and $Q_3$ denote the first and third quartiles of the set
+$\{v_g : g \in \mathcal{K}\}$. The IQLR reference set is the inter-quartile band
+
+$$
+\mathcal{R} = \left\{\, g \in \mathcal{K} : Q_1 \leq v_g \leq Q_3 \,\right\},
+$$ {#eq-diffexp-iqlr-set}
+
+with the "other" aggregate excluded from $\mathcal{R}$ as noted above. This
+excludes the lowest- and highest-variance quartiles, following the IQLR
+heuristic: the lowest-variance quartile contains genes too constant to be
+informative, while the highest-variance quartile contains the "driver" features
+(for example mitochondrial or hemoglobin genes) and the genes that change most
+between conditions---precisely the genes one does *not* want defining a neutral
+reference.
+
+**Why a broad perturbation contaminates the all-gene reference.** To see why
+restricting $\mathcal{R}$ matters, expand the gene-level contrast under an
+arbitrary reference set. For gene $g$, write the per-arm reference average as
+
+$$
+\text{ref}_{\text{arm}} = \frac{1}{|\mathcal{R}|}
+\sum_{h \in \mathcal{R}} \log \rho_{\text{arm},h},
+\qquad \text{arm} \in \{A, B\}.
+$$ {#eq-diffexp-iqlr-ref-average}
+
+Substituting @eq-diffexp-iqlr-coordinate into the paired contrast
+$\delta_g = z_{\text{ref},A,g} - z_{\text{ref},B,g}$ and collecting terms gives
+
+$$
+\delta_g = \underbrace{\left(\log \rho_{A,g} -
+\log \rho_{B,g}\right)}_{\text{per-gene log-change}} -
+\underbrace{\left(\text{ref}_A - \text{ref}_B\right)}_{\text{reference shift}}.
+$$ {#eq-diffexp-iqlr-delta-decomposition}
+
+The reference shift is common to every gene, and by
+@eq-diffexp-iqlr-ref-average it is the *unweighted* average of the per-gene
+log-changes over the reference set,
+
+$$
+\text{ref}_A - \text{ref}_B = \frac{1}{|\mathcal{R}|}
+\sum_{h \in \mathcal{R}} \left(\log \rho_{A,h} - \log \rho_{B,h}\right).
+$$ {#eq-diffexp-iqlr-ref-shift}
+
+This makes the failure mode of the all-gene reference explicit. Every reference
+gene enters the shift with equal weight in log-space; high-abundance genes are
+*not* upweighted. The contamination is instead a consequence of the closure
+constraint $\sum_g \rho_g = 1$: under a broad perturbation, the genes that
+actually change (the drivers) and the genes that the closure constraint forces
+to compensate both carry large per-gene log-changes, and because they sit inside
+$\mathcal{R} = \mathcal{K}$ they drag $\text{ref}_A - \text{ref}_B$ away from
+zero. This nonzero shift is then subtracted uniformly from every gene in
+@eq-diffexp-iqlr-delta-decomposition, contaminating each $\delta_g$. By removing
+the highest-variance quartile---which contains exactly these large-shift
+genes---the IQLR reference set drives $\text{ref}_A - \text{ref}_B$ toward a
+small, biology-neutral offset.
+
+**A reference change is a global shift.** It is worth being precise about the
+reach of this fix. Because $\text{ref}_A - \text{ref}_B$ in
+@eq-diffexp-iqlr-delta-decomposition is common to every gene, replacing one
+reference set with another changes $\delta_g$ by the *same* amount for all $g$
+(per draw). A reference choice therefore moves only the common level of the
+contrasts; it cannot alter their relative ordering, nor shrink a $\delta_g$
+whose own per-gene log-change $\log \rho_{A,g} - \log \rho_{B,g}$ is large. IQLR
+thus earns its keep precisely when the drifting reference shift is the
+*dominant* distortion---a few high-variance features dragging the reference in a
+modest feature set and flipping many signs uniformly. It does *not* rescue a
+contrast whose incoherence lives in the per-gene changes themselves: under a
+broad perturbation where a handful of features legitimately dominate the
+composition (for example mitochondrial genes, whose proportion genuinely
+swings), those features retain large $\delta_g$ under *every* reference, and the
+compositional contrast stays driver-dominated. The remedy there is not a
+different denominator but a different *question*---the absolute mean-expression
+(biological) contrast, which does not normalise to the simplex at all.
+
+**Invariance to capture probability.** Each coordinate in
+@eq-diffexp-iqlr-coordinate is a function of the composition
+$\underline{\rho}$ alone, as are the variance statistic
+@eq-diffexp-iqlr-variance, the reference set @eq-diffexp-iqlr-set, and hence the
+contrast @eq-diffexp-iqlr-delta-decomposition. The capture-probability
+invariance theorem of @sec-diffexp-robustness applies to any quantity that
+depends on the data only through the composition; therefore IQLR-based
+differential expression inherits the exact invariance to capture-probability
+misspecification established there. This holds as a one-line corollary, with no
+additional assumptions.
+
+**What IQLR identifies.** The IQLR contrast $\delta_g$ is a log-ratio *relative
+to the chosen reference set* $\mathcal{R}$---not an absolute biological
+log-fold change. By @eq-diffexp-iqlr-delta-decomposition it equals the absolute
+per-gene log-change $\log \rho_{A,g} - \log \rho_{B,g}$ shifted by the common
+offset $\text{ref}_A - \text{ref}_B$. The two therefore agree only up to this
+global offset, equal to the mean log-shift of the reference genes
+(@eq-diffexp-iqlr-ref-shift). The IQLR heuristic *aims to* make that offset
+negligible by excluding the high-variance features, but it is a heuristic, not a
+guarantee: under a broad perturbation even mid-variance reference genes may carry
+a small net shift, so the offset need not be exactly zero. IQLR thus yields a
+robust, near-invariant reference frame, with the residual offset interpretable as
+the leftover average drift of the inter-quartile genes.
+
+**A deterministic variant.** The reference set @eq-diffexp-iqlr-set is computed
+*once* from the per-gene CLR variance @eq-diffexp-iqlr-variance pooled across all
+posterior draws and both comparison arms, yielding a single fixed reference set
+applied uniformly to every sample. This deterministic IQLR variant differs from
+the original ALDEx2 procedure, which recomputes the inter-quartile set
+separately for each Monte Carlo instance; the construction here is therefore not
+bit-for-bit identical to ALDEx2, but follows the same inter-quartile
+reference-selection principle.
+
+```{=html}
+<!-- TODO figure: CLR vs IQLR delta scatter / reference-set illustration -->
+```
+
 ### Mixture-Weighted Differential Expression for Heterogeneous Cell Types {#sec-diffexp-mixture-weighted}
 
 The empirical CLR pipeline described above produces compositional differences

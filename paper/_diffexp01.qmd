@@ -118,6 +118,20 @@ Bayesian differential expression on compositional data. The development is
 organized to present the primary empirical approach first, followed by
 supporting theory and complementary methods.
 
+A recurring theme is that compositional differential expression is identified
+only *up to a reference frame*. Because compositional data carry no information
+about absolute scale, every gene-level contrast is necessarily a log-ratio
+measured against some reference, and the choice of reference fixes the meaning of
+the resulting effect sizes. The CLR transformation adopts the geometric mean of
+all genes as a symmetric, default reference; this is an invariant anchor when
+most genes are unchanged, but the all-gene reference itself drifts under a broad
+or asymmetric perturbation and then contaminates every gene's contrast. We
+therefore also develop a *generalized reference log-ratio*
+(@sec-diffexp-clr-ilr) that recovers the CLR and ALR as special cases, and an
+automatic robust reference---the *inter-quartile log-ratio* (IQLR,
+@sec-diffexp-iqlr)---that estimates the reference from genes whose CLR variance
+lies in the inter-quartile range, excluding likely drivers of the perturbation.
+
 **Log-ratio coordinate systems** (@sec-diffexp-clr-ilr): We provide a rigorous
 treatment of the CLR and ILR transformations, including a full constructive
 derivation of the Helmert basis for the ILR transform. These coordinate systems

@@ -203,6 +203,42 @@ def test_compare_groups_estimand_and_method_guards(complete_spec):
         compare_groups(results, "perturbation", "control", "drug", method="shrinkage")
 
 
+def test_compare_groups_forwards_reference(complete_spec, monkeypatch):
+    # ``reference`` reaches every within-pair compare(), and the aggregate
+    # records the mode only (per-pair masks differ; no single stored mask).
+    captured = {}
+
+    def fake_compare(model_A, model_B, method, paired, **kwargs):
+        captured["reference"] = kwargs.get("reference")
+        return SimpleNamespace(
+            delta_samples=np.zeros((5, 4)),
+            gene_names=[f"g{i}" for i in range(4)],
+        )
+
+    monkeypatch.setattr("scribe.de.results.compare", fake_compare)
+    results = _make_results(complete_spec)
+    de = compare_groups(
+        results, "perturbation", "control", "drug", reference="iqlr"
+    )
+    assert captured["reference"] == "iqlr"
+    assert de._reference == "iqlr"
+
+
+def test_compare_groups_effect_rejects_non_clr_reference(complete_spec):
+    # estimand="effect" reads the fitted log-mean effect and has no reference
+    # frame; a non-CLR reference must raise rather than be silently ignored.
+    results = _make_results(complete_spec)
+    with pytest.raises(ValueError, match="paired_main_effect"):
+        compare_groups(
+            results,
+            "perturbation",
+            "control",
+            "drug",
+            estimand="effect",
+            reference="iqlr",
+        )
+
+
 def test_compare_groups_n_samples_redraws(complete_spec, monkeypatch):
     """n_samples / batch_size / convert_to_numpy reach get_posterior_samples."""
     _patch_compare(monkeypatch)

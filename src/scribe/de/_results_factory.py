@@ -180,6 +180,7 @@ def compare(
     mixture_weighted: bool = False,
     mixture_weights_A: Optional[jnp.ndarray] = None,
     mixture_weights_B: Optional[jnp.ndarray] = None,
+    reference: Union[str, jnp.ndarray, List[str]] = "clr",
 ) -> "ScribeDEResults":
     """Create a DE results object from fitted models or posterior samples.
 
@@ -243,6 +244,20 @@ def compare(
         arrays (not results objects).
     mixture_weights_B : jnp.ndarray, optional, shape ``(N, K)``
         Same for condition B.
+    reference : {"clr", "iqlr"} | list of str | boolean array, default="clr"
+        Log-ratio reference frame for empirical/shrinkage DE:
+
+        - ``"clr"`` — geometric mean over all (kept + "other") genes; the
+          legacy behaviour, bit-identical.
+        - ``"iqlr"`` — inter-quartile-variance reference (drivers and
+          high-shift genes excluded from the denominator).
+        - a list of **gene names** or a **boolean mask** — an explicit,
+          curated reference set (e.g. housekeeping genes). Names must be
+          among the comparison genes and not pooled into "other"; a
+          boolean mask must be full-gene or aggregated length.
+
+        Only ``"clr"`` is valid for ``method="parametric"`` (the analytic
+        path uses the CLR reference); other values raise there.
 
     Returns
     -------
@@ -304,6 +319,18 @@ def compare(
             "mixture_weighted=True is not compatible with "
             "method='parametric'.  The CLR of a mixture of Dirichlets "
             "is not Gaussian; use method='empirical' or 'shrinkage'."
+        )
+
+    # A non-CLR reference (IQLR / explicit set) is an empirical-pipeline
+    # feature; the analytic parametric path is fixed to the CLR reference.
+    # Reject rather than silently ignore.
+    if method == "parametric" and not (
+        isinstance(reference, str) and reference == "clr"
+    ):
+        raise NotImplementedError(
+            "reference != 'clr' (IQLR or an explicit reference set) is only "
+            "supported for method='empirical' / 'shrinkage'; the parametric "
+            "path uses the analytic CLR reference."
         )
 
     # Guard against forcing parametric ALR models through empirical/shrinkage
@@ -385,6 +412,7 @@ def compare(
             ),
             rng_key=rng_key,
             gene_mask=gene_mask,
+            reference=reference,
         )
 
     # When both inputs are LNM / PLN result objects and the parametric
@@ -551,6 +579,7 @@ def compare(
             mu_samples_B=_mu_samples_B,
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
+            reference=reference,
         )
 
         if method == "shrinkage":
@@ -592,6 +621,7 @@ def compare(
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
             param_layouts=_param_layouts,
+            reference=reference,
         )
     if method == "shrinkage":
         return _compare_shrinkage(
@@ -618,6 +648,7 @@ def compare(
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
             param_layouts=_param_layouts,
+            reference=reference,
         )
 
     raise ValueError(
@@ -722,6 +753,7 @@ def _compare_empirical(
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
     param_layouts: Optional[dict] = None,
+    reference: Union[str, jnp.ndarray, List[str]] = "clr",
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison from posterior concentration samples.
 
@@ -730,8 +762,13 @@ def _compare_empirical(
     param_layouts : dict of str to AxisLayout, optional
         Semantic axis layouts keyed by parameter name.  Threaded to
         ``_slice_component`` for layout-aware component slicing.
+    reference : {"clr", "iqlr"} | gene-name list | boolean mask, default="clr"
+        Log-ratio reference frame, resolved against ``gene_names`` and
+        ``gene_mask`` (see :func:`_resolve_reference`) and stored on the
+        result for mask-recompute paths.
     """
     from ._empirical import (
+        _resolve_reference,
         _slice_component,
         compute_delta_from_simplex,
         sample_compositions,
@@ -849,9 +886,11 @@ def _compare_empirical(
 
     # simplex_A/B and delta_samples are numpy (CPU) arrays -- the
     # batched sampling functions transfer each chunk to host immediately,
-    # so no large GPU allocation ever occurs here.
+    # so no large GPU allocation ever occurs here.  ``reference`` is resolved
+    # here, where the full gene names and the keep-mask are both in scope.
+    _resolved_reference = _resolve_reference(reference, gene_names, gene_mask)
     delta_samples = compute_delta_from_simplex(
-        simplex_A, simplex_B, gene_mask=gene_mask
+        simplex_A, simplex_B, gene_mask=gene_mask, reference=_resolved_reference
     )
 
     # Compute mean biological expression on CPU (bio arrays are already
@@ -924,6 +963,9 @@ def _compare_empirical(
     result._all_gene_names = (
         list(all_gene_names) if all_gene_names is not None else None
     )
+    # Store the original reference spec (not the resolved mask): mask-recompute
+    # paths re-resolve it against the new keep-mask.
+    result._reference = reference
 
     return result
 
@@ -938,6 +980,7 @@ def _compare_empirical_from_marginal(
     n_samples_marginal: int,
     rng_key,
     gene_mask: Optional[jnp.ndarray] = None,
+    reference: Union[str, jnp.ndarray, List[str]] = "clr",
 ) -> "ScribeEmpiricalDEResults":
     """Empirical DE driven by samples from the LNM/PLN fitted marginal.
 
@@ -975,7 +1018,7 @@ def _compare_empirical_from_marginal(
     """
     import jax
 
-    from ._empirical import compute_delta_from_simplex
+    from ._empirical import _resolve_reference, compute_delta_from_simplex
     from .results import ScribeEmpiricalDEResults
 
     if rng_key is None:
@@ -1004,10 +1047,12 @@ def _compare_empirical_from_marginal(
             f"B={simplex_B.shape}. Both conditions need the same gene set."
         )
 
+    _resolved_reference = _resolve_reference(reference, gene_names, gene_mask)
     delta_samples = compute_delta_from_simplex(
         simplex_A,
         simplex_B,
         gene_mask=gene_mask,
+        reference=_resolved_reference,
     )
 
     all_gene_names = gene_names
@@ -1058,6 +1103,9 @@ def _compare_empirical_from_marginal(
     result._all_gene_names = (
         list(all_gene_names) if all_gene_names is not None else None
     )
+    # Store the original reference spec (not the resolved mask): mask-recompute
+    # paths re-resolve it against the new keep-mask.
+    result._reference = reference
 
     return result
 
@@ -1082,6 +1130,7 @@ def _compare_empirical_mixture(
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
+    reference: Union[str, jnp.ndarray, List[str]] = "clr",
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison using mixture-weighted compositions.
 
@@ -1123,6 +1172,7 @@ def _compare_empirical_mixture(
         Odds-ratio samples, shape ``(N, K, D)`` or ``(N, K)``.
     """
     from ._empirical import (
+        _resolve_reference,
         compute_delta_from_simplex,
         sample_mixture_compositions,
     )
@@ -1144,8 +1194,9 @@ def _compare_empirical_mixture(
     )
 
     # --- CLR differences ---
+    _resolved_reference = _resolve_reference(reference, gene_names, gene_mask)
     delta_samples = compute_delta_from_simplex(
-        simplex_A, simplex_B, gene_mask=gene_mask
+        simplex_A, simplex_B, gene_mask=gene_mask, reference=_resolved_reference
     )
 
     # --- Weighted biological parameters ---
@@ -1267,6 +1318,9 @@ def _compare_empirical_mixture(
     result._all_gene_names = (
         list(all_gene_names) if all_gene_names is not None else None
     )
+    # Store the original reference spec (not the resolved mask): mask-recompute
+    # paths re-resolve it against the new keep-mask.
+    result._reference = reference
 
     return result
 
@@ -1295,6 +1349,7 @@ def _compare_shrinkage(
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
     param_layouts: Optional[dict] = None,
+    reference: Union[str, jnp.ndarray, List[str]] = "clr",
 ) -> "ScribeShrinkageDEResults":
     """Build shrinkage DE by wrapping the empirical result object."""
     empirical = _compare_empirical(
@@ -1315,6 +1370,7 @@ def _compare_shrinkage(
         compute_biological=compute_biological,
         mu_samples_A=mu_samples_A,
         mu_samples_B=mu_samples_B,
+        reference=reference,
         phi_samples_A=phi_samples_A,
         phi_samples_B=phi_samples_B,
         param_layouts=param_layouts,

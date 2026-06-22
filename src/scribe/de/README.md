@@ -755,8 +755,25 @@ The two-condition DE pipeline is split into two stages for reusability:
    `rho ~ Dirichlet(r)` in the full D-dimensional simplex (GPU-batched).
    When gene-specific `p_samples` are provided, uses Gamma-based sampling.
    The full simplex samples are stored for later mask changes.
-2. **Stage 2 — CLR differencing** (`compute_delta_from_simplex()`): Aggregate
-   filtered genes into "other", apply CLR, and compute paired differences.
+2. **Stage 2 — log-ratio differencing** (`compute_delta_from_simplex()`):
+   Aggregate filtered genes into "other", apply a reference log-ratio
+   transform, and compute paired differences. The `reference` argument
+   chooses the reference frame (the denominator of the log-ratio):
+   - `"clr"` (default) — geometric mean over **all** kept genes plus the
+     "other" aggregate; the legacy, bit-identical behaviour.
+   - `"iqlr"` — inter-quartile-variance reference (`_iqlr_reference_mask()`):
+     the reference set is the genes whose CLR variance lies in `[Q1, Q3]`,
+     pooled across draws and both arms, with "other" excluded. This drops
+     the high-variance drivers (mito/hemoglobin) and high-shift genes from
+     the *denominator*, de-contaminating the reference under broad
+     perturbations. See `sec-diffexp-iqlr` in the paper.
+   - a **gene-name list** or **boolean mask** — an explicit, curated
+     reference set (e.g. housekeeping genes). Resolved by `_resolve_reference()`
+     at the `compare()` layer; names must be kept (non-"other") genes.
+
+   Note: only `"clr"` puts the *full* coordinate vector in the sum-to-zero
+   subspace, so IQLR/explicit references are valid for gene-level DE but not
+   for ILR/balance/pathway tools (which reject a non-CLR reference).
 3. **Count**: Estimate all statistics by vectorized counting:
    - `lfsr_g = min(P(Delta_g > 0), P(Delta_g < 0))`
    - `prob_effect_g = P(|Delta_g| > tau)`
@@ -879,7 +896,16 @@ simplex_A, simplex_B = sample_mixture_compositions(
 )
 
 delta = compute_delta_from_simplex(simplex_A, simplex_B, gene_mask=mask)
+
+# Robust reference frame (drops high-variance drivers from the denominator):
+delta_iqlr = compute_delta_from_simplex(
+    simplex_A, simplex_B, gene_mask=mask, reference="iqlr"
+)
 ```
+
+`reference` is also accepted by `compare()` / `compare_groups()` (where a
+gene-name list or boolean mask is resolved against the gene names and keep-mask),
+and can be changed in place on a stored result via `results.set_reference("iqlr")`.
 
 ### Interaction with other features
 
