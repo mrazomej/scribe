@@ -409,6 +409,12 @@ def compare_groups(
         label_A=label_A,
         label_B=label_B,
         method="empirical",
+        # Carry the pairs' post-slice p/phi layouts so biological_level() reads
+        # the gene axis semantically instead of falling back to an ndim heuristic
+        # (which emits a deprecation warning). Same axes for the aggregate (N, G)
+        # as for each pair.
+        p_post_layout=getattr(last_pair, "p_post_layout", None),
+        phi_post_layout=getattr(last_pair, "phi_post_layout", None),
         **{k: _final(k) for k in _ARM_FIELDS},
     )
 
