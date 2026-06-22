@@ -167,6 +167,7 @@ def compare_groups(
     min_complete_pairs: int = 2,
     method: str = "empirical",
     component: Optional[int] = None,
+    n_samples: Optional[int] = None,
     **kwargs,
 ):
     """Population-level differential expression for one grouping factor.
@@ -199,6 +200,13 @@ def compare_groups(
         a future addition.)
     component : int, optional
         Mixture component to select before leaf slicing.
+    n_samples : int, optional
+        Number of posterior draws to sample on the full results before slicing
+        leaves. This sets ``N`` in the returned ``delta_samples`` (``N =
+        n_samples x n_samples_dirichlet``). Defaults to the existing posterior
+        samples if present, else 100. Pass a larger value (e.g. ``5000``) for
+        smoother lfsr/PEFP estimates. Ignored for MCMC results (fixed at fit
+        time). Note: more draws cost proportionally more memory and time.
     **kwargs
         Forwarded to :func:`compare` for each within-pair comparison
         (e.g. ``gene_mask``, ``n_samples_dirichlet``, ``rng_key``).
@@ -268,11 +276,27 @@ def compare_groups(
 
     # Draw posterior samples ONCE on the full results so every leaf slice below
     # shares the same posterior draws — essential for the paired (within-donor)
-    # CLR differences to be coherent across draws.
-    if getattr(results, "posterior_samples", None) is None and hasattr(
-        results, "get_posterior_samples"
-    ):
-        results.get_posterior_samples()
+    # CLR differences to be coherent across draws. The number of posterior draws
+    # sets N in the returned delta_samples (N = n_samples x n_samples_dirichlet);
+    # the default get_posterior_samples count is only 100, so expose n_samples to
+    # raise it.
+    if hasattr(results, "get_posterior_samples"):
+        if n_samples is not None:
+            # (Re)draw the requested number so the count is honoured even when a
+            # smaller set is already cached. MCMC results have a fixed sample
+            # count from the fit and ignore n_samples.
+            try:
+                results.get_posterior_samples(n_samples=int(n_samples))
+            except TypeError:
+                warnings.warn(
+                    "n_samples is ignored for this results type (e.g. MCMC, "
+                    "whose posterior sample count is fixed at fit time).",
+                    stacklevel=2,
+                )
+                if getattr(results, "posterior_samples", None) is None:
+                    results.get_posterior_samples()
+        elif getattr(results, "posterior_samples", None) is None:
+            results.get_posterior_samples()
 
     working = results
     if component is not None:

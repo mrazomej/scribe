@@ -203,6 +203,39 @@ def test_compare_groups_estimand_and_method_guards(complete_spec):
         compare_groups(results, "perturbation", "control", "drug", method="shrinkage")
 
 
+def test_compare_groups_n_samples_redraws(complete_spec, monkeypatch):
+    """n_samples drives the get_posterior_samples (re)draw count."""
+    _patch_compare(monkeypatch)
+    results = _make_results(complete_spec)
+    calls = []
+
+    def _gps(n_samples=100, **_kw):
+        calls.append(n_samples)
+        results.posterior_samples = {"r": np.zeros((n_samples, 1))}
+        return results.posterior_samples
+
+    results.get_posterior_samples = _gps
+    results.posterior_samples = None
+    compare_groups(results, "perturbation", "control", "drug", n_samples=777)
+    assert calls == [777]
+
+
+def test_compare_groups_n_samples_ignored_for_mcmc(complete_spec, monkeypatch):
+    """A results type without an n_samples kwarg (e.g. MCMC) warns and falls back."""
+    _patch_compare(monkeypatch)
+    results = _make_results(complete_spec)
+
+    def _gps(descriptive_names=False):  # MCMC-style: no n_samples kwarg
+        results.posterior_samples = {"r": np.zeros((3, 1))}
+        return results.posterior_samples
+
+    results.get_posterior_samples = _gps
+    results.posterior_samples = None
+    with pytest.warns(UserWarning, match="n_samples is ignored"):
+        compare_groups(results, "perturbation", "control", "drug", n_samples=777)
+    assert results.posterior_samples is not None  # fell back to a default draw
+
+
 def test_compare_groups_requires_grouping():
     results = SimpleNamespace(
         model_config=SimpleNamespace(grouping_spec=None, n_components=None)
