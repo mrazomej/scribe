@@ -149,6 +149,116 @@ def _pair_weights(
     return w / total
 
 
+def _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy):
+    """Make ``results.posterior_samples`` available, honouring ``n_samples``.
+
+    Reuses cached draws when their count already matches the request (so a second
+    ``compare_groups`` call with the same ``n_samples`` does not re-sample a large
+    posterior — the dominant cost). Otherwise draws, offloading to host RAM by
+    default for large ``n_samples`` and chunking with ``batch_size`` to bound
+    memory. Shared by both estimands; a no-op for results without sampling.
+    """
+    if not hasattr(results, "get_posterior_samples"):
+        return
+    _cached = getattr(results, "posterior_samples", None)
+    _cached_n = None
+    if _cached:
+        try:
+            _cached_n = int(next(iter(_cached.values())).shape[0])
+        except (StopIteration, AttributeError, IndexError, TypeError):
+            _cached_n = None
+    if _cached is not None and not (
+        n_samples is not None and _cached_n != int(n_samples)
+    ):
+        return
+    _to_numpy = (
+        bool(convert_to_numpy)
+        if convert_to_numpy is not None
+        else bool(n_samples is not None and int(n_samples) > 500)
+    )
+    kw = {"convert_to_numpy": _to_numpy}
+    if n_samples is not None:
+        kw["n_samples"] = int(n_samples)
+    if batch_size is not None:
+        kw["batch_size"] = int(batch_size)
+    try:
+        results.get_posterior_samples(**kw)
+    except TypeError:
+        warnings.warn(
+            "n_samples / batch_size / convert_to_numpy are not supported by "
+            "this results type (e.g. MCMC, whose posterior sample count is "
+            "fixed at fit time); using its default samples.",
+            stacklevel=2,
+        )
+        if getattr(results, "posterior_samples", None) is None:
+            results.get_posterior_samples()
+
+
+def _compare_groups_effect(
+    results,
+    factor_name,
+    level_A,
+    level_B,
+    *,
+    gene_mask=None,
+    n_samples=None,
+    batch_size=None,
+    convert_to_numpy=None,
+):
+    """``estimand="effect"``: DE on the fitted additive factor effect.
+
+    Reads the per-draw effect contrast ``alpha[level_A] - alpha[level_B]``
+    straight from the fitted hierarchy (via ``get_factor_effect``) — the
+    log-mean treatment effect, with the donor random effect already partitioned
+    out by the model. No composition sampling, no per-pair comparison, no CLR:
+    cheap and memory-light. The returned ``delta_samples`` is that log-mean
+    contrast (NOT a CLR composition contrast), in SCRIBE's ``A - B`` sign
+    convention, so ``gene_level`` / ``to_dataframe`` give lfsr / PEFP on the
+    treatment effect directly.
+    """
+    from .results import ScribeEmpiricalDEResults
+
+    _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy)
+
+    fx = results.get_factor_effect(factor_name)
+    if level_A not in fx.levels or level_B not in fx.levels:
+        raise ValueError(
+            f"levels {level_A!r}/{level_B!r} are not both present for factor "
+            f"{factor_name!r}; available levels: {fx.levels}."
+        )
+    # delta = alpha[A] - alpha[B]: matches CLR(A) - CLR(B), so a gene up in
+    # level_B has a negative delta — but here in log-mean (not CLR) space.
+    delta = np.asarray(fx.contrast(level_A, level_B))  # (N, [K,] G_model)
+    if delta.ndim > 2:
+        raise NotImplementedError(
+            "estimand='effect' does not yet support mixture (K>1) models."
+        )
+
+    # Gene names over the model categories (includes the gene_coverage '_other').
+    var = getattr(results, "var", None)
+    names = (
+        [str(n) for n in var.index]
+        if var is not None
+        else [f"gene_{i}" for i in range(delta.shape[1])]
+    )
+    names = np.asarray(names)
+
+    keep = names != "_other"  # never report the gene_coverage anchor pseudo-gene
+    if gene_mask is not None:
+        gm = np.asarray(gene_mask, dtype=bool)
+        if gm.shape[0] == keep.shape[0]:
+            keep = keep & gm
+    delta = delta[:, keep]
+
+    return ScribeEmpiricalDEResults(
+        delta_samples=delta,
+        gene_names=list(names[keep]),
+        label_A=f"{factor_name}={level_A}",
+        label_B=f"{factor_name}={level_B}",
+        method="empirical",
+    )
+
+
 # ------------------------------------------------------------------------------
 # Public entry point
 # ------------------------------------------------------------------------------
@@ -184,8 +294,18 @@ def compare_groups(
     level_A, level_B : str
         The two levels to contrast (B vs A), e.g. ``"control"`` /
         ``"panobinostat"``.
-    estimand : {"paired_main_effect"}, default
-        Currently only the paired main-effect estimand is implemented.
+    estimand : {"paired_main_effect", "effect"}, default "paired_main_effect"
+        ``"paired_main_effect"`` — the donor-averaged within-pair **CLR**
+        (compositional) contrast (the default; uses composition sampling).
+        ``"effect"`` — the fitted additive **log-mean** factor effect
+        ``alpha[level_A] - alpha[level_B]`` read directly from the hierarchy (no
+        composition sampling, no pairing; cheap and memory-light). For a fixed
+        contrast factor this is the model's treatment effect with the donor
+        random effect already partitioned out. The returned ``delta_samples`` is
+        then a log-mean effect, not a CLR contrast (so ``clr_*`` columns hold the
+        log-mean effect); with an interaction present it is the pure main-effect
+        ``alpha``, not the observed-donor average. Only ``gene_mask``, ``n_samples``,
+        ``batch_size`` and ``convert_to_numpy`` apply to the ``"effect"`` path.
     pairing_factor : str, optional
         The grouping factor held across the contrast (e.g. ``"sample"``).
         Inferred when there is exactly one non-contrast factor; required
@@ -243,10 +363,11 @@ def compare_groups(
     """
     from .results import compare, ScribeEmpiricalDEResults
 
-    if estimand != "paired_main_effect":
+    if estimand not in ("paired_main_effect", "effect"):
         raise NotImplementedError(
-            f"estimand={estimand!r} is not yet implemented; only "
-            "'paired_main_effect' is available."
+            f"estimand={estimand!r} is not implemented; choose "
+            "'paired_main_effect' (donor-averaged compositional contrast) or "
+            "'effect' (the fitted log-mean factor effect)."
         )
     if method != "empirical":
         raise NotImplementedError(
@@ -259,6 +380,18 @@ def compare_groups(
         raise ValueError(
             "compare_groups() requires a multi-factor fit (results."
             "model_config.grouping_spec must be set)."
+        )
+
+    if estimand == "effect":
+        return _compare_groups_effect(
+            results,
+            factor_name,
+            level_A,
+            level_B,
+            gene_mask=kwargs.get("gene_mask"),
+            n_samples=n_samples,
+            batch_size=batch_size,
+            convert_to_numpy=convert_to_numpy,
         )
 
     pairing_factor, present, dropped = _resolve_pairs(
@@ -292,51 +425,7 @@ def compare_groups(
     # sets N in the returned delta_samples (N = n_samples x n_samples_dirichlet);
     # the default get_posterior_samples count is only 100, so expose n_samples to
     # raise it.
-    if hasattr(results, "get_posterior_samples"):
-        # Reuse cached draws when they already match the requested count — a
-        # second compare_groups call with the same n_samples must NOT redraw
-        # (re-sampling a large posterior is the dominant cost and can thrash GPU
-        # memory). Redraw only when nothing is cached, or the cached count
-        # differs from the request.
-        _cached = getattr(results, "posterior_samples", None)
-        _cached_n = None
-        if _cached:
-            try:
-                _cached_n = int(next(iter(_cached.values())).shape[0])
-            except (StopIteration, AttributeError, IndexError, TypeError):
-                _cached_n = None
-        _draw = _cached is None or (
-            n_samples is not None and _cached_n != int(n_samples)
-        )
-        if _draw:
-            # Memory: a large posterior draw over every leaf x gene is the
-            # dominant allocation. Offload the draw to host RAM by default for
-            # large n_samples (the per-pair composition sampling then runs on the
-            # host too), and chunk the draw with batch_size. This keeps GPU
-            # headroom; pass convert_to_numpy=False to force the device path.
-            _to_numpy = (
-                bool(convert_to_numpy)
-                if convert_to_numpy is not None
-                else bool(n_samples is not None and int(n_samples) > 500)
-            )
-            _gps_kw = {"convert_to_numpy": _to_numpy}
-            if n_samples is not None:
-                _gps_kw["n_samples"] = int(n_samples)
-            if batch_size is not None:
-                _gps_kw["batch_size"] = int(batch_size)
-            try:
-                results.get_posterior_samples(**_gps_kw)
-            except TypeError:
-                # MCMC (or any results type lacking these kwargs): fixed sample
-                # count from the fit; fall back to its default draw.
-                warnings.warn(
-                    "n_samples / batch_size / convert_to_numpy are not supported "
-                    "by this results type (e.g. MCMC, whose posterior sample "
-                    "count is fixed at fit time); using its default samples.",
-                    stacklevel=2,
-                )
-                if getattr(results, "posterior_samples", None) is None:
-                    results.get_posterior_samples()
+    _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy)
 
     working = results
     if component is not None:

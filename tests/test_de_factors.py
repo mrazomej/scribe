@@ -198,7 +198,7 @@ def test_compare_groups_min_pairs(incomplete_spec, monkeypatch):
 def test_compare_groups_estimand_and_method_guards(complete_spec):
     results = _make_results(complete_spec)
     with pytest.raises(NotImplementedError, match="estimand"):
-        compare_groups(results, "perturbation", "control", "drug", estimand="effect")
+        compare_groups(results, "perturbation", "control", "drug", estimand="marginal")
     with pytest.raises(NotImplementedError, match="method"):
         compare_groups(results, "perturbation", "control", "drug", method="shrinkage")
 
@@ -241,6 +241,56 @@ def test_compare_groups_n_samples_ignored_for_mcmc(complete_spec, monkeypatch):
     with pytest.warns(UserWarning, match="not supported by this results type"):
         compare_groups(results, "perturbation", "control", "drug", n_samples=777)
     assert results.posterior_samples is not None  # fell back to a default draw
+
+
+def _effect_results(eff, names):
+    """Fake results exposing get_factor_effect + var for the 'effect' estimand."""
+    from scribe.core.factor_effect_view import FactorEffectView
+
+    fx = FactorEffectView(
+        "perturbation", ["control", "panobinostat"], eff,
+        scale=1.0, effect_type="fixed", prior="gaussian", gene_names=None,
+    )
+    results = SimpleNamespace(
+        model_config=SimpleNamespace(grouping_spec=SimpleNamespace()),
+        var=SimpleNamespace(index=list(names)),
+    )
+    results.get_factor_effect = lambda name: fx
+    return results
+
+
+def test_compare_groups_effect_estimand():
+    """estimand='effect' returns alpha[A]-alpha[B] as delta, dropping '_other'."""
+    N, G = 5, 4  # 3 real genes + trailing _other
+    eff = np.zeros((N, 2, G))
+    eff[:, 0, :] = [1.0, 2.0, 3.0, 9.0]  # control
+    eff[:, 1, :] = [1.0, 0.0, 5.0, 9.0]  # panobinostat
+    results = _effect_results(eff, ["g0", "g1", "g2", "_other"])
+
+    de = compare_groups(
+        results, "perturbation", "control", "panobinostat", estimand="effect"
+    )
+    # delta = alpha[control] - alpha[panobinostat], '_other' (last) excluded.
+    expected = (eff[:, 0, :] - eff[:, 1, :])[:, :3]
+    np.testing.assert_allclose(np.asarray(de.delta_samples), expected)
+    assert list(de.gene_names) == ["g0", "g1", "g2"]
+    assert "_other" not in de.gene_names
+    assert de.label_A == "perturbation=control"
+    assert de.label_B == "perturbation=panobinostat"
+
+
+def test_compare_groups_effect_estimand_gene_mask():
+    """A gene_mask subsets the reported genes (on top of the '_other' drop)."""
+    N, G = 4, 4
+    eff = np.zeros((N, 2, G))
+    eff[:, 1, :] = [1.0, 2.0, 3.0, 4.0]
+    results = _effect_results(eff, ["g0", "g1", "g2", "_other"])
+    mask = np.array([True, False, True, True])  # drop g1; _other dropped anyway
+    de = compare_groups(
+        results, "perturbation", "control", "panobinostat",
+        estimand="effect", gene_mask=mask,
+    )
+    assert list(de.gene_names) == ["g0", "g2"]
 
 
 def test_compare_groups_requires_grouping():
