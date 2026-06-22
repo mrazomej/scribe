@@ -92,6 +92,94 @@ def _requires_full_gene_sampling(results) -> bool:
     return bool(is_vae or is_amortized_subset)
 
 
+def _dataset_cell_view(results, leaf):
+    """Full-model view restricted to one leaf's cells (for a per-dataset PPC).
+
+    This is deliberately **not** ``get_dataset(leaf)``. ``get_dataset`` collapses
+    to a single-dataset object (``n_datasets=None``); for an *additive
+    multifactor* fit the leaf mean is reconstructed from the population value
+    plus the donor/treatment factor effects, so a collapsed view cannot rebuild
+    the leaf's mu when the PPC re-samples the guide — every leaf's mu survives
+    and the gather is wrong, which makes the per-leaf predictive collapse.
+
+    Instead we keep the **full** multi-dataset model (all leaves' mu, the
+    grouping spec) and restrict the *cells*: set the per-cell dataset
+    assignment to ``leaf`` for the kept cells and slice the per-cell (capture)
+    params to those cells. The full guide then reconstructs every leaf's mu and
+    gathers ``mu[leaf]`` for each cell via ``_dataset_indices`` — exactly the
+    computation that makes the global PPC correct, just over one leaf's cells.
+
+    Returns ``(view, mask)`` where ``mask`` selects the leaf's cells (in
+    fit order) on the full count matrix.
+    """
+    import copy
+
+    import jax.numpy as jnp
+
+    di = np.asarray(results._dataset_indices)
+    mask = di == leaf
+    # Slice only the cell-specific (capture) params to the leaf's cells; the
+    # per-dataset / factor-effect params stay full so the leaf mu still rebuilds.
+    new_params = results._subset_cell_specific_params(
+        dict(results.params), di, leaf
+    )
+    view = copy.copy(results)
+    view.params = new_params
+    view.n_cells = int(mask.sum())
+    view._dataset_indices = jnp.asarray(di[mask])  # all == leaf
+    view.posterior_samples = None
+    view.predictive_samples = None
+    return view, mask
+
+
+def _subset_ppc_to_dataset(results, counts, dataset):
+    """Restrict ``(results, counts)`` to one leaf for a per-dataset PPC.
+
+    Used by ``plot_ppc(dataset=...)`` to inspect an individual fit in a
+    multi-dataset (hierarchical) model. ``dataset`` is a leaf index (int) or
+    a ``{factor: level}`` dict resolving to exactly one leaf. Returns a
+    full-model view restricted to the leaf's cells (see
+    :func:`_dataset_cell_view`) and the observed counts for those cells,
+    selected from the full, fit-order ``counts`` via the per-cell dataset
+    assignment (``_dataset_indices``).
+    """
+    di = getattr(results, "_dataset_indices", None)
+    if di is None:
+        raise ValueError(
+            "plot_ppc(dataset=...) requires a multi-dataset fit; this results "
+            "object has no per-cell dataset assignment."
+        )
+    di = np.asarray(di)
+
+    if isinstance(dataset, dict):
+        from scribe.core.grouping_view import get_group
+
+        gv = get_group(results, **dataset)
+        if len(gv.leaves) != 1:
+            raise ValueError(
+                f"dataset={dataset!r} matches {len(gv.leaves)} leaves "
+                f"({list(gv.labels)}); specify all grouping factors to select "
+                "exactly one."
+            )
+        leaf = int(gv.leaves[0])
+    else:
+        leaf = int(dataset)
+
+    if not (di == leaf).any():
+        raise ValueError(
+            f"no cells found for dataset/leaf {dataset!r} (resolved leaf {leaf})."
+        )
+
+    raw = np.asarray(_coerce_counts(counts))
+    if raw.shape[0] != di.shape[0]:
+        raise ValueError(
+            f"counts has {raw.shape[0]} cells but the fit has {di.shape[0]}; "
+            "pass the full, fit-order count matrix when using dataset=."
+        )
+    view, mask = _dataset_cell_view(results, leaf)
+    return view, raw[mask]
+
+
 def _resolve_ppc_sampling_counts(results, raw_counts, aligned_counts):
     """Resolve counts matrix for PPC sampling calls.
 
@@ -327,6 +415,7 @@ def plot_ppc(
     n_cols=None,
     n_genes=None,
     genes=None,
+    dataset=None,
     n_samples=None,
     figsize=None,
     fig=None,
@@ -363,6 +452,17 @@ def plot_ppc(
         up panel-for-panel (useful for comparing models on the same
         genes).  Names excluded by ``gene_coverage`` filtering (pooled
         into ``_other``) are not selectable and raise ``ValueError``.
+    dataset : int or dict, optional
+        Restrict the PPC to a single dataset/leaf of a multi-dataset
+        (hierarchical) fit, to inspect the quality of an *individual* fit
+        rather than the global mixture over all leaves. Either a leaf index
+        (``int``) or a ``{factor: level}`` dict that resolves to exactly one
+        leaf (e.g. ``{"sample": "PW030", "perturbation": "control"}``).
+        Internally swaps in the per-leaf parameter view
+        (``results.get_dataset(leaf)``) and subsets ``counts`` to that leaf's
+        cells via the fit's per-cell dataset assignment, so ``counts`` must be
+        the full, fit-order count matrix. ``None`` (default) plots the global
+        PPC over all cells.
     n_samples : int, optional
         Number of posterior predictive samples.  Overrides
         ``viz_cfg.ppc_opts.n_samples``.
@@ -396,6 +496,8 @@ def plot_ppc(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting PPC...[/dim]")
+    if dataset is not None:
+        results, counts = _subset_ppc_to_dataset(results, counts, dataset)
     raw_counts = _coerce_counts(counts)
     counts = _coerce_and_align_counts_to_results(
         raw_counts, results, context="plot_ppc"
