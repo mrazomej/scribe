@@ -228,7 +228,73 @@ def _post_process(ctx, kw, model_config):
     if _base in ("twostate", "twostatevcp"):
         model_config = _inject_twostate_data_init(ctx, model_config)
 
+    # A cross-dataset / multi-factor expression hierarchy is additive in the
+    # transform-inverse space, so only the exp link yields the documented
+    # log-additive (log-fold-change) semantics. Force it (warn on override).
+    model_config = _force_exp_for_expression_hierarchy(model_config)
+
     return model_config
+
+
+def _force_exp_for_expression_hierarchy(model_config):
+    """Force the exp link on the expression mean when its hierarchy is additive.
+
+    The cross-dataset / multi-factor expression hierarchy decomposes the
+    *unconstrained* accumulator additively
+    (``logmu^pop + sum_f alpha_f[level]``) and maps it to a positive mean via
+    ``positive_transform``. Only ``exp`` makes that accumulator log-mean, so the
+    per-factor effects are interpretable **log-fold-changes** (and downstream:
+    ``bio_lfc`` equals the effect contrast, ``estimand="effect"`` is valid, and
+    the theory's ``log mu = baseline + treatment + ...`` holds). ``softplus``
+    would place the effects in softplus-inverse space — a different, unstated
+    model. So when the expression hierarchy is active we force the expression
+    target(s) to ``exp``, warning if the resolved transform was something else.
+    """
+    import warnings
+    from ...models.config.enums import HierarchicalPriorType, Parameterization
+
+    _NONE = HierarchicalPriorType.NONE
+
+    def _active() -> bool:
+        edp = getattr(model_config, "expression_dataset_prior", None)
+        if isinstance(edp, dict):
+            if any(v not in (_NONE, "none") for v in edp.values()):
+                return True
+        elif edp is not None and edp != _NONE:
+            return True
+        gs = getattr(model_config, "grouping_spec", None)
+        for f in getattr(gs, "factors", ()) or ():
+            if f.priors.get("expression", "none") not in ("none", _NONE):
+                return True
+        return False
+
+    if not _active() or not hasattr(model_config, "resolve_positive_transform"):
+        return model_config
+
+    # The expression mean is ``r`` under canonical/standard, ``mu`` otherwise;
+    # only that target carries the additive hierarchy (the other is derived).
+    param = getattr(model_config, "parameterization", None)
+    target = (
+        "r"
+        if param in (Parameterization.CANONICAL, Parameterization.STANDARD)
+        else "mu"
+    )
+    if model_config.resolve_positive_transform(target) == "exp":
+        return model_config
+
+    warnings.warn(
+        "An additive expression hierarchy (expression_dataset_prior / "
+        "hierarchy=) is active, which is log-additive in the mean: forcing "
+        f"positive_transform[{target!r}]='exp' so the per-factor effects are "
+        "interpretable log-fold-changes. (softplus would place them in "
+        "softplus-inverse space — a different model. Pass "
+        "positive_transform={'mean_expression': 'exp'} to silence this.)",
+        stacklevel=2,
+    )
+    pt = model_config.positive_transform
+    new_pt = dict(pt) if isinstance(pt, dict) else {}
+    new_pt[target] = "exp"
+    return model_config.model_copy(update={"positive_transform": new_pt})
 
 
 def _inject_twostate_data_init(ctx, model_config):
