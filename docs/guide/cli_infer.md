@@ -148,6 +148,13 @@ layout. Key sections:
 | **Amortization** | `amortization.capture.*` | Amortized capture inference |
 | **Annotations** | `annotation_key`, `annotation_confidence` | Annotation-informed mixture priors |
 
+!!! note "Crossed multi-factor designs are Python-only"
+    The CLI fits a single `dataset_key` (one grouping axis). The crossed
+    **multi-factor** hierarchy — a list `dataset_key`, `hierarchy=[GroupLevel(...)]`,
+    `interactions`, or per-factor dict priors (see
+    [the fit guide](fit.md#crossed-multi-factor-designs)) — is available through
+    the Python `scribe.fit()` API.
+
 For the meaning of each parameter, see the
 [Parameter Reference](parameters.md) and the
 [`scribe.fit()` Interface](fit.md).

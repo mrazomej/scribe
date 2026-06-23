@@ -401,6 +401,74 @@ variables. This enables **paired** CLR-difference differential expression
 between datasets, where the comparison accounts for the posterior
 correlation introduced by the shared hierarchy.
 
+### Crossed and nested designs: multiple grouping factors
+
+A single `dataset_key` flattens cells onto **one** grouping axis. Real
+experiments are often *crossed*: the same set of donors is measured under
+several conditions, so a cell carries two labels at once (e.g. donor **and**
+treatment). Encoding that as a single axis — one leaf per present
+(donor, condition) combination — loses the shared structure: the treatment
+effect is no longer tied across donors, and donor variation cannot be told
+apart from the treatment.
+
+SCRIBE generalises the dataset hierarchy to an **arbitrary number of grouping
+factors** by giving the (log) mean an **additive decomposition** over the
+factors, evaluated on the flat *leaf* axis (the present combinations):
+
+\[
+\log \mu_g^{(\ell)} \;=\; \log \mu_g^{\mathrm{pop}}
+\;+\; \sum_{f} \alpha_g^{(f)}\!\big[\,\mathrm{level}_f(\ell)\,\big],
+\]
+
+where \(\ell\) indexes leaves, \(f\) ranges over the grouping factors, and
+\(\mathrm{level}_f(\ell)\) is the level of factor \(f\) at leaf \(\ell\). The
+population intercept \(\log\mu_g^{\mathrm{pop}}\) is the only free baseline;
+each factor contributes a per-level effect gathered onto the leaf. With one
+factor whose levels *are* the leaves this reduces **exactly** to the
+single-axis hierarchy above, so nothing changes for existing single-`dataset_key`
+fits. Only the **expression** target (\(\mu\)/\(r\)) receives this additive
+form; the technical parameters (\(p\), gate, regime) keep the single-axis
+per-leaf hierarchy, leaving the per-cell likelihood unchanged.
+
+#### Fixed vs. random effects
+
+Each factor's effect type is chosen independently of its prior *family*, and
+the distinction matters:
+
+- A **fixed** effect uses a weakly-informative zero-mean Gaussian with a
+  **fixed** scale and **no learned (adaptive) shrinkage**:
+  \(\alpha_{g,k}^{(f)} = \sigma_f\, z_{g,k}^{(f)}\), \(z \sim \mathcal N(0,1)\),
+  with \(\sigma_f\) a constant. Use it for the **contrast of interest** (e.g. a
+  two-level treatment): a learned scale on a low-cardinality factor is weakly
+  identified and would shrink the very effect you are trying to measure toward
+  zero. The identified quantity is the **contrast** between two levels, e.g.
+  \(\alpha_g^{(f)}[\text{treated}] - \alpha_g^{(f)}[\text{control}]\).
+
+- A **random** effect is a zero-mean NCP term with a **learned** scale and
+  shrinkage (Gaussian / regularized-horseshoe / NEG), as in the single-axis
+  case. Use it for grouping factors with enough levels to estimate their own
+  spread (donors, batches) and for interactions. Each level is a deviation from
+  the population mean.
+
+Identifiability is soft: random effects are zero-mean, the population intercept
+is the only free baseline, and main-effect **contrasts cancel** any residual
+per-factor shift. Fixed effects are identified by their prior. Interactions are
+supported as additional (random) factors, but are aliased with the main effects
+without a hard sum-to-zero constraint, so interaction *main-effect contrasts*
+are not separately reported.
+
+#### Population (donor-averaged) differential expression
+
+Because each posterior sample carries every leaf, a crossed model supports a
+**paired, donor-averaged** treatment contrast: for each donor present in both
+arms, form the within-donor CLR difference, then average over donors. This is
+the population treatment effect with donor heterogeneity differenced out — see
+[Differential Expression](differential-expression.md#part-iii-population-differential-expression-across-grouping-factors)
+for the estimand, and the
+[crossed-hierarchy tutorial](../tutorials/zhao_2021_hierarchical.md) for a worked
+example. The full generative derivation lives in the paper's hierarchical-datasets
+section.
+
 ---
 
 ## Using Hierarchical Priors in SCRIBE
@@ -438,6 +506,38 @@ results = scribe.fit(
 )
 ```
 
+### Crossed multi-factor model
+
+Pass a **list** of grouping columns (crossing is implicit) or a structured
+`hierarchy=[GroupLevel(...)]`, and give the `*_dataset_prior` a **dict** to set
+a prior family *per factor*. Mark the contrast of interest as a fixed effect:
+
+```python
+# Donors crossed with a two-level treatment.
+results = scribe.fit(
+    adata,
+    variable_capture=True,
+    unconstrained=True,
+    parameterization="mean_odds",
+    hierarchy=[
+        scribe.GroupLevel("perturbation", effect_type="fixed"),  # 2-level contrast
+        scribe.GroupLevel("sample"),                             # donors -> random
+    ],
+    expression_dataset_prior={
+        "perturbation": "gaussian",   # fixed-scale, weakly-informative contrast
+        "sample": "horseshoe",        # adaptive shrinkage across donors
+    },
+    prob_dataset_prior="gaussian",    # technical p: leaf-exchangeable
+)
+```
+
+`GroupLevel(name, nested_in=None, effect_type="random", fixed_scale=None)`
+declares one factor; `nested_in` marks a nested (rather than crossed) factor,
+and `effect_type="fixed"` selects the no-learned-shrinkage contrast. The
+equivalent positional form is `dataset_key=["perturbation", "sample"]` (all
+factors random with a broadcast prior). The crossed/multi-factor hierarchy is a
+Python-API feature; the CLI supports a single `dataset_key`.
+
 ### Parameter reference
 
 | Parameter                      | Level                    | Accepted values                              | Requires                                  |
@@ -452,6 +552,14 @@ results = scribe.fit(
 | `overdispersion`               | --                       | `"none"`, `"bnb"`                            | --                                        |
 | `overdispersion_prior`         | Gene                     | `"horseshoe"`, `"neg"`                       | `overdispersion="bnb"`                    |
 | `overdispersion_dataset_prior` | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `overdispersion="bnb"`, `dataset_key`     |
+
+!!! note "Per-factor priors in crossed designs"
+    With more than one grouping factor, every `*_dataset_prior` also accepts a
+    **dict** `{factor_name: family}` to choose the prior family per factor
+    (e.g. `expression_dataset_prior={"perturbation": "gaussian", "sample":
+    "horseshoe"}`). A bare string broadcasts to all factors. Factors marked
+    `effect_type="fixed"` use a fixed-scale Gaussian regardless of family and
+    learn no shrinkage scale.
 
 ### Horseshoe and NEG hyperparameters
 

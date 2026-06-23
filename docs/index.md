@@ -91,7 +91,8 @@ For the full mathematical derivation, see the
 - **Mixture Models**: K-component mixtures for cell type discovery with
   annotation-guided priors
 - **Hierarchical Priors**: Gene-specific and dataset-level hierarchical
-  structures with optional horseshoe sparsity
+  structures with optional horseshoe sparsity, including crossed multi-factor
+  (e.g. donor × condition) designs
 - **Bayesian Differential Expression**: Parametric, empirical (Monte Carlo), and
   shrinkage ([empirical
   Bayes](https://en.wikipedia.org/wiki/Empirical_Bayes_method)) methods in

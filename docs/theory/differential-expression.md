@@ -72,6 +72,18 @@ gene is expressed above the geometric mean; negative means below.
 The CLR coordinates sum to zero by construction, reflecting the
 one-dimensional constraint lost by normalization.
 
+!!! note "The reference is a choice"
+    The geometric mean of *all* genes is one choice of reference. It is an
+    invariant anchor only when most genes are unchanged; under a broad
+    perturbation it drifts and a few high-variance genes can dominate the
+    contrast. SCRIBE therefore also exposes an **inter-quartile (IQLR)** or a
+    **curated** reference (`compare(..., reference=...)`) that references each
+    gene against a robust subset rather than the whole composition. Only the
+    all-gene CLR makes the full coordinate vector sum to zero, so the
+    balance/pathway tools below assume the CLR reference; the subset references
+    are for gene-level inference. See the [differential-expression
+    guide](../guide/differential-expression.md#choosing-the-reference-frame).
+
 **Isometric Log-Ratio (ILR).** An orthonormal rotation of the CLR
 coordinates into \(\mathbb{R}^{D-1}\), where standard Euclidean geometry
 applies. The ILR is particularly useful for gene-set and pathway analysis,
@@ -416,6 +428,68 @@ No single metric is universally "best." The recommended workflow is:
    but high Jeffreys divergence.
 4. **Flag distributional shifts**: use the Jeffreys divergence as a
    catch-all for any change in the NB distribution.
+
+---
+
+## Part III -- Population Differential Expression Across Grouping Factors
+
+Parts I and II contrast **two fitted models** (or two mixture components). When
+a single joint model is fit over a crossed design — say donors crossed with a
+treatment (see
+[Hierarchical Priors > Crossed designs](hierarchical-priors.md#crossed-and-nested-designs-multiple-grouping-factors))
+— the estimand changes: we want the **population** treatment effect, *paired
+within donor*, and we want donor-to-donor variation differenced out rather than
+mistaken for a drug effect.
+
+### The paired main-effect estimand
+
+Let \(\rho_g^{(d,c,s)}\) be the simplex proportion of gene \(g\) for donor
+\(d\), condition \(c\), at posterior draw \(s\) (each draw carries *all* leaves,
+so donors are coupled through the shared hierarchy). For every donor present in
+**both** contrast levels \(A,B\), form the within-donor CLR difference
+
+\[
+\Delta_g^{(d,s)}
+= \mathrm{clr}\!\big(\rho_g^{(d,A,s)}\big) - \mathrm{clr}\!\big(\rho_g^{(d,B,s)}\big),
+\]
+
+then average over donors with weights \(w_d\) (uniform by default; or by cell
+count) to obtain the **paired main effect**
+
+\[
+\bar\Delta_g^{(s)} = \sum_d w_d\, \Delta_g^{(d,s)}, \qquad \sum_d w_d = 1 .
+\]
+
+Two points make this the right quantity. First, the donor effect
+\(\beta_g[d]\) enters both \(\rho^{(d,A)}\) and \(\rho^{(d,B)}\), so it
+**cancels** inside each within-donor difference — the contrast is paired, not a
+control-donor-vs-treated-donor mixture. Second, averaging is over the **final
+CLR (a linear) quantity**, never over \(r\)/\(\mu\)/logits before transforming.
+The lfsr, PEFP and all downstream summaries of Part I are then computed from the
+posterior sample set \(\{\bar\Delta_g^{(s)}\}_s\) exactly as for a two-model
+comparison.
+
+This is **averaging**, not concatenation: \(\bar\Delta_g\) has the same number
+of draws as a single pair and its spread is the posterior uncertainty in the
+*mean* effect (which tightens as donors are added) — distinct from the
+distribution of per-donor effects, which would also carry donor heterogeneity.
+
+### Interpretation with interactions
+
+If the model includes a donor × condition **interaction**, the within-donor
+difference also contains that donor's interaction deviation, so \(\bar\Delta_g\)
+estimates the **observed-donor-average** treatment effect (including the average
+interaction). This coincides with the pure fixed main-effect parameter only when
+the interaction averages to zero over the donors in hand. Both are legitimate
+targets; SCRIBE reports the observed-donor average because it is what the data
+directly support.
+
+In SCRIBE this estimand is `scribe.compare_groups(results, factor, level_A,
+level_B)`; the structural per-factor effects (the fixed contrast \(\alpha_g\),
+the random donor deviations \(\beta_g[d]\)) are available separately via
+`results.get_factor_effect(...)`. See the
+[DE guide](../guide/differential-expression.md#population-differential-expression-across-grouping-factors)
+and the [crossed-hierarchy tutorial](../tutorials/zhao_2021_hierarchical.md).
 
 ---
 

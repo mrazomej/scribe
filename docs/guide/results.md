@@ -130,6 +130,61 @@ component_results = results.get_component(0)
 print(component_results.model_type)  # e.g., "nbdm" instead of "nbdm_mix"
 ```
 
+### Multi-dataset and multi-factor accessors
+
+When a model is fit jointly across datasets (`dataset_key=...`) or across
+several grouping factors (`hierarchy=[...]`; see
+[the fit guide](fit.md#crossed-multi-factor-designs)), the results object
+exposes accessors for the leaf structure and the fitted factor effects.
+
+**Single-leaf views.** `get_dataset(index)` slices every per-dataset parameter
+to one leaf and returns an ordinary single-dataset results object:
+
+```python
+leaf = results.get_dataset(0)        # the first present (factor-combination) leaf
+```
+
+**Grouping (the leaf grid).** For a crossed design, `get_group(**factor_levels)`
+returns a `GroupView` over the leaves matching the fixed level(s), indexed by
+the remaining (free) factor — generalising "pair" to any number of contrast
+levels:
+
+```python
+# All leaves for one donor, keyed by the other factor (condition):
+g = results.get_group(sample="D3")
+g.leaves            # leaf indices, e.g. [2, 9]
+g.keys()            # ['control', 'panobinostat']  (the free factor's levels)
+g.labels            # ['control | D3', 'panobinostat | D3']
+g["control"]        # -> a single-dataset results view (lazy get_dataset)
+
+# Walk every donor's paired group, and list a factor's present levels:
+for sample, grp in results.iter_groups("sample"):
+    control_view, treated_view = grp["control"], grp["panobinostat"]
+results.group_levels("sample")       # ['D1', 'D2', ...]
+```
+
+**Fitted factor effects.** `get_factor_effect(factor_name)` exposes the additive
+effect of one factor (in log-mean space) as posteriors — the treatment contrast
+for a fixed factor, the per-level deviations and learned shrinkage scale for a
+random factor:
+
+```python
+# Treatment effect (fixed contrast factor): the identified quantity is the contrast.
+tx = results.get_factor_effect("perturbation")
+tx.contrast("panobinostat", "control")      # (n_draws, n_genes) log-mean effect samples
+tx.map_contrast("panobinostat", "control")  # (n_genes,) posterior-mean effect
+
+# Donor heterogeneity (random factor):
+dn = results.get_factor_effect("sample")
+dn["D3"]        # (n_draws, n_genes) donor-D3 log-mean deviation samples
+dn.scale        # learned shrinkage-scale samples (None for fixed / horseshoe)
+dn.effects()    # (n_levels, n_genes) posterior-mean deviation matrix
+```
+
+These are structural read-outs (log-mean effects, no lfsr). For a calibrated
+compositional contrast with sign-confidence, use
+[`compare_groups`](differential-expression.md#population-differential-expression-across-grouping-factors).
+
 ### Posterior Sampling
 
 The `ScribeResults` class provides several methods for generating different
@@ -198,6 +253,35 @@ the MAP parameters and draws `p_gc` **independently per (gene, cell)**
 — sharing a single latent across cells would introduce a
 replicate-level random effect the model does not have. (Compositional
 PPCs do not yet expose a MAP path.)
+
+#### Per-dataset PPC: `dataset=` (multi-dataset fits)
+
+For a multi-dataset / hierarchical fit (`dataset_key=[...]`), the default PPC is
+an honest **aggregate over all leaves** — each simulated cell is drawn from its
+own leaf's parameters — so it cannot tell you whether any *individual* leaf is
+well fit. `scribe.viz.plot_ppc(..., dataset=...)` restricts the check to one
+leaf, addressed either by integer index or by a `{factor: level}` dict that
+resolves to exactly one leaf:
+
+```python
+# A single donor × condition leaf, by readable coordinates:
+scribe.viz.plot_ppc(
+    results_joint, adata_joint,
+    dataset={"sample": "PW030", "perturbation": "control"},
+    n_genes=9, n_rows=3,
+)
+
+# ...or by leaf index:
+scribe.viz.plot_ppc(results_joint, adata_joint, dataset=0)
+```
+
+It keeps the full model (so the leaf mean is reconstructed correctly, including
+the additive donor/treatment effects) and subsets both the parameters and the
+observed `counts` to that leaf's cells, so `counts` must be the full,
+fit-order matrix. A data-rich leaf's bands should hug the observed histograms;
+a sparse leaf's bands are wider — the per-leaf view of fit quality the
+aggregate hides. Supported for SVI/VAE results; an MCMC fit raises a clear
+`NotImplementedError`.
 
 ### Log Likelihood Computation
 

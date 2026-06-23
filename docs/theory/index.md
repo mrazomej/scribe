@@ -55,7 +55,8 @@ backbone of the inference, denoising, and differential expression pipelines.
   three prior families (Gaussian, Horseshoe, NEG) used for adaptive
   shrinkage across genes, mixture components, and datasets, with
   applications to gene-specific p, mu, the zero-inflation gate,
-  and multi-dataset hierarchical models.
+  multi-dataset hierarchical models, and crossed multi-factor
+  (e.g. donor × condition) designs with fixed and random effects.
 
 ---
 
@@ -118,7 +119,8 @@ regardless of which generative model produced it.
   fully Bayesian DE framework in compositional (CLR) space with three
   inference methods (parametric, empirical, shrinkage), complemented by
   biological-level metrics (LFC, log-variance ratio, Jeffreys divergence)
-  that are free of compositional closure.
+  that are free of compositional closure, and the donor-averaged paired
+  estimand for population DE across grouping factors.
 
 - :material-scale-balance:{ .middle } [**Model Comparison**](model-comparison.md) — Develops WAIC and
   PSIS-LOO criteria for ranking models by out-of-sample predictive

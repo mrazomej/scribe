@@ -275,6 +275,79 @@ from mixture-weighted NB parameters when `compute_biological=True`.
 
 ---
 
+## Population Differential Expression Across Grouping Factors
+
+When you fit a **crossed hierarchical** model (e.g. donors crossed with a
+treatment — see [the fit guide](fit.md#crossed-multi-factor-designs)), the
+question is usually the **population** treatment effect, *paired within donor*.
+`scribe.compare_groups` computes it directly: for every donor present in both
+arms it forms the within-donor CLR difference, then averages those over donors
+(the **paired main effect**). The donor effect cancels inside each within-donor
+difference, so the result is the average treatment effect with donor
+heterogeneity differenced out — see
+[Theory: population DE](../theory/differential-expression.md#part-iii-population-differential-expression-across-grouping-factors).
+
+```python
+import scribe
+
+# results_joint was fit with hierarchy=[GroupLevel("perturbation", ...),
+#                                       GroupLevel("sample")]
+de = scribe.compare_groups(
+    results_joint,
+    "perturbation",        # the contrast (a base grouping factor)
+    "control", "panobinostat",   # the two levels: delta = CLR(level_A) - CLR(level_B)
+)
+
+# Everything downstream is identical to compare():
+genes = de.gene_level(tau=np.log(1.1))
+df = de.to_dataframe(tau=np.log(2.0), target_pefp=0.05, metrics="all")
+```
+
+The returned object is a standard `ScribeEmpiricalDEResults`, so `gene_level`,
+`to_dataframe`, lfsr/PEFP, the biological metrics, and the
+`scribe.viz.plot_de_*` plots all work unchanged (including `mode="bio"`).
+
+Useful keyword arguments:
+
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `pairing_factor` | inferred | The factor held across the contrast (the donor). Inferred when exactly one non-contrast factor exists; required otherwise |
+| `pair_weighting` | `"uniform"` | How to weight donors when averaging: `"uniform"`, `"min_cells"`, `"harmonic"`, `"total_cells"` |
+| `incomplete_pairs` | `"drop"` | Donors missing one arm: `"drop"` (with a warning) or `"error"` |
+| `min_complete_pairs` | `2` | Error if fewer complete donor pairs remain |
+| `gene_mask` | `None` | Expression filter, applied **inside each pair before CLR** (see below) |
+| `n_samples` | cached / 100 | Posterior draws to sample before slicing leaves — sets `N` in `delta_samples`. Raise it (e.g. `5000`) for smoother lfsr/PEFP |
+| `batch_size` | `None` | Chunk the draw and each pair's composition sampling, to cap peak memory |
+| `convert_to_numpy` | auto | Offload the posterior draw to host RAM (default `True` when `n_samples > 500`) so a large draw does not exhaust GPU memory |
+| `reference` | `"clr"` | Log-ratio reference frame: `"clr"`, `"iqlr"` (driver-robust; resolved per pair), or a gene-name list / boolean mask (curated). See [Choosing the reference frame](#choosing-the-reference-frame) |
+
+!!! tip "Smoother estimates without running out of memory"
+    The default draw is only 100 samples. Increase it with `n_samples`, and for
+    a large draw over many leaves × genes add `batch_size` (and let
+    `convert_to_numpy` offload to host RAM, which is automatic above 500) so the
+    GPU is not asked to hold every sample at once:
+
+    ```python
+    de = scribe.compare_groups(
+        results_joint, "perturbation", "control", "panobinostat",
+        n_samples=5_000, batch_size=500,   # offloads to host automatically
+    )
+    ```
+
+!!! note "Sign convention"
+    As elsewhere in SCRIBE, `delta = CLR(level_A) − CLR(level_B)`, so a gene
+    **up in `level_B`** has a **negative** delta. With an interaction present,
+    this is the *observed-donor-average* treatment effect (including the
+    average interaction deviation), which is not identical to the pure
+    main-effect parameter — both are legitimate; the distinction is documented
+    in the theory page.
+
+To inspect the fitted effects directly (the treatment contrast, the donor
+deviations, the learned heterogeneity scale) rather than run DE, see
+[`get_factor_effect`](results.md#multi-dataset-and-multi-factor-accessors).
+
+---
+
 ## Gene Expression Filter
 
 Low-expression genes can appear spuriously DE due to compositional artifacts.
@@ -300,6 +373,15 @@ de = compare(
 )
 ```
 
+A scale-free alternative to a fixed UMI floor is **compositional coverage** —
+keep the smallest set of genes covering a target fraction of the expressed
+mass:
+
+```python
+# Keep genes making up 95% of the composition in either condition.
+de.set_composition_coverage(coverage=0.95)
+```
+
 ### Interactive mask exploration
 
 After the initial comparison, you can change the expression mask without
@@ -316,6 +398,98 @@ de.set_gene_mask(my_custom_mask)
 # Restore all genes
 de.clear_mask()
 ```
+
+!!! warning "Filtering a `compare_groups` result"
+    The in-place `set_expression_threshold` / `set_composition_coverage` /
+    `set_gene_mask` recompute deltas from the stored simplex samples, which
+    `compare_groups` does **not** retain (averaging simplices would not equal
+    the paired CLR average). On a `compare_groups` result they raise. Instead,
+    **build** the mask and pass it up front so the pooling happens inside each
+    donor pair, before CLR:
+
+    ```python
+    de_raw = scribe.compare_groups(results_joint, "perturbation", "control", "panobinostat")
+    gene_mask = de_raw.composition_coverage_mask(0.95)   # or .expression_mask(2.0)
+    de = scribe.compare_groups(
+        results_joint, "perturbation", "control", "panobinostat",
+        gene_mask=gene_mask,
+    )
+    ```
+
+    `expression_mask(min_expression)` and `composition_coverage_mask(coverage)`
+    read only the MAP mean expression, so they work without stored simplex
+    samples.
+
+### Excluding known confounders by name
+
+When a few high-mass genes (mitochondrial, ribosomal, hemoglobin) dominate the
+composition, the principled way to remove them is **by identity** — decided from
+the gene name, independently of the contrast. (Thresholding on the CLR effect
+size itself and re-running is *circular*: it selects genes by the very quantity
+under test.) `exclude_gene_name_mask` builds a keep-mask from name prefixes
+and/or regular expressions; it reads only gene names, so it works on
+`compare_groups` results too. Combine it with a coverage mask via boolean `&`
+and pass the result up front as `gene_mask=`:
+
+```python
+de_raw = scribe.compare_groups(results_joint, "perturbation", "control", "panobinostat")
+nuisance_keep = de_raw.exclude_gene_name_mask(
+    prefixes=("MT-", "RPL", "RPS", "MRPL", "MRPS"),
+    patterns=(r"^MT(RNR|CO\d|ND\d|ATP\d|CYB)", r"^HB[ABDEGMQZ]\d?$"),
+)
+gene_mask = de_raw.composition_coverage_mask(0.90) & nuisance_keep
+de = scribe.compare_groups(
+    results_joint, "perturbation", "control", "panobinostat", gene_mask=gene_mask,
+)
+```
+
+The "other" pseudo-gene is always pooled, matching the other mask builders.
+
+---
+
+## Choosing the reference frame
+
+A compositional contrast is defined only **up to a reference**: each gene's CLR
+coordinate is its log-proportion minus the geometric mean of a reference set.
+The default reference is **all** genes (standard CLR). Under a broad perturbation
+this all-gene reference itself drifts, and a few high-variance "driver" genes
+(mitochondrial, hemoglobin) can dominate the contrast. The `reference` argument
+of `compare` / `compare_datasets` / `compare_groups` lets you choose the
+reference set:
+
+| `reference` | Meaning |
+|-------------|---------|
+| `"clr"` (default) | Geometric mean over all kept genes (+ the pooled "other"). Bit-identical to the legacy behaviour. |
+| `"iqlr"` | **Inter-quartile log-ratio** (ALDEx2-style, deterministic variant): the reference is the genes whose CLR variance lies in the inter-quartile range, excluding the high-variance drivers. Resolved per pair in `compare_groups`. |
+| gene-name list / boolean mask | A **curated** reference (e.g. housekeeping genes). Names must be kept, non-"other" genes; a boolean mask must be full-gene or aggregated length. |
+
+```python
+de = scribe.compare_groups(
+    results_joint, "perturbation", "control", "panobinostat",
+    gene_mask=gene_mask, reference="iqlr",
+)
+```
+
+On a stored leaf-vs-leaf `compare` result you can switch the frame in place and
+inspect which genes anchor the IQLR reference:
+
+```python
+de.set_reference("iqlr")          # recompute deltas under a new reference
+ref_genes = de.iqlr_reference_mask()  # boolean over the kept genes
+```
+
+!!! note "What a reference change can and cannot do"
+    The reference enters every gene's contrast as a **single shared shift**, so
+    changing it slides all contrasts by a common amount — it cannot re-rank
+    genes or shrink a gene whose own log-ratio change is large. IQLR therefore
+    helps when a drifting reference biases signs *uniformly* (few features, a
+    dominant driver); for a broad, high-gene-count perturbation it is close to a
+    no-op. Note also that only the all-gene CLR puts the *full* coordinate
+    vector in the sum-to-zero subspace, so pathway / balance tests
+    (`test_gene_set`, `test_pathway_perturbation`) require `reference="clr"` and
+    raise on a subset reference. `set_reference` needs stored simplex samples,
+    so it works on `compare` results but raises on `compare_groups` — pass
+    `reference=` up front there.
 
 ---
 

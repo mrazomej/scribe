@@ -685,11 +685,13 @@ dataset-level hierarchical priors on gene-specific parameters.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `dataset_key` | `None` | Column in `adata.obs` identifying which dataset each cell belongs to |
-| `n_datasets` | `None` | Number of datasets. Auto-inferred from `dataset_key` when `None` |
+| `dataset_key` | `None` | Column in `adata.obs` identifying the dataset of each cell. A **list** of columns declares a crossed multi-factor design (see [Crossed designs](#crossed-multi-factor-designs)) |
+| `hierarchy` | `None` | Structured alternative to `dataset_key`: a list of `scribe.GroupLevel(...)` declaring each grouping factor and its effect type |
+| `interactions` | `None` | List of factor-name tuples adding interaction effects between declared factors |
+| `n_datasets` | `None` | Number of datasets/leaves. Auto-inferred from `dataset_key`/`hierarchy` when `None` |
 | `dataset_params` | `None` | Which parameters become dataset-specific (auto-determined from priors when `None`) |
 | `dataset_mixing` | `None` | Dataset-specific mixture weights. `None` = auto (`True` when >= 2 datasets) |
-| `auto_downgrade_single_dataset_hierarchy` | `True` | Automatically simplify hierarchy when `dataset_key` resolves to a single dataset |
+| `auto_downgrade_single_dataset_hierarchy` | `True` | Automatically simplify hierarchy when the grouping resolves to a single dataset |
 
 ### Dataset-level priors
 
@@ -739,6 +741,57 @@ results = scribe.fit(
     automatically downgrades dataset-level priors to gene-level equivalents
     (or drops them) and emits a `UserWarning`. Disable this with
     `auto_downgrade_single_dataset_hierarchy=False`.
+
+### Crossed multi-factor designs
+
+When cells carry **more than one** grouping label at once — e.g. a donor *and*
+a treatment — pass a **list** of columns (crossing is implicit) instead of a
+single `dataset_key`. SCRIBE then gives mean expression an additive
+decomposition over the factors,
+\(\log\mu_g^{(\ell)} = \log\mu_g^{\mathrm{pop}} + \sum_f \alpha_g^{(f)}[\mathrm{level}_f(\ell)]\),
+so the treatment effect is shared across donors while each donor's own
+deviation is modelled separately (see
+[Theory: crossed and nested designs](../theory/hierarchical-priors.md#crossed-and-nested-designs-multiple-grouping-factors)).
+
+For finer control, use a structured `hierarchy=[GroupLevel(...)]` and mark the
+**contrast of interest** as a fixed effect (no learned shrinkage, so the
+contrast is not pulled toward zero), and give each `*_dataset_prior` a **dict**
+to set a prior family per factor:
+
+```python
+results = scribe.fit(
+    adata,
+    parameterization="mean_odds",
+    variable_capture=True,
+    unconstrained=True,
+    hierarchy=[
+        scribe.GroupLevel("perturbation", effect_type="fixed"),  # 2-level contrast
+        scribe.GroupLevel("sample"),                             # 7 donors -> random
+    ],
+    expression_dataset_prior={
+        "perturbation": "gaussian",   # fixed-scale, weakly-informative
+        "sample": "horseshoe",        # adaptive shrinkage across donors
+    },
+    prob_dataset_prior="gaussian",    # technical p stays leaf-exchangeable
+)
+```
+
+| Argument | Form | Notes |
+|----------|------|-------|
+| `dataset_key=["treatment", "sample"]` | list of columns | crossed factors, all random, prior broadcast to each |
+| `hierarchy=[GroupLevel(...), ...]` | structured | per-factor `effect_type` (`"random"` \| `"fixed"`), `nested_in`, `fixed_scale` |
+| `interactions=[("treatment", "sample")]` | list of tuples | add an interaction (random) effect between factors |
+| `expression_dataset_prior={...}` | str \| dict | per-factor prior family; a string broadcasts to all factors |
+
+`GroupLevel(name, nested_in=None, effect_type="random", fixed_scale=None)`. Only
+the expression target (\(\mu\)/\(r\)) gets the additive decomposition; `p`, gate
+and regime keep the single-axis per-leaf hierarchy. The multi-factor hierarchy is
+a Python-API feature — the CLI supports a single `dataset_key`.
+
+!!! tip "Worked example"
+    The [crossed-hierarchy tutorial](../tutorials/zhao_2021_hierarchical.md) fits
+    exactly this donor × condition model end to end and reads off the
+    donor-averaged treatment effect with [`compare_groups`](differential-expression.md#population-differential-expression-across-grouping-factors).
 
 **Full guide:** [Theory: Hierarchical Priors > Multiple datasets](../theory/hierarchical-priors.md#extension-to-multiple-datasets)
 
@@ -1066,15 +1119,17 @@ All `scribe.fit()` parameters at a glance, grouped by function:
 
     | Parameter | Default | Type |
     |-----------|---------|------|
-    | `dataset_key` | `None` | `str` |
+    | `dataset_key` | `None` | `str` or `list[str]` |
+    | `hierarchy` | `None` | `list[GroupLevel]` |
+    | `interactions` | `None` | `list[tuple[str, ...]]` |
     | `n_datasets` | `None` | `int` |
     | `dataset_params` | `None` | `list[str]` |
     | `dataset_mixing` | `None` | `bool` |
-    | `expression_dataset_prior` | `"none"` | `str` |
-    | `prob_dataset_prior` | `"none"` | `str` |
+    | `expression_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
+    | `prob_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
     | `prob_dataset_mode` | `"gene_specific"` | `str` |
-    | `zero_inflation_dataset_prior` | `"none"` | `str` |
-    | `overdispersion_dataset_prior` | `"none"` | `str` |
+    | `zero_inflation_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
+    | `overdispersion_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
     | `capture_scaling_prior` | `"none"` | `str` |
     | `auto_downgrade_single_dataset_hierarchy` | `True` | `bool` |
 

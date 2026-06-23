@@ -64,7 +64,8 @@ model through downstream analysis.
     ---
 
     Bayesian DE with three methods, error control via lfsr and PEFP,
-    biological-level metrics, gene masking, and pathway analysis
+    biological-level metrics, gene masking, population DE across crossed
+    grouping factors, and pathway analysis
 
     [Differential Expression](differential-expression.md)
 

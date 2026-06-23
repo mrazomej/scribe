@@ -409,6 +409,10 @@ targets a specific parameter at a specific level:
 | `overdispersion_dataset_prior` | \(\kappa_g^{(d)}\)                  | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key`     |
 | `regime_dataset_prior`         | TwoState regime coord \(\delta_g^{(d)}\) / \(k^{-(d)}_g\) / \(\kappa_g^{(d)}\) / \(s_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, TwoState model |
 
+In a **crossed multi-factor** design (`dataset_key=[...]` or `hierarchy=[...]`),
+each `*_dataset_prior` also accepts a **dict** `{factor_name: family}` to set
+the prior family per factor; a bare string broadcasts to all factors.
+
 ---
 
 ## Dataset-level parameters
@@ -424,6 +428,32 @@ parameters gain a **dataset axis**. The naming convention follows:
 | \(\kappa_g\) | \(\kappa_g^{(d)}\) | `overdispersion_dataset_prior` |
 | TwoState regime coord (\(\delta_g\) / \(k^-_g\) / \(\kappa_g\) / \(s_g\)) | per-dataset | `regime_dataset_prior` |
 | \(\log M_0\) | \(\log M_0^{(d)}\) | `capture_scaling_prior` (captures dataset-level total mRNA scaling) |
+
+The leaf index \(d\) runs over the present combinations of grouping factors, so
+a list `dataset_key=["treatment", "sample"]` still produces a single dataset
+axis (one leaf per realised combination).
+
+### Crossed multi-factor parameters
+
+With more than one grouping factor, the **expression** target gains an additive
+decomposition rather than one free value per leaf:
+
+\[
+\log \mu_g^{(\ell)} = \log \mu_g^{\mathrm{pop}}
+   + \sum_f \alpha_g^{(f)}\!\big[\mathrm{level}_f(\ell)\big],
+\]
+
+introducing one effect parameter per factor level (gathered onto the leaf):
+
+| Parameter | Effect type | Set by |
+|-----------|-------------|--------|
+| \(\alpha_g^{(f)}\) for a **fixed** factor | fixed-scale Gaussian, no learned shrinkage (the contrast of interest) | `GroupLevel(effect_type="fixed")` (+ optional `fixed_scale`) |
+| \(\alpha_g^{(f)}\) for a **random** factor | zero-mean NCP with a learned scale (`"gaussian"`/`"horseshoe"`/`"neg"`) | `GroupLevel(effect_type="random")` (default) |
+
+The technical parameters (\(p\), gate, regime) keep the single-axis per-leaf
+hierarchy above. The fitted effects are inspectable via
+`results.get_factor_effect(factor)`; see
+[Theory: crossed and nested designs](../theory/hierarchical-priors.md#crossed-and-nested-designs-multiple-grouping-factors).
 
 ### TwoState multi-dataset hierarchy
 
