@@ -246,8 +246,13 @@ def _compare_groups_effect(
     keep = names != "_other"  # never report the gene_coverage anchor pseudo-gene
     if gene_mask is not None:
         gm = np.asarray(gene_mask, dtype=bool)
-        if gm.shape[0] == keep.shape[0]:
-            keep = keep & gm
+        if gm.shape[0] != keep.shape[0]:
+            raise ValueError(
+                f"gene_mask has length {gm.shape[0]} but the effect spans "
+                f"{keep.shape[0]} genes (including '_other'); pass a full-length "
+                "boolean mask (e.g. from composition_coverage_mask)."
+            )
+        keep = keep & gm
     delta = delta[:, keep]
 
     return ScribeEmpiricalDEResults(

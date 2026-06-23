@@ -70,3 +70,18 @@ def test_empty_leaf_raises():
     res = _FakeResults([0, 0, 1, 1, 2])
     with pytest.raises(ValueError, match="no cells found"):
         _subset_ppc_to_dataset(res, np.zeros((5, 3)), 9)
+
+
+class _FakeMCMCResults:
+    """Multi-dataset results lacking the SVI cell-param slicer (like MCMC)."""
+
+    def __init__(self, dataset_indices):
+        self._dataset_indices = np.asarray(dataset_indices)
+        # No ``params`` and no ``_subset_cell_specific_params`` — mirrors
+        # ScribeMCMCResults, which stores ``samples`` instead.
+
+
+def test_mcmc_results_raise_not_implemented():
+    res = _FakeMCMCResults([0, 0, 1, 1, 2])
+    with pytest.raises(NotImplementedError, match="SVI/VAE"):
+        _subset_ppc_to_dataset(res, np.zeros((5, 3)), 0)

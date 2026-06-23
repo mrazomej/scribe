@@ -151,6 +151,19 @@ def _subset_ppc_to_dataset(results, counts, dataset):
         )
     di = np.asarray(di)
 
+    # The cell-restricted view (and its PPC re-sampling) is built for the
+    # variational (SVI/VAE) path: it slices per-cell params and relies on the
+    # guide gathering mu[leaf] per cell via _dataset_indices. MCMC results store
+    # samples (not params) and their PPC sampler does not consume
+    # _dataset_indices, so fail fast with a clear message rather than an opaque
+    # AttributeError.
+    if not hasattr(results, "_subset_cell_specific_params"):
+        raise NotImplementedError(
+            "plot_ppc(dataset=...) is supported for SVI/VAE results; per-dataset "
+            f"PPC is not implemented for {type(results).__name__}. Use the global "
+            "PPC (omit dataset=) for this results type."
+        )
+
     if isinstance(dataset, dict):
         from scribe.core.grouping_view import get_group
 
@@ -458,11 +471,13 @@ def plot_ppc(
         rather than the global mixture over all leaves. Either a leaf index
         (``int``) or a ``{factor: level}`` dict that resolves to exactly one
         leaf (e.g. ``{"sample": "PW030", "perturbation": "control"}``).
-        Internally swaps in the per-leaf parameter view
-        (``results.get_dataset(leaf)``) and subsets ``counts`` to that leaf's
-        cells via the fit's per-cell dataset assignment, so ``counts`` must be
-        the full, fit-order count matrix. ``None`` (default) plots the global
-        PPC over all cells.
+        Internally restricts the **full** model to that leaf's cells (it keeps
+        all leaves' parameters and sets the per-cell dataset assignment to the
+        leaf, so the guide gathers ``mu[leaf]`` per cell — see
+        :func:`_dataset_cell_view`) and subsets ``counts`` to that leaf's cells
+        via the fit's per-cell dataset assignment, so ``counts`` must be the
+        full, fit-order count matrix. Supported for SVI/VAE results. ``None``
+        (default) plots the global PPC over all cells.
     n_samples : int, optional
         Number of posterior predictive samples.  Overrides
         ``viz_cfg.ppc_opts.n_samples``.
