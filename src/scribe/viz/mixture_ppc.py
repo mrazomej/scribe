@@ -80,7 +80,9 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
             f"Available: {list(map_estimates.keys())}"
         )
 
-    param_clamped = jnp.clip(param, a_min=1e-10)
+    # Clamp parameter values to a safe minimum to prevent log(0) during LFC
+    # calculation
+    param_clamped = jnp.clip(param, min=1e-10)
     lfc_range = np.array(
         jnp.log(jnp.max(param_clamped, axis=0))
         - jnp.log(jnp.min(param_clamped, axis=0))
@@ -773,7 +775,9 @@ def _prepare_mixture_ppc_data(
 
     component_samples_list = []
     if need_assignments:
-        console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
+        console.print(
+            "[dim]Computing MAP cell-to-component assignments...[/dim]"
+        )
         if assignment_batch_size is not None:
             console.print(
                 f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
@@ -1140,7 +1144,9 @@ def plot_mixture_ppc(
         show_mixture_overlay_in_comparison = bool(
             comparison_include_mixture_overlay
         )
-    need_component_samples = bool(selected_component_indices) or include_comparison
+    need_component_samples = (
+        bool(selected_component_indices) or include_comparison
+    )
     need_assignments = bool(selected_component_indices) or (
         include_comparison and show_component_observed_in_comparison
     )
@@ -1350,9 +1356,7 @@ def plot_mixture_ppc_overview(*args, **kwargs):
     return plot_mixture_ppc(*args, **kwargs)
 
 
-def plot_mixture_ppc_components(
-    *args, component_indices=None, **kwargs
-):
+def plot_mixture_ppc_components(*args, component_indices=None, **kwargs):
     """Render one or more component-specific mixture PPC figures.
 
     Parameters
@@ -1378,9 +1382,7 @@ def plot_mixture_ppc_components(
     elif isinstance(component_indices, (int, np.integer)):
         kwargs["plots"] = [f"component:{int(component_indices)}"]
     else:
-        kwargs["plots"] = [
-            f"component:{int(idx)}" for idx in component_indices
-        ]
+        kwargs["plots"] = [f"component:{int(idx)}" for idx in component_indices]
     return plot_mixture_ppc(*args, **kwargs)
 
 
@@ -1451,7 +1453,8 @@ def _resolve_weight_fractions_for_composition(
             if ds_idx.ndim == 1 and ds_idx.size > 0:
                 n_datasets = w.shape[_ds_ax]
                 cell_counts = np.bincount(
-                    ds_idx.astype(int), minlength=n_datasets,
+                    ds_idx.astype(int),
+                    minlength=n_datasets,
                 )
                 ds_weights = cell_counts / max(int(np.sum(cell_counts)), 1)
                 # Move dataset axis to 0 for consistent broadcasting.

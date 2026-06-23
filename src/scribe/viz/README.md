@@ -279,3 +279,8 @@ The viz module supports PLN runs with model-aware behavior:
     `r` / `mu`; use `get_pln_correlation()` / `get_pln_sigma()` instead)
   - `plot_bio_ppc` (defined as NB `r,p` biological bands)
   - `plot_mixture_ppc` (PLN mixtures are not supported in v1)
+
+## JAX Compatibility Notes
+
+- `jnp.clip` keyword arguments: JAX uses `min` and `max` rather than the `a_min` and `a_max` parameters used by NumPy's `np.clip`. The visualization and analysis functions (e.g. `_select_divergent_genes` inside `plot_mixture_ppc`) use JAX-compatible keyword arguments to prevent type errors in newer JAX versions.
+
