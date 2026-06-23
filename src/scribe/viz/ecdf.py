@@ -10,7 +10,6 @@ from ._interactive import (
 )
 from .gene_selection import (
     _coerce_counts,
-    _resolve_pooled_other_idx,
     _select_genes_simple,
 )
 
@@ -71,9 +70,10 @@ def plot_ecdf(
             )
         else:
             n_genes = _ECDF_DEFAULT_N_GENES
-    selected_idx, _ = _select_genes_simple(
-        counts, n_genes, exclude_idx=_resolve_pooled_other_idx(results)
-    )
+    # plot_ecdf operates on a raw count matrix (no results / coverage metadata),
+    # so there is no pooled "_other" column to exclude here (the
+    # _select_genes_simple default exclude_idx=None applies).
+    selected_idx, _ = _select_genes_simple(counts, n_genes)
     selected_idx = np.sort(selected_idx)
 
     fig, ax = _create_or_validate_single_axis(

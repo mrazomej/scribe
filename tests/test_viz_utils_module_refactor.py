@@ -1388,8 +1388,8 @@ def test_prepare_ppc_data_reuses_subset_object_with_fresh_samples(monkeypatch):
                 subset.predictive_samples = self.predictive_samples[:, :, idx]
             return subset
 
-    def _fake_select_genes(counts_arr, n_rows, n_cols):
-        _ = counts_arr, n_rows, n_cols
+    def _fake_select_genes(counts_arr, n_rows, n_cols, *, exclude_idx=None):
+        _ = counts_arr, n_rows, n_cols, exclude_idx
         selected = np.array([1, 3, 6], dtype=int)
         mean_counts = counts.mean(axis=0)
         return selected, mean_counts
@@ -1498,7 +1498,8 @@ def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
 
     captured = {}
 
-    def _fake_select_genes(_counts, _rows, _cols):
+    def _fake_select_genes(_counts, _rows, _cols, *, exclude_idx=None):
+        _ = exclude_idx
         means = np.median(_counts, axis=0)
         return selected_idx, means
 
@@ -3088,7 +3089,10 @@ def test_prepare_ppc_data_returns_sorted_genes_and_positions(monkeypatch):
     monkeypatch.setattr(
         ppc_module,
         "_select_genes",
-        lambda _c, _r, _co: (selected, np.mean(np.zeros((5, 6)), axis=0)),
+        lambda _c, _r, _co, *, exclude_idx=None: (
+            selected,
+            np.mean(np.zeros((5, 6)), axis=0),
+        ),
     )
     # Stub predictive sampling
     monkeypatch.setattr(
@@ -4056,6 +4060,7 @@ def test_prepare_calibration_data_pln_uses_per_cell_map(monkeypatch):
         def __init__(self):
             self.model_config = types.SimpleNamespace(
                 parameterization=Parameterization.COUNT_LOGNORMAL,
+                base_model="pln",  # so the family label resolves to "PLN (log-rate)"
                 uses_biology_informed_capture=False,
                 uses_variable_capture=False,
                 d_mode="low_rank",
