@@ -8,6 +8,10 @@ project:
     - paper.qmd
     - supplementary.qmd
 
+resource-path:
+  - "."
+  - ".."
+
 # Title
 title: "SCRIBE: Single-Cell RNA-seq Inference"
 
