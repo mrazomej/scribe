@@ -37,6 +37,7 @@ from .dispatch import (
 from .gene_selection import (
     _coerce_and_align_counts_to_results,
     _get_gene_names,
+    _resolve_explicit_genes,
 )
 from .ppc_rendering import (
     compute_adaptive_max_bin,
@@ -46,8 +47,30 @@ from .ppc_rendering import (
 )
 
 
-def _select_divergent_genes(results, counts, n_rows, n_cols):
-    """Select genes with highest divergence across components, binned by expression."""
+def _compute_mixture_lfc_range(results, counts):
+    """Return per-gene log-fold-change range across mixture components.
+
+    Uses MAP component means (``mu`` or ``r`` depending on
+    parameterization) and reports ``log(max) - log(min)`` along the
+    component axis for each gene.
+
+    Parameters
+    ----------
+    results : object
+        Fitted mixture-model results.
+    counts : array-like
+        Observed count matrix aligned to ``results.n_genes``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Per-gene log-fold-change range with shape ``(n_genes,)``.
+
+    Raises
+    ------
+    ValueError
+        If the model is PLN-family or required MAP parameters are missing.
+    """
     # The PLN-family models (PLN and NBLN) have no NB-family
     # per-component (r/p or mu/phi) parameterization at the
     # composition level, so this divergence heuristic is not defined
@@ -59,7 +82,7 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
             "PLN-family models (PLN, NBLN)."
         )
     counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_select_divergent_genes"
+        counts, results, context="_compute_mixture_lfc_range"
     )
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
@@ -83,10 +106,18 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
     # Clamp parameter values to a safe minimum to prevent log(0) during LFC
     # calculation
     param_clamped = jnp.clip(param, min=1e-10)
-    lfc_range = np.array(
+    return np.array(
         jnp.log(jnp.max(param_clamped, axis=0))
         - jnp.log(jnp.min(param_clamped, axis=0))
     )
+
+
+def _select_divergent_genes(results, counts, n_rows, n_cols):
+    """Select genes with highest divergence across components, binned by expression."""
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_select_divergent_genes"
+    )
+    lfc_range = _compute_mixture_lfc_range(results, counts)
 
     counts_np = np.array(counts)
     median_counts = np.median(counts_np, axis=0)
@@ -667,12 +698,13 @@ def _prepare_mixture_ppc_data(
     need_mixture_samples,
     need_component_samples,
     need_assignments,
+    genes=None,
 ):
     """Prepare data for mixture PPC visualization.
 
-    Selects high-CV genes, generates mixture and per-component PPC
-    samples, and computes MAP cell-to-component assignments.  All
-    computation is backend-agnostic (no matplotlib).
+    Selects high-CV genes (or caller-specified genes), generates mixture
+    and per-component PPC samples, and computes MAP cell-to-component
+    assignments.  All computation is backend-agnostic (no matplotlib).
 
     Parameters
     ----------
@@ -695,6 +727,10 @@ def _prepare_mixture_ppc_data(
     need_assignments : bool
         Whether MAP cell-to-component assignments are required for selected
         outputs.
+    genes : sequence, optional
+        Explicit genes to display, as gene-name strings and/or integer
+        indices.  When given, overrides the default high-CV auto-selection
+        and preserves caller order (same semantics as ``plot_ppc``).
 
     Returns
     -------
@@ -733,21 +769,33 @@ def _prepare_mixture_ppc_data(
     )
     if assignment_batch_size is not None and assignment_batch_size <= 0:
         assignment_batch_size = None
-    console.print(
-        f"[dim]Selecting high-CV genes from {n_rows} expression bins "
-        f"({n_cols} genes/bin) across {n_components} components...[/dim]"
-    )
+    if genes is not None:
+        # Explicit caller-specified selection: resolve names/indices and
+        # preserve the given order so repeated calls line up panel-for-panel.
+        top_gene_indices = _resolve_explicit_genes(genes, results, counts=counts)
+        top_gene_indices = np.array(top_gene_indices)
+        lfc_range = _compute_mixture_lfc_range(results, counts)
+        top_lfc = lfc_range[top_gene_indices]
+        n_genes_to_plot = len(top_gene_indices)
+        console.print(
+            f"[dim]Selected {n_genes_to_plot} caller-specified genes[/dim]"
+        )
+    else:
+        console.print(
+            f"[dim]Selecting high-CV genes from {n_rows} expression bins "
+            f"({n_cols} genes/bin) across {n_components} components...[/dim]"
+        )
 
-    top_gene_indices, top_lfc = _select_divergent_genes(
-        results, counts, n_rows, n_cols
-    )
-    top_gene_indices = np.array(top_gene_indices)
-    n_genes_to_plot = len(top_gene_indices)
+        top_gene_indices, top_lfc = _select_divergent_genes(
+            results, counts, n_rows, n_cols
+        )
+        top_gene_indices = np.array(top_gene_indices)
+        n_genes_to_plot = len(top_gene_indices)
 
-    console.print(
-        f"[dim]Selected {n_genes_to_plot} genes. Top log-fold-changes:[/dim] "
-        f"{np.array(top_lfc[:5])}"
-    )
+        console.print(
+            f"[dim]Selected {n_genes_to_plot} genes. Top log-fold-changes:[/dim] "
+            f"{np.array(top_lfc[:5])}"
+        )
 
     results_subset = results[top_gene_indices]
     counts_subset = counts[:, top_gene_indices]
@@ -1011,6 +1059,7 @@ def plot_mixture_ppc(
     n_rows=None,
     n_cols=None,
     n_genes=None,
+    genes=None,
     n_samples=None,
     figsize=None,
     fig=None,
@@ -1043,7 +1092,14 @@ def plot_mixture_ppc(
         Number of grid columns.  Overrides ``viz_cfg.mixture_ppc_opts.n_cols``.
     n_genes : int, optional
         Total number of genes to display.  When given without ``n_cols``,
-        derives ``n_cols = ceil(n_genes / n_rows)``.
+        derives ``n_cols = ceil(n_genes / n_rows)``.  Ignored when
+        ``genes`` is provided (the count is taken from the list length).
+    genes : sequence, optional
+        Explicit genes to display, as gene-name strings (matched against
+        ``results.var.index``) and/or integer indices into the results'
+        gene axis.  When given, this overrides the default high-CV
+        auto-selection and the panels appear **in the order listed** —
+        matching the semantics of :func:`plot_ppc`.
     n_samples : int, optional
         Number of posterior predictive samples.  Overrides
         ``viz_cfg.mixture_ppc_opts.n_samples``.
@@ -1070,9 +1126,14 @@ def plot_mixture_ppc(
     PlotResultCollection or None
         Wrapped result containing figure payloads.
     """
-    console.print(
-        "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
-    )
+    if genes is not None:
+        console.print(
+            "[dim]Plotting mixture model PPC for caller-specified genes...[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
+        )
     if ax is not None:
         raise ValueError(
             "Mixture PPC requires multiple axes; provide `fig` or `axes`."
@@ -1103,6 +1164,9 @@ def plot_mixture_ppc(
         )
         return
 
+    # An explicit gene list fixes the panel count; let the grid size to it.
+    if genes is not None:
+        n_genes = len(genes)
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
     # Mixture PPC defaults to 1500 samples (heavier computation).
     grid = _resolve_ppc_grid(
@@ -1164,6 +1228,7 @@ def plot_mixture_ppc(
         need_mixture_samples=need_mixture_samples,
         need_component_samples=need_component_samples,
         need_assignments=need_assignments,
+        genes=genes,
     )
     if prepared is None:
         return

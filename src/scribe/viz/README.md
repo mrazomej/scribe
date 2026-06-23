@@ -241,6 +241,24 @@ catalog and calibration workflow.
 scribe-visualize outputs/my_run --w-shrinkage
 ```
 
+## Explicit gene selection (`plot_ppc`, `plot_mixture_ppc`)
+
+Both ``plot_ppc`` and ``plot_mixture_ppc`` (including the
+``plot_mixture_ppc_components`` / ``plot_mixture_ppc_overview`` wrappers)
+accept an optional ``genes=[...]`` argument with the same semantics:
+
+- gene-name strings matched against ``results.var.index`` and/or integer
+  indices into the fitted gene axis,
+- caller order is preserved panel-for-panel across repeated calls,
+- ``n_genes`` / grid sizing is inferred from the list length when
+  ``genes`` is provided,
+- names excluded by ``gene_coverage`` filtering (pooled into ``_other``)
+  raise ``ValueError``.
+
+When ``genes`` is omitted, ``plot_ppc`` uses abundance-stratified
+auto-selection and ``plot_mixture_ppc`` uses high cross-component
+log-fold-change selection.
+
 ## `plot_ppc` conditioning levels
 
 `plot_ppc(results, counts, ppc_level=...)` selects how much observed

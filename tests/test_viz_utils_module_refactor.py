@@ -2548,6 +2548,111 @@ def test_prepare_mixture_ppc_data_skips_unneeded_heavy_steps(monkeypatch):
     assert out["component_samples_list"] == []
 
 
+def test_prepare_mixture_ppc_data_accepts_explicit_genes(monkeypatch):
+    """Explicit ``genes`` should bypass divergent auto-selection."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal result stub supporting gene-subset indexing."""
+
+        n_components = 2
+        n_cells = 3
+        model_config = MagicMock()
+
+        def __getitem__(self, _idx):
+            return self
+
+    def _fake_select_divergent(*_args, **_kwargs):
+        raise AssertionError("_select_divergent_genes should not run.")
+
+    def _fake_resolve_explicit_genes(genes, results, counts=None):
+        assert list(genes) == ["GeneA", "GeneB"]
+        return np.array([2, 0], dtype=int)
+
+    def _fake_lfc_range(*_args, **_kwargs):
+        return np.array([0.1, 0.2, 0.3], dtype=float)
+
+    def _fake_predictive(*_args, **_kwargs):
+        return np.ones((2, 3, 2), dtype=float)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_select_divergent_genes", _fake_select_divergent
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_resolve_explicit_genes", _fake_resolve_explicit_genes
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_compute_mixture_lfc_range", _fake_lfc_range
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_map_like_predictive_samples_for_plot",
+        _fake_predictive,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_cell_assignment_probabilities_for_plot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Assignments should not be computed.")
+        ),
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_component_ppc_samples",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Component samples should not be computed.")
+        ),
+    )
+
+    out = mixture_ppc_module._prepare_mixture_ppc_data(
+        _FakeResults(),
+        counts=np.array([[1.0, 2.0, 3.0]] * 3, dtype=float),
+        viz_cfg=None,
+        n_rows=1,
+        n_cols=2,
+        n_samples=2,
+        need_mixture_samples=True,
+        need_component_samples=False,
+        need_assignments=False,
+        genes=["GeneA", "GeneB"],
+    )
+
+    assert np.array_equal(out["top_gene_indices"], np.array([2, 0]))
+    assert np.array_equal(out["top_lfc"], np.array([0.3, 0.1]))
+
+
+def test_plot_mixture_ppc_forwards_explicit_genes(monkeypatch):
+    """``plot_mixture_ppc(..., genes=...)`` should reach data preparation."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    captured = {}
+
+    class _FakeResults:
+        n_components = 2
+        n_cells = 2
+        model_config = MagicMock()
+
+    def _fake_prepare(*_args, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(mixture_ppc_module, "_is_pln_model", lambda _results: False)
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        np.array([[1.0, 2.0], [3.0, 4.0]], dtype=float),
+        genes=["RPS4X"],
+        plots="components",
+        save=False,
+    )
+
+    assert out is None
+    assert captured["genes"] == ["RPS4X"]
+
+
 def test_prepare_mixture_ppc_data_skips_mixture_samples_for_components_only(
     monkeypatch,
 ):
