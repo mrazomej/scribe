@@ -347,8 +347,11 @@ class ModelConfigBuilder:
         ----------
         joint_params : str or List[str]
             Parameter names to group into a JointLowRankGuide
-            (e.g. ``["mu", "phi"]`` or ``"biological"``).  Requires
-            ``guide_rank`` to be set so the rank is known.
+            (e.g. ``["mu", "phi"]`` or ``"biological"``).  When a
+            ``guide_rank`` is supplied (via ``guide_families``) the group
+            shares a low-rank covariance; without a rank the group uses
+            the linear-coupling-only guide (diagonal marginals + per-gene
+            regression, no low-rank factor ``W``).
 
         Notes
         -----

@@ -606,17 +606,36 @@ def fit(
 
     guide_rank : int, optional
         Rank for low-rank variational guide on gene-specific
-        parameters.  ``None`` uses a mean-field guide.
+        parameters.  ``None`` uses a mean-field guide — *unless*
+        ``joint_params`` is set, in which case ``None`` selects the
+        linear-coupling-only joint guide (see ``joint_params``).
 
     joint_params : str or List[str], optional
-        Gene-specific parameters to model jointly via a single
-        low-rank covariance.  Requires ``guide_rank`` or
-        ``guide_flow``.  Accepts the same shorthands as
-        ``mixture_params``.
+        Gene-specific parameters to model jointly.  Accepts the same
+        shorthands as ``mixture_params``.  The companion knob
+        ``guide_rank`` controls *how* they are coupled:
+
+        - **With** ``guide_rank=k``: all listed params share a single
+          rank-``k`` low-rank multivariate-normal covariance (cross-gene
+          coupling via the Woodbury chain).
+        - **Without** ``guide_rank`` (and without ``guide_flow``):
+          *linear-coupling-only* mode.  Each listed parameter gets a
+          diagonal marginal plus a **per-gene linear regression** on the
+          earlier listed parameters at the same gene (a per-gene
+          lower-triangular Cholesky block).  No cross-gene low-rank
+          factor ``W`` is built.  This is the lightweight way to make two
+          (or more) **gene-specific** parameters linearly correlated per
+          gene — e.g. ``parameterization="canonical"``,
+          ``prob_prior="gaussian"``, ``joint_params=["r", "p"]`` couples
+          ``r_g`` and ``p_g`` without the low-rank posterior.  (Coupling
+          requires the params to share a dimension; a scalar shared
+          parameter will not couple with gene-specific ones in this mode.)
 
     dense_params : str or List[str], optional
         Subset of ``joint_params`` that receive full cross-gene
-        low-rank coupling.
+        low-rank coupling; the remaining joint params get the per-gene
+        linear regression described above.  Requires ``guide_rank``
+        (the dense block *is* the low-rank MVN).
 
     guide_flow : str, optional
         Normalizing-flow type for the variational guide.  Mutually

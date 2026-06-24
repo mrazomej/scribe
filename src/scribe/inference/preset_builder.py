@@ -181,7 +181,12 @@ def build_config_from_preset(
     guide_rank : Optional[int], default=None
         Rank for low-rank guide on gene-specific parameter. If provided,
         creates a LowRankGuide for the appropriate parameter (r or mu).
-        Mutually exclusive with ``guide_flow``.
+        Mutually exclusive with ``guide_flow``.  When ``joint_params`` is
+        given but ``guide_rank`` is ``None`` (and no ``guide_flow``), the
+        group uses the linear-coupling-only joint guide: diagonal marginals
+        plus a per-gene linear regression among the listed params, with no
+        low-rank factor ``W`` (a ``JointLowRankGuide(rank=0,
+        dense_params=[])`` marker).
     guide_flow : Optional[str], default=None
         Normalizing-flow type for the variational guide. Mutually exclusive
         with ``guide_rank``. When set, creates a NormalizingFlowGuide
@@ -380,10 +385,18 @@ def build_config_from_preset(
             "normalizing-flow guides, not both"
         )
 
-    # joint_params requires either guide_rank or guide_flow
-    if joint_params is not None and guide_rank is None and guide_flow is None:
+    # dense_params selects a subset for the cross-gene low-rank (Woodbury)
+    # block, which only exists when a rank is given.  Requesting dense params
+    # without a rank is contradictory.  Note: joint_params *without* a rank or
+    # flow is valid — it selects linear-coupling-only mode (diagonal marginals
+    # + per-gene linear regression, no low-rank W); see the guide-family block
+    # below.
+    if dense_params is not None and guide_rank is None:
         raise ValueError(
-            "joint_params requires guide_rank or guide_flow to be set"
+            "dense_params requires guide_rank to be set: the dense block is a "
+            "cross-gene low-rank multivariate normal.  For per-gene linear "
+            "coupling without any low-rank block, pass joint_params alone and "
+            "omit dense_params."
         )
 
     # Resolve parameterization strategy (needed by both low-rank and flow)
@@ -430,6 +443,26 @@ def build_config_from_preset(
                 )
         else:
             guide_family_kwargs[gene_param_name] = LowRankGuide(rank=guide_rank)
+
+    # Linear-coupling-only joint guide: joint_params with neither a rank nor a
+    # flow.  Every joint parameter gets a diagonal marginal plus a per-gene
+    # linear regression on the earlier joint parameters at the same gene
+    # (the non-dense block of the structured joint guide).  No cross-gene
+    # low-rank factor W is built — the empty dense_params list routes the
+    # group to setup_structured_joint_guide with an empty dense set, and the
+    # rank-0 marker is never consumed.  This makes two (or more) gene-specific
+    # parameters linearly correlated per gene without invoking the low-rank
+    # multivariate Gaussian.  (guide_flow joint guides are handled below.)
+    elif joint_params is not None and guide_flow is None:
+        from ..models.components import JointLowRankGuide
+
+        joint_guide = JointLowRankGuide(
+            rank=0,
+            group="joint",
+            dense_params=[],
+        )
+        for pname in joint_params:
+            guide_family_kwargs[pname] = joint_guide
 
     # Handle normalizing-flow guide (parallels the low-rank block above)
     if guide_flow is not None:

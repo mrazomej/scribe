@@ -211,6 +211,16 @@ class JointLowRankGuide(GuideFamily):
         At rank k, the guide trades within-block for cross-block expressivity.
         At rank 2k, it strictly generalizes two separate rank-k LowRankGuides.
         Typical values: 10-20.
+
+        ``rank=0`` is permitted **only** in the "linear-coupling-only" mode,
+        signalled by an empty ``dense_params`` list (``dense_params=[]``).
+        In that mode there is no dense block, so no low-rank factor ``W`` is
+        ever built and the rank is unused: every parameter gets a diagonal
+        marginal plus a per-gene linear regression on the earlier parameters
+        in the group (the non-dense block of the structured joint guide).
+        This is the way to make two (or more) gene-specific parameters
+        linearly correlated *per gene* without paying for a cross-gene
+        low-rank multivariate Gaussian.
     group : str
         Identifier linking parameters that share the same joint covariance.
         All ParamSpecs with a JointLowRankGuide having the same ``group``
@@ -249,7 +259,17 @@ class JointLowRankGuide(GuideFamily):
     dense_params: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
-        if self.rank <= 0:
+        # ``rank == 0`` is allowed ONLY in linear-coupling-only mode, which
+        # is signalled by an empty ``dense_params`` list.  There is no dense
+        # block in that mode, so the rank is never consumed (no ``W`` is
+        # built).  Every other configuration requires a positive rank.
+        if self.dense_params == []:
+            if self.rank < 0:
+                raise ValueError(
+                    "rank must be non-negative (rank=0 selects "
+                    "linear-coupling-only mode with no low-rank block)"
+                )
+        elif self.rank <= 0:
             raise ValueError("rank must be positive")
         if not self.group:
             raise ValueError("group must be a non-empty string")

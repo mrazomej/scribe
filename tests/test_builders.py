@@ -38,6 +38,7 @@ from scribe.models.components import (
     AmortizedOutput,
     MeanFieldGuide,
     LowRankGuide,
+    JointLowRankGuide,
     NegativeBinomialLikelihood,
     ZeroInflatedNBLikelihood,
     NBWithVCPLikelihood,
@@ -325,6 +326,58 @@ class TestGuideBuilder:
 
         assert "p" in tr
         assert "r" in tr
+
+    def test_build_linear_coupling_only_guide(
+        self, model_config, small_counts
+    ):
+        """Joint guide with ``rank=0`` + empty ``dense_params``.
+
+        This is the "linear-coupling-only" mode: every joint parameter gets a
+        diagonal marginal plus a per-gene linear regression on the earlier
+        joint parameters at the same gene (``beta`` coefficients).  Crucially,
+        NO cross-gene low-rank factor ``W`` is built — the per-gene coupling
+        is achieved without invoking the low-rank multivariate Gaussian.
+        """
+        # Joint guides operate in unconstrained space, so the specs must be
+        # transform-aware (PositiveNormalSpec carries a ``.transform``).
+        joint = JointLowRankGuide(rank=0, group="joint", dense_params=[])
+        specs = [
+            PositiveNormalSpec(
+                name="p",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        param_sites = [n for n, s in tr.items() if s["type"] == "param"]
+
+        # Each joint parameter gets its own diagonal marginal location.
+        assert "joint_joint_p_loc" in param_sites
+        assert "joint_joint_r_loc" in param_sites
+        # The later parameter regresses on the earlier one per gene (beta).
+        assert any("_beta_" in n for n in param_sites), param_sites
+        # No low-rank factor W is ever registered.
+        assert not any(n.endswith("_W") for n in param_sites), param_sites
 
 
 # ==============================================================================
@@ -1868,10 +1921,28 @@ class TestJointLowRankIntegration:
         assert gf.mu.rank == 5
         assert gf.mu.group == "joint"
 
-    def test_preset_builder_requires_guide_rank(self):
-        """joint_params without guide_rank raises ValueError."""
+    def test_preset_builder_joint_params_without_rank_is_linear_only(self):
+        """joint_params without guide_rank selects linear-coupling-only mode.
+
+        (Previously this raised; the rank is now optional — its absence picks
+        the per-gene linear-regression guide instead of a low-rank MVN.)
+        """
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            prob_prior="gaussian",
+            joint_params=["mu", "phi"],
+        )
+        g = config.guide_families.get("mu")
+        assert isinstance(g, JointLowRankGuide)
+        assert g.rank == 0
+        assert g.dense_params == []
+
+    def test_preset_builder_dense_params_still_requires_rank(self):
+        """dense_params is the low-rank block, so it still requires a rank."""
         with pytest.raises(
-            ValueError, match="joint_params requires guide_rank"
+            ValueError, match="dense_params requires guide_rank"
         ):
             build_config_from_preset(
                 model="nbdm",
@@ -1879,6 +1950,7 @@ class TestJointLowRankIntegration:
                 unconstrained=True,
                 prob_prior="gaussian",
                 joint_params=["mu", "phi"],
+                dense_params=["mu"],
             )
 
     def test_svi_with_joint_guide(self):
@@ -6325,3 +6397,87 @@ class TestMixtureFlowGuide:
 
         with pytest.raises(ValueError, match="mixture_strategy"):
             NormalizingFlowGuide(mixture_strategy="invalid")
+
+
+# ==============================================================================
+# Test linear-coupling-only joint guide (joint_params without guide_rank)
+# ==============================================================================
+
+
+class TestLinearCouplingOnlyPreset:
+    """``joint_params`` without ``guide_rank`` selects per-gene linear coupling.
+
+    This exercises the public preset wiring: every joint parameter shares a
+    ``JointLowRankGuide(rank=0, dense_params=[])`` marker, which routes to the
+    structured-joint guide's non-dense block (diagonal marginals + per-gene
+    ``beta`` regression) with no cross-gene low-rank factor ``W``.
+    """
+
+    def test_joint_params_without_rank_builds_rank0_guide(self):
+        """No guide_rank + joint_params -> rank-0, empty-dense joint guide."""
+        config = build_config_from_preset(
+            model="nbvcp",
+            parameterization="canonical",
+            prob_prior="gaussian",  # p becomes gene-specific
+            joint_params=["r", "p"],
+        )
+        gf = config.guide_families
+        assert gf is not None
+        g_r = gf.get("r")
+        g_p = gf.get("p")
+        assert isinstance(g_r, JointLowRankGuide)
+        # Same shared marker object across all joint params.
+        assert g_r is g_p
+        assert g_r.rank == 0
+        assert g_r.dense_params == []
+        assert g_r.group == "joint"
+
+    def test_any_n_gene_specific_params_linear_only(self):
+        """Three core params (mu, phi, gate) couple per-gene without a rank."""
+        config = build_config_from_preset(
+            model="zinb",
+            parameterization="mean_odds",
+            joint_params=["mu", "phi", "gate"],
+        )
+        gf = config.guide_families
+        for name in ("mu", "phi", "gate"):
+            g = gf.get(name)
+            assert isinstance(g, JointLowRankGuide)
+            assert g.rank == 0
+            assert g.dense_params == []
+
+    def test_dense_params_without_rank_raises(self):
+        """dense_params is meaningless without a low-rank block (guide_rank)."""
+        with pytest.raises(ValueError, match="dense_params requires guide_rank"):
+            build_config_from_preset(
+                model="nbvcp",
+                parameterization="canonical",
+                prob_prior="gaussian",
+                joint_params=["r", "p"],
+                dense_params=["r"],
+            )
+
+    def test_existing_low_rank_path_unchanged(self):
+        """guide_rank + dense subset still builds the structured low-rank guide."""
+        config = build_config_from_preset(
+            model="nbvcp",
+            parameterization="canonical",
+            prob_prior="gaussian",
+            guide_rank=8,
+            joint_params=["r", "p"],
+            dense_params=["r"],
+        )
+        g = config.guide_families.get("r")
+        assert isinstance(g, JointLowRankGuide)
+        assert g.rank == 8
+        assert g.dense_params == ["r"]
+
+    def test_jointlowrank_rank0_requires_empty_dense(self):
+        """rank=0 is allowed only with an empty dense_params list."""
+        # Allowed: linear-coupling-only marker.
+        JointLowRankGuide(rank=0, group="joint", dense_params=[])
+        # Disallowed: rank=0 with a real dense block makes no sense.
+        with pytest.raises(ValueError, match="rank must be positive"):
+            JointLowRankGuide(rank=0, group="joint", dense_params=["r"])
+        with pytest.raises(ValueError, match="rank must be positive"):
+            JointLowRankGuide(rank=0, group="joint", dense_params=None)

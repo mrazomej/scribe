@@ -729,13 +729,16 @@ class ModelConfig(BaseModel):
         None,
         description=(
             "List of parameter names to model jointly via "
-            "JointLowRankGuide (e.g. ['mu', 'phi', 'gate']). Requires "
-            "guide_rank to be set via guide_families. All listed "
-            "parameters share a single low-rank covariance structure "
-            "capturing cross-parameter correlations. Supports "
-            "heterogeneous dimensions: scalar parameters (e.g. phi "
-            "when prob_prior='none') can be mixed with gene-specific "
-            "parameters (e.g. mu, gate)."
+            "JointLowRankGuide (e.g. ['mu', 'phi', 'gate']). When the "
+            "guide_families marker carries a positive rank, all listed "
+            "parameters share a single low-rank covariance capturing "
+            "cross-parameter correlations. When the marker has rank 0 and "
+            "empty dense_params (no guide_rank passed to fit), the group "
+            "uses linear-coupling-only mode: diagonal marginals plus a "
+            "per-gene linear regression among the listed params, with no "
+            "low-rank factor W. Supports heterogeneous dimensions: scalar "
+            "parameters (e.g. phi when prob_prior='none') can be mixed "
+            "with gene-specific parameters (e.g. mu, gate)."
         ),
     )
 
