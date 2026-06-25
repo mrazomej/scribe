@@ -401,3 +401,48 @@ class TestMeanDispCompositionNative:
         )
         assert "clr_delta_mean" in df.columns
         assert len(df) == 10
+
+
+# ==============================================================================
+# Native (mu, r) logits VCP likelihood path
+# ==============================================================================
+
+
+class TestMeanDispNativeLogitsPath:
+    """mean_disp routes the variable-capture likelihood through the cheap
+    NegativeBinomialLogits kernel (logits = log mu - log r + log p_capture),
+    never building the rational p_hat. This avoids the ~6x slowdown of the
+    NegativeBinomialProbs path that canonical/mean_prob use under capture.
+    """
+
+    def _counts_base_dist(self, parameterization, **fit_kwargs):
+        import jax
+        from numpyro import handlers
+        from scribe.models import get_model_and_guide
+
+        cfg = build_config_from_preset(
+            model="nbvcp",
+            parameterization=parameterization,
+            inference_method="svi",
+            **fit_kwargs,
+        )
+        model, _guide, cfg2 = get_model_and_guide(cfg)
+        counts = jnp.asarray(
+            np.random.default_rng(0).poisson(3.0, (40, 8)).astype("float32")
+        )
+        seeded = handlers.seed(model, jax.random.PRNGKey(0))
+        tr = handlers.trace(seeded).get_trace(
+            n_cells=40, n_genes=8, model_config=cfg2, counts=counts
+        )
+        fn = tr["counts"]["fn"]
+        return getattr(fn, "base_dist", fn)
+
+    def test_mean_disp_vcp_uses_logits(self):
+        base = self._counts_base_dist("mean_disp")
+        assert "Logits" in type(base).__name__
+
+    def test_canonical_vcp_uses_probs(self):
+        # Contrast: the canonical p-path keeps NegativeBinomialProbs (the
+        # rational p_hat path). Confirms the native branch is mean_disp-only.
+        base = self._counts_base_dist("canonical")
+        assert "Probs" in type(base).__name__

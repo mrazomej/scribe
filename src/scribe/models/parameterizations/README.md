@@ -122,6 +122,17 @@ path computes the per-gene Gamma scale as `mu/r` natively (skipping the derived-
 `p` round-trip and its clamp); the mean composition is `mu_g / sum_j mu_j` (see
 `scribe/de/README.md` and `paper/_diffexp_compositional_robustness.qmd`).
 
+**Performance note (variable capture)**: the VCP likelihood
+(`likelihoods/vcp.py`) has a native `mean_disp` branch that builds the
+capture-thinned NB directly as `NegativeBinomialLogits(r, log mu - log r +
+log p_capture)` (mean `= p_capture * mu`, size `r`). This stays in the cheap,
+`logsigmoid`-native logits kernel and **never forms the rational
+`p_hat = p*nu/(1 - p*(1-nu))`** that the `canonical`/`mean_prob` p-path uses
+under capture — that rational+clamp path was ~6x slower per step on GPU at scale
+(25.8 -> 3.9 ms on an H100 for a 5000x17000 fit). The derived `p`/`phi` are
+never read by this likelihood, so XLA eliminates them from the SVI step (they
+remain available to `get_map` / `get_posterior_samples` / DE).
+
 ```python
 param_strategy = PARAMETERIZATIONS["mean_disp"]
 # Core: [PositiveNormalSpec("mu"), PositiveNormalSpec("r")] (both gene-specific)

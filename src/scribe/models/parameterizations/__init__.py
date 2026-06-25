@@ -643,7 +643,14 @@ class MeanDispParameterization(Parameterization):
     # --------------------------------------------------------------------------
 
     def build_derived_params(self) -> List[DerivedParam]:
-        """Build derived parameters: phi = r/mu, p = mu/(mu+r)."""
+        """Build derived parameters: phi = r/mu, p = mu/(mu+r).
+
+        These are ``(n_genes,)`` deterministics kept for downstream
+        consumers (``get_map``, ``get_posterior_samples``, biological DE).
+        The native mean-dispersion likelihood reads ``mu`` and ``r`` directly
+        and never uses ``p``/``phi``, so they are dead code in the SVI step
+        and XLA eliminates them from the hot loop.
+        """
         return [
             DerivedParam("phi", _compute_phi_from_mu_r, ["mu", "r"]),
             DerivedParam("p", _compute_p_from_mu_r, ["mu", "r"]),

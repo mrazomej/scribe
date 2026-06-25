@@ -326,6 +326,15 @@ class NBWithVCPLikelihood(Likelihood):
                 spec.name == "phi_capture" for spec in cell_specs
             )
 
+        # mean_disp samples (mu, r) directly: use the native logits path
+        # (mean = capture * mu, size r) which stays in the cheap
+        # NegativeBinomialLogits kernel and never touches the rational p_hat
+        # or the derived p/phi.
+        _param = getattr(model_config, "parameterization", None)
+        use_mean_disp = (
+            getattr(_param, "value", _param) == "mean_disp"
+        )
+
         # Get prior params
         default_params = (1.0, 1.0)
         capture_prior_params = default_params
@@ -456,7 +465,64 @@ class NBWithVCPLikelihood(Likelihood):
             # Determine whether to use cell-specific mixing
             use_annotation = annotation_prior_logits is not None and is_mixture
 
-            if use_phi_capture:
+            if use_mean_disp:
+                # Mean-dispersion parameterization: (mu, r) sampled directly.
+                # The capture-thinned NB has mean = capture * mu and size r,
+                # written as logits = log(mu) - log(r) + log(capture) so the
+                # log-prob stays in the cheap logsigmoid-native
+                # NegativeBinomialLogits kernel (no rational p_hat, no clamp;
+                # the derived p/phi are never read).
+                mu = param_values["mu"]
+
+                # Reshape capture for broadcasting
+                if is_mixture:
+                    capture_reshaped = capture_value[:, None, None]
+                else:
+                    capture_reshaped = capture_value[:, None]
+
+                # Broadcast mu to match r for mixture models using semantic
+                # layouts (post-index path uses layouts with "datasets" dropped).
+                if is_mixture:
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    mu_layout = (active_layouts or {}).get("mu", AxisLayout(()))
+                    mu = broadcast_param_to_layout(mu, mu_layout, r_layout)
+
+                # capture is a probability in (0, 1); clamp away from 0 so
+                # log(capture) stays finite.
+                cap = jnp.clip(capture_reshaped, _P_EPS, 1.0)
+                logits = jnp.log(mu) - jnp.log(r) + jnp.log(cap)
+
+                if is_mixture:
+                    mixing_weights = param_values["mixing_weights"]
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: self._make_count_dist_logits(
+                            r[..., comp_idx, :], logits[..., comp_idx, :]
+                        ).to_event(1),
+                    )
+                    numpyro.sample("counts", mixture_dist, obs=obs)
+                else:
+                    numpyro.sample(
+                        "counts",
+                        self._make_count_dist_logits(r, logits).to_event(1),
+                        obs=obs,
+                    )
+            elif use_phi_capture:
                 # Mean-odds parameterization
                 phi = param_values["phi"]
 
@@ -884,6 +950,13 @@ class ZINBWithVCPLikelihood(Likelihood):
                 spec.name == "phi_capture" for spec in cell_specs
             )
 
+        # mean_disp samples (mu, r) directly: native logits path (see the
+        # NBWithVCPLikelihood branch for the rationale).
+        _param = getattr(model_config, "parameterization", None)
+        use_mean_disp = (
+            getattr(_param, "value", _param) == "mean_disp"
+        )
+
         # Get prior params
         default_params = (1.0, 1.0)
         capture_prior_params = default_params
@@ -1010,7 +1083,72 @@ class ZINBWithVCPLikelihood(Likelihood):
             # Determine whether to use cell-specific mixing
             use_annotation = annotation_prior_logits is not None and is_mixture
 
-            if use_phi_capture:
+            if use_mean_disp:
+                # Mean-dispersion parameterization: (mu, r) sampled directly.
+                # mean = capture * mu, size r -> logits = log(mu) - log(r)
+                # + log(capture), wrapped in ZeroInflatedDistribution. Stays in
+                # the cheap logsigmoid-native NegativeBinomialLogits kernel
+                # (no rational p_hat); p/phi are never read.
+                mu = param_values["mu"]
+
+                # Reshape capture for broadcasting
+                if is_mixture:
+                    capture_reshaped = capture_value[:, None, None]
+                else:
+                    capture_reshaped = capture_value[:, None]
+
+                # Broadcast mu and gate to r for mixture models using semantic
+                # layouts (datasets axis stripped after per-cell indexing).
+                if is_mixture:
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    mu_layout = (active_layouts or {}).get("mu", AxisLayout(()))
+                    gate_layout = (active_layouts or {}).get(
+                        "gate", AxisLayout(())
+                    )
+                    mu = broadcast_param_to_layout(mu, mu_layout, r_layout)
+                    gate = broadcast_param_to_layout(
+                        gate, gate_layout, r_layout
+                    )
+
+                # capture is a probability in (0, 1); clamp away from 0 so
+                # log(capture) stays finite.
+                cap = jnp.clip(capture_reshaped, _P_EPS, 1.0)
+                logits = jnp.log(mu) - jnp.log(r) + jnp.log(cap)
+
+                if is_mixture:
+                    mixing_weights = param_values["mixing_weights"]
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: dist.ZeroInflatedDistribution(
+                            self._make_count_dist_logits(
+                                r[..., comp_idx, :], logits[..., comp_idx, :]
+                            ),
+                            gate=gate[..., comp_idx, :],
+                        ).to_event(1),
+                    )
+                    numpyro.sample("counts", mixture_dist, obs=obs)
+                else:
+                    base_nb = self._make_count_dist_logits(r, logits)
+                    zinb_dist = dist.ZeroInflatedDistribution(
+                        base_nb, gate=gate
+                    )
+                    numpyro.sample("counts", zinb_dist.to_event(1), obs=obs)
+            elif use_phi_capture:
                 # Mean-odds parameterization
                 phi = param_values["phi"]
 
