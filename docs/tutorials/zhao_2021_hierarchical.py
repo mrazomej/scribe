@@ -13,8 +13,7 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     # Multi-donor differential expression with a *crossed hierarchical* `scribe` model
 
     Most differential-expression tutorials compare two conditions in a single sample. Real perturbation experiments are rarely that tidy: the same drug is applied to **several donors**, each with its own baseline, and we want the **population-level treatment effect** — not an artifact of which donor happened to dominate one arm.
@@ -22,15 +21,13 @@ def _(mo):
     In this tutorial we fit **one joint model** to a crossed *donor × condition* design and read off the treatment effect while explicitly accounting for donor-to-donor heterogeneity. The running example is the **Zhao et al. (2021)** dataset, where peripheral cells from **seven donors** were profiled at baseline (`control`) and after treatment with **panobinostat**, a pan-**HDAC inhibitor**. Because HDAC inhibitors have a well-characterized transcriptional fingerprint (histone genes up, heat-shock and p53-stress programs up, MYC and the cell cycle down), we can check the recovered signature against textbook biology.
 
     We will not be shy about the math: the whole point of a generative model is that *every* quantity — the treatment effect, the donor deviations, the differential-expression call — is a parameter with a posterior, so knowing what is being computed is what lets you trust (or question) the answer.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## The design, and why a *joint* model
 
     Seven donors, two conditions each, gives a $7 \times 2$ grid of **groups**
@@ -41,8 +38,7 @@ def _(mo):
     3. **One joint model** in which a cell's mean expression is its donor's baseline *plus* a shared treatment effect *plus* that donor's own deviation. This is what we do here. It keeps the pairing (control and treated cells from the same donor are linked through that donor's parameters), shares strength across donors, and — crucially — lets us *separate* the treatment effect we care about from the donor heterogeneity we want to average over.
 
     The rest of the notebook builds option 3 and shows how to interrogate it.
-    """
-    )
+    """)
     return
 
 
@@ -73,13 +69,11 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Loading and filtering the data
 
     We load the dataset through `pertpy`, drop genes that are never observed, and remove low-quality cells with fewer than 1,000 UMIs. These are ordinary quality-control steps; nothing about normalization happens here, because in `scribe` normalization is part of the *model* (more on that below).
-    """
-    )
+    """)
     return
 
 
@@ -102,14 +96,12 @@ def _(pertpy, sc):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     We focus on the donors that received **panobinostat** and pull both their treated cells and their matched `control` cells into a single object, `adata_joint`. This is the crossed *donor × condition* table the model will see. The two grouping columns are:
 
     - `perturbation` — the **contrast of interest** (`control` vs `panobinostat`),
     - `sample` — the **donor**, which we want to account for but not test.
-    """
-    )
+    """)
     return
 
 
@@ -142,21 +134,17 @@ def _(adata, pd):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     Every donor appears in **both** columns — a fully crossed, balanced-ish design. Those 14 non-empty cells are the model's *leaves*. Reading **down a column** later will compare a donor against itself across the two conditions (the paired contrast); reading **across a row** compares donors within a condition (the heterogeneity we average over).
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     Before modeling, the one plot we always look at: the distribution of total UMIs per cell. If library size varies by close to an order of magnitude, each cell is effectively sequenced at its own depth, and the model must be told so explicitly. In `scribe` that is the **per-cell capture probability** (`variable_capture=True`), the principled replacement for "divide by total counts".
-    """
-    )
+    """)
     return
 
 
@@ -177,30 +165,29 @@ def _(adata_joint, np, plt, sns):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## The model, written out
 
-    ### Counts: a Negative Binomial with per-cell capture
+    ### Counts: a Negative Binomial in its *orthogonal* coordinates
 
-    At its core `scribe` models each UMI count $u_{cg}$ (cell $c$, gene $g$) with a **Negative Binomial**, the distribution that already underlies DESeq2/edgeR and that drops out of a two-state promoter model of transcription. With `parameterization="mean_odds"` we work in terms of a gene **mean expression** $\mu_g$ and a shared **odds** $\phi = p/(1-p)$, related to the raw NB parameters by $r_g = \mu_g\,\phi$ and $p = 1/(1+\phi)$. The mean–odds view breaks the banana-shaped $(r,p)$ degeneracy and makes $\mu_g$ — the thing the data pins down directly — the primary object.
-
-    Because library sizes vary, each cell gets its own **capture probability** $\nu_c \in (0,1)$, producing a cell-specific effective success probability
+    At its core `scribe` models each UMI count $u_{cg}$ (cell $c$, gene $g$) with a **Negative Binomial**, the distribution that already underlies DESeq2/edgeR and that drops out of a two-state promoter model of transcription. With `parameterization="mean_disp"` we sample the two coordinates the data actually speaks about directly: a gene **mean expression** $\mu_g$ and a gene **dispersion** (the NB *size*) $r_g$, with variance
 
     $$
-    \hat{p}_c \;=\; \frac{p}{\nu_c + p\,(1-\nu_c)} .
+    \sigma_g^2 \;=\; \mu_g \;+\; \frac{\mu_g^2}{r_g} .
     $$
+
+    Why these two, and not the raw success probability $p$? Because $(\mu, r)$ is the **Fisher-orthogonal** parameterization of the Negative Binomial: the first moment of the data pins $\mu_g$, the residual over-dispersion pins $r_g$, and the cross-information between them vanishes ($\mathcal{I}_{\mu r}=0$). Mean and dispersion are *statistically decoupled*, so a mean-field posterior over $(\mu_g, r_g)$ has no built-in coupling to fight — none of the banana-shaped degeneracy that ties the raw $(r, p)$ pair together. (The companion `_guide_reparam` note derives this orthogonality in full.) This choice is not cosmetic: as the differential-expression section will show, sampling $(\mu_g, r_g)$ directly is what lets the compositional machinery read each gene's compositional weight $\mu_g / r_g$ **straight off the sampled parameters** — and that faithful weight is exactly what the CLR contrast needs to stay honest.
+
+    Because library sizes vary, each cell gets its own **capture probability** $\nu_c \in (0,1)$, and the count is drawn from a Negative Binomial whose **mean is thinned to $\nu_c\,\mu_g$** with the dispersion $r_g$ left unchanged. `scribe` evaluates this thinned likelihood **natively in the $(\mu, r)$ coordinates** — it never materializes $p$ — which also keeps the per-cell likelihood (the computational hot path) fast.
 
     So far this is the standard `scribe` NB-with-variable-capture model. The new part is what sits **on top of $\mu_g$**.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Mean expression: an additive *crossed* hierarchy
 
     Each leaf $\ell$ is a (condition, donor) pair. Instead of giving every leaf a free mean, we **decompose** the log-mean additively:
@@ -222,36 +209,31 @@ def _(mo):
     - **$\beta_g$ — the donor effect — is a *random* effect** with a **regularized horseshoe** prior. With seven donors there *is* information to learn how much donors vary, and the horseshoe adaptively shrinks: donors that look alike on a gene are pulled together, while a genuinely deviant donor is left alone. Each $\beta_g[d]$ is **zero-mean**, so it captures deviations *from* the population baseline rather than competing with it.
 
     The population baseline $\log\mu_g^{\mathrm{pop}}$ is the only free intercept, which is what makes the decomposition identifiable.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Why this is the right shape for the question
 
     Splitting $\log\mu_g^{(\ell)}$ into a fixed treatment term and a random donor term is the formal statement of "estimate the average drug effect while controlling for the donor." The treatment effect is **shared** across donors (so all 14 leaves inform it), the donor deviations soak up the baseline-and-response variability we do not want to mistake for a drug effect, and because control and treated cells of one donor pass through the *same* $\beta_g[d]$, the design stays **paired**.
 
-    Only the **expression** target ($\mu$) gets this additive decomposition; the technical odds parameter is left free per leaf. That keeps the per-cell likelihood — the computational hot path — completely unchanged: the leaves are still an ordinary "dataset" axis, with structure layered *above* them.
-    """
-    )
+    Only the **expression** target ($\mu$) gets this additive decomposition; the gene **dispersion** $r_g$ is a single per-gene value, shared across all leaves. That keeps the per-cell likelihood — the computational hot path — completely unchanged: the leaves are still an ordinary "dataset" axis, with the crossed structure layered *above* them on $\mu$ alone.
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Fitting the model
 
     The call below is the whole model. `hierarchy=[...]` declares the two grouping factors and their effect types; `expression_dataset_prior` picks the prior family per factor (a fixed-scale Gaussian for the treatment contrast, a horseshoe for the donors). Crossing is implicit — listing two factors with no nesting means "donor crossed with condition."
 
     Fitting at this scale takes a while, so we **load a cached fit** when one is present and only run the optimizer otherwise.
-    """
-    )
+    """)
     return
 
 
@@ -267,11 +249,14 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
     data_dir = Path(_data_root).expanduser() / "zhao_2021"
     (data_dir / "scribe_results").mkdir(parents=True, exist_ok=True)
 
+    # Deifne parameterization
+    _parameterization = "mean_disp"
+
     # Define output path
     _out_path = (
         data_dir
         / "scribe_results"
-        / f"scribe_hierarchical_{perturbation}_joint.pkl"
+        / f"scribe_hierarchical_{_parameterization}_{perturbation}_joint.pkl"
     )
 
     # Fit/load pre-fit model
@@ -281,7 +266,7 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
     else:
         results_joint = scribe.fit(
             adata_joint,
-            parameterization="mean_odds",
+            parameterization=_parameterization,
             variable_capture=True,
             unconstrained=True,
             positive_transform="exp",
@@ -296,7 +281,8 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
                 "perturbation": "gaussian",  # fixed-scale contrast
                 "sample": "horseshoe",  # shrink across donors
             },
-            prob_dataset_prior="gaussian",  # technical odds: leaf-exchangeable
+            # (mean_disp samples a single per-gene dispersion r_g and exposes no
+            #  scalar success-probability, so there is no prob_dataset_prior here.)
             early_stopping={
                 "enabled": True,
                 "patience": 1000,
@@ -315,15 +301,13 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Did the fit work? Three diagnostics
 
     ### 1. The ELBO loss
 
     Variational inference maximizes the **evidence lower bound (ELBO)**; the loss we plot is its negative. We do not read it quantitatively — we just want the textbook shape: a fast initial drop that flattens into a plateau. Spikes or upward drift would be warnings.
-    """
-    )
+    """)
     return
 
 
@@ -336,15 +320,13 @@ def _(results_joint, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### 2. Mean calibration — *per leaf*
 
     A converged loss does not prove the model describes the **counts**. The mean-calibration plot compares, for each gene, the **observed** mean count to the model's **predicted** mean; points on the diagonal mean the fit reproduces the first moment of the data.
 
     Because we have a crossed hierarchy, `scribe` lays the panels out on a **condition × donor grid**: rows are the two conditions, columns are the seven donors. This is the multi-factor layout doing its job — reading **down a column** shows control vs panobinostat *for one donor*, exactly the paired comparison the model encodes. A leaf that fell off the diagonal would point to a donor or condition the additive structure is failing to capture.
-    """
-    )
+    """)
     return
 
 
@@ -359,25 +341,21 @@ def _(adata_joint, results_joint, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     For the most part, we have a very good fit as most points are close to the diagonal. The exceptions are samples `PW051` and `PW053`. However, because of this diagnostic, if wanted, we could look deeper into what could have caused this mismatch.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### 3. Posterior predictive check
 
     Finally, a **posterior predictive check (PPC)**: simulate fresh UMI counts from the fitted model and overlay their distribution on the real histograms, for a spread of genes across the expression range. If the generative story is adequate, the simulated bands should track the observed counts.
 
     Because this is a multi-dataset fit, each simulated cell is drawn from **its own leaf's** parameters, so the plot below is an honest aggregate over all fourteen donor × condition leaves. That makes it a good global check — but it cannot tell us whether any *individual* fit is good. We start global, then zoom in.
-    """
-    )
+    """)
     return
 
 
@@ -397,15 +375,13 @@ def _(adata_joint, results_joint, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     #### Per-dataset PPC: the quality of an *individual* fit
 
     The mean-calibration grid flagged `PW051` and `PW053`. The PPC can zoom into exactly those leaves: `plot_ppc(..., dataset=...)` swaps in a single leaf's parameter view (`results.get_dataset(leaf)` under the hood) and the **observed cells for that leaf only**, so we judge one donor × condition fit at a time. Address a leaf either by integer index or, more readably, by a `{factor: level}` dict.
 
     The two donors below sit at opposite ends of the data-richness scale, which is the structural reason their fits differ: **`PW030`** contributes ≈19,000 control cells, while **`PW051`** — one of the donors the calibration plot flagged — contributes only ≈1,200. A data-rich leaf's predictive bands should hug the observed histograms; a sparse leaf's bands are wider and the fit is more stretched, which is what the calibration plot was picking up.
-    """
-    )
+    """)
     return
 
 
@@ -444,8 +420,7 @@ def _(adata_joint, results_joint, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Reading the model's structure
 
     Before any differential-expression machinery, the fitted hierarchy is already interpretable. The additive effects are stored as parameters with posteriors, and `scribe` exposes them directly.
@@ -453,8 +428,7 @@ def _(mo):
     ### The treatment effect
 
     `results.get_factor_effect("perturbation")` returns the fitted $\alpha_g$ effect. Since `perturbation` is the fixed contrast factor, the identified quantity is the **contrast** — the per-gene log-mean shift from control to panobinostat — which we summarize by its posterior mean.
-    """
-    )
+    """)
     return
 
 
@@ -482,15 +456,13 @@ def _(np, plt, results_joint):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Donor heterogeneity — the reason we went joint
 
     `results.get_factor_effect("sample")` returns the **random** donor effects $\beta_g[d]$: a $7 \times G$ matrix of zero-mean, log-mean deviations. Their spread across donors is the heterogeneity the model absorbed so that it did *not* leak into the treatment effect. If this spread were negligible, simple pooling would have been fine; if it is large, the joint model earned its keep.
 
     Below we compare, gene by gene, the **magnitude of the treatment effect** against the **donor-to-donor spread**. Genes where the donor spread rivals or exceeds the treatment effect are exactly the ones a naive pooled analysis would get wrong.
-    """
-    )
+    """)
     return
 
 
@@ -518,13 +490,11 @@ def _(np, plt, results_joint, treatment_effect):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Recovering the paired groups
 
     `scribe` also lets us pull back the leaf structure for any downstream slicing.  `results.get_group(sample="...")` returns the leaves for one donor, indexed by condition; `iter_groups("sample")` walks every donor. Each value is an ordinary single-dataset results view, so you can drop it into any per-leaf analysis.
-    """
-    )
+    """)
     return
 
 
@@ -543,8 +513,7 @@ def _(results_joint):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Differential expression: the donor-averaged treatment effect
 
     ### The estimand
@@ -564,8 +533,7 @@ def _(mo):
     $$
 
     The donor effect $\beta_g[d]$ cancels inside each within-donor difference, so $\bar\Delta_g$ is a clean draw from the posterior of the *average treatment effect*. The whole population contrast is one call:
-    """
-    )
+    """)
     return
 
 
@@ -576,7 +544,10 @@ def _(results_joint, scribe):
     # n_samples sets N in delta_samples (more draws -> smoother lfsr/PEFP).
     # batch_size chunks the draw and offloads it to host RAM (automatic for
     # n_samples > 500), keeping GPU memory free for the composition sampling.
-    results_de_raw = scribe.compare_groups(
+    # No gene_mask is needed: the fit's own gene_coverage=0.99 already pooled the
+    # un-modeled tail into the `_other` pseudo-gene, so the composition closes
+    # over the whole transcriptome and the CLR reference is stable as-is.
+    results_de = scribe.compare_groups(
         results_joint,
         "perturbation",
         "control",
@@ -584,33 +555,33 @@ def _(results_joint, scribe):
         n_samples=5_000,
         batch_size=500,
     )
-    results_de_raw
-    return (results_de_raw,)
+    results_de
+    return (results_de,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### A cautionary detour: CLR needs a stable reference
 
-    CLR is principled, but it has a sharp edge. The reference it divides by is the **geometric mean of the log-fractions across *all* genes** — and a typical single-cell matrix has thousands of genes sitting at essentially zero, whose log-fractions are hugely negative and jitter from draw to draw. That jitter contaminates the reference and blows up the CLR contrast of the genes we actually care about.
+    CLR is principled, but it has a sharp edge. The reference it divides by is the **geometric mean of the log-fractions across *all* genes** — and a typical single-cell matrix has thousands of genes sitting at essentially zero, whose log-fractions are hugely negative and can jitter from draw to draw. If that jitter contaminated the reference, it would inflate the CLR contrast of the genes we actually care about.
 
-    Look at the top "hits" from the unfiltered run: CLR shifts of $\pm 40$ (an $e^{40}$-fold change is not biology) on near-zero pseudogenes, mitochondrial tRNAs, and stray neuronal markers. This is the reference exploding, not a drug effect.
-    """
-    )
+    So look at the top "hits" from the unfiltered run. They are the usual low-mass suspects — pseudogenes (`CTD-2265O21.3`, `RP11-445F12.1`), a mitochondrial pseudogene (`MTCO1P40`), a stray neuronal marker (`SLC17A7`) — exactly the genes that carry no real signal here. But notice **two** things about their numbers. The shifts are *modest* (the largest is ≈5 log2 units), and every one carries a **high lfsr** (≈0.14–0.45): the model is openly unsure of their sign. This is the orthogonal $(\mu, r)$ parameterization paying off upstream — because each gene's compositional weight $\mu_g/r_g$ is read faithfully from the sampled parameters, the geometric-mean reference stays stable even with the low-mass tail in the mix, and these genes *wobble* rather than *explode*.
+
+    And the one pooling step that genuinely matters already happened at **fit** time. By the **Dirichlet closure property** (summing a subset of Dirichlet components gives another Dirichlet), aggregating genes is *exact* — no information lost — so when we passed `gene_coverage=0.99` to the fit, `scribe` folded the un-modeled tail into a single `_other` pseudo-gene and the fitted composition already closes over the whole transcriptome. The DE samples that same simplex, `_other` included, as the stable compositional anchor. There is therefore **no need for a second, DE-time masking pass**: we read this contrast directly.
+    """)
     return
 
 
 @app.cell
-def _(np, results_de_raw):
-    _df_raw = results_de_raw.to_dataframe(
+def _(np, results_de):
+    _df_raw = results_de.to_dataframe(
         tau=np.log(1.1),
         target_pefp=0.05,
         metrics="clr",
         column_naming="prefixed",
     )
-    # Most extreme |CLR shift| -- the unstable, near-zero genes.
+    # Most extreme |CLR shift| -- the low-mass, sign-uncertain genes.
     _df_raw.reindex(
         _df_raw["clr_delta_mean"].abs().sort_values(ascending=False).index
     )[["gene", "clr_delta_mean", "clr_lfsr"]].head(12)
@@ -619,62 +590,15 @@ def _(np, results_de_raw):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-    ### The principled fix: keep the genes that carry the mass, pool the rest into "other"
-
-    The cure is *not* to delete the quiet genes — that would break the simplex. Instead we **pool** the long tail of near-silent genes into a single "other" pseudo-gene before forming CLR coordinates. By the **Dirichlet closure property** (summing a subset of Dirichlet components gives another Dirichlet) this aggregation is **exact** — no information is lost — and it gives the geometric-mean reference something stable to stand on. CLR stays exactly as principled; we have only stopped asking it to resolve genes that carry no signal.
-
-    How aggressively should we pool? Rather than an arbitrary UMI floor, we use a **compositional-coverage** rule — the natural choice *inside* a compositional framework: keep the smallest set of genes whose MAP composition reaches a target fraction of the total expressed mass (set below), in *either* arm, and pool the rest. It is **scale-free** (invariant to sequencing depth) and keeps exactly the genes that actually make up the transcriptome, rather than a hand-picked count cutoff.
-
-    This nests cleanly with a filter we already applied at *fit* time: `gene_coverage=0.99` pooled the un-modeled tail into the model's own `_other` pseudo-gene, so the fitted composition already sums to one over the full transcriptome. The DE composition samples that whole simplex — `_other` included — and our coverage mask simply folds `_other` back into the DE "other" tail (it is the compositional anchor, never a reportable gene). So the two filtering stages compose: closure is preserved end to end, and the CLR reference is always the full transcriptome.
-
-    One API note: `compare_groups` does not retain the per-pair simplex (averaging simplices would not equal the paired CLR average), so the in-place `set_composition_coverage` does not apply to it. Instead we **build** the mask from the model's mean expression — `results_de_raw.composition_coverage_mask(...)`, which reads only `mu_map` — and pass it up front as `gene_mask=`, so the pooling happens **inside each donor pair, before CLR**.
-    """
-    )
-    return
-
-
-@app.cell
-def _(results_de_raw, results_joint, scribe):
-    COMPOSITION_COVERAGE = 0.95
-
-    # Keep the genes making up this fraction of the expressed mass in either
-    # arm; pool the rest into "other". The builder reads only the model's mean
-    # expression, so it works even though compare_groups stores no simplex.
-    gene_mask = results_de_raw.composition_coverage_mask(COMPOSITION_COVERAGE)
-    print(
-        f"keeping {int(gene_mask.sum()):,} / {gene_mask.size:,} genes "
-        f"({gene_mask.mean():.0%}); the rest pool into 'other'"
-    )
-
-    # Re-run the paired contrast with the mask applied within each pair. The same
-    # n_samples sets the posterior draw count behind the lfsr/PEFP estimates;
-    # batch_size keeps the large draw within memory.
-    results_de = scribe.compare_groups(
-        results_joint,
-        "perturbation",
-        "control",
-        "panobinostat",
-        gene_mask=gene_mask,
-        n_samples=5_000,
-        batch_size=500,
-    )
-    results_de
-    return gene_mask, results_de
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### The compositional view
 
     With a stable reference, the standard `scribe` DE plots are well-defined. The **volcano** puts the CLR contrast on the $x$-axis and $-\log_{10}(\text{lfsr})$ on the $y$-axis, where **lfsr** (local false sign rate) is the posterior probability that we have the *direction* of the effect wrong — the Bayesian replacement for a $p$-value. Genes called differentially expressed (combining an effect-size threshold $\tau$ and a target false-sign rate) are highlighted; the mean-expression panel shows each gene's CLR mean in the two arms.
 
-    A note worth internalizing — and a real result on this dataset. Under a **broad** perturbation like an HDAC inhibitor *many* genes move, so the compositional reference itself drifts, and CLR's *confident* calls become the genes whose **proportion** swings hardest rather than the coherent expression program. Here those turn out to be **mitochondrial genes and MT-pseudogenes** (`MT-ND6`, `MT-TD`, `MTRNR2L1`, …) — mitochondrial fraction is a classic single-cell confounder — while the canonical HDAC markers carry **high CLR lfsr**: once the whole composition is shifting, the sign of any single gene's *relative* change is genuinely uncertain. So CLR is behaving exactly as designed — guarding against being fooled by composition — but for this question it is the **more conservative** lens: at a strict error threshold its only confident calls are these compositional outliers. That is **not** the same as CLR contradicting the biology. As we show at the end of this section, CLR and the biological view agree in *direction* — CLR simply holds the coherent program at **lower confidence**: it is **under-confident here, not incoherent**. (Routinely dropping mitochondrial genes at QC would clean it up; we keep them in the headline run to make the point — and then drop them, by *name*, to see what's left.)
-    """
-    )
+    A note worth internalizing — and the real result on this dataset. Under a **broad** perturbation like an HDAC inhibitor *many* genes move at once, so the whole composition shifts together — and when everything moves, the *relative* change of any single gene is genuinely hard to sign. The consequence is striking: at a strict error threshold the CLR volcano highlights only a **handful** of genes — and they are *not* the canonical program. They are **mitochondrial genes and pseudogenes** (`MTND4P12`, `MT-ND6`, `MTND2P28`, `EEF1A1P7`): the genes whose *proportion* swings hardest, the classic single-cell compositional confounders. The canonical HDAC markers, meanwhile, carry **high CLR lfsr** and never clear the bar.
+
+    This is CLR behaving exactly as designed: it is the **conservative** lens, and the only *relative* changes it will sign under a moving reference are the most extreme compositional outliers. But — and this is the crucial point, which the scatter at the end of this section makes quantitative — that conservatism is **only about confidence, not direction**. The CLR contrast tracks the biological fold-change almost perfectly (Spearman ≈ 0.97): same sign, nearly the same magnitude, gene by gene. CLR is **under-confident here, not incoherent.** And since its few confident calls are exactly the known confounders, the natural next move is to drop mitochondrial, ribosomal, and hemoglobin genes by *name* — a non-circular check on whether anything of substance was hiding among them.
+    """)
     return
 
 
@@ -691,35 +615,32 @@ def _(np, results_de, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-    ### Cleaning up by identity — and what it reveals
+    mo.md(r"""
+    ### Cleaning up by identity — a robustness check
 
-    The mitochondrial dominance is a *known technical confounder*, so the principled fix is to drop those genes by **name** — mitochondrial, ribosomal, and hemoglobin families — a decision made from gene *identity*, a priori and **independent of the contrast**. (The tempting alternative — thresholding on the large CLR values themselves and re-running — is *circular*: it selects genes by the very effect we are testing, defining away real signal along with artifacts. Filtering on identity, or on expression/precision, avoids that.) `exclude_gene_name_mask` builds a keep-mask from name prefixes and regexes; we `&` it with the composition-coverage mask and re-run the same CLR contrast.
-    """
-    )
+    Mitochondrial, ribosomal, and hemoglobin genes are *known technical confounders* in single-cell data, so a natural robustness check is to drop them by **name** — a decision made from gene *identity*, a priori and **independent of the contrast**. (The tempting alternative — thresholding on the large CLR values themselves and re-running — is *circular*: it selects genes by the very effect we are testing, defining away real signal along with artifacts. Filtering on identity, or on expression/precision, avoids that.) `exclude_gene_name_mask` builds a keep-mask from name prefixes and regexes; we pass it as the `gene_mask` and re-run the same CLR contrast — checking whether any confident compositional call was leaning on a confounder.
+    """)
     return
 
 
 @app.cell
-def _(gene_mask, results_de_raw, results_joint, scribe):
+def _(results_de, results_joint, scribe):
     # Drop mitochondrial (incl. MT-pseudogenes), ribosomal, and hemoglobin
     # genes by name — known confounders, chosen by identity, not by effect size.
-    _nuisance_keep = results_de_raw.exclude_gene_name_mask(
+    _nuisance_keep = results_de.exclude_gene_name_mask(
         prefixes=("MT-", "RPL", "RPS", "MRPL", "MRPS"),
         patterns=(r"^MT(RNR|CO\d|ND\d|ATP\d|CYB)", r"^HB[ABDEGMQZ]\d?$"),
     )
-    _gene_mask_clean = gene_mask & _nuisance_keep
     print(
-        f"dropping {int((gene_mask & ~_nuisance_keep).sum())} mito/ribo/HB genes; "
-        f"keeping {int(_gene_mask_clean.sum())} of {gene_mask.size:,}"
+        f"dropping {int((~_nuisance_keep).sum())} mito/ribo/HB genes; "
+        f"keeping {int(_nuisance_keep.sum())} of {_nuisance_keep.size:,}"
     )
     results_de_clean = scribe.compare_groups(
         results_joint,
         "perturbation",
         "control",
         "panobinostat",
-        gene_mask=_gene_mask_clean,
+        gene_mask=_nuisance_keep,
         n_samples=5_000,
         batch_size=500,
     )
@@ -777,25 +698,19 @@ def _(np, results_de, results_de_clean):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-    The result is the cleanest statement of the whole section. Dropping the confounders does **not** surface the coherent program — it *empties the CLR hit list almost entirely*. The mitochondrial genes are gone, and what remains are at most a handful of confident calls; the canonical HDAC markers **keep their high CLR lfsr** (essentially unchanged), and the correlation with the biological view barely moves. In other words, CLR's confidence here was concentrated *in the confounders themselves* — strip them and there is little confident *compositional* signal left, because the markers' limitation was never the reference or the confounders but their genuine per-draw uncertainty under a shifting composition.
-
-    So name-based filtering is the right, non-circular hygiene — and it *confirms*, rather than fixes, the conclusion: for a broad perturbation, the coherent program is not hiding in the composition behind a few loud genes. It lives in the **biological** view, which we read next.
-    """
-    )
+    mo.md(r"""
+    The result confirms the reading above. Dropping the confounders does exactly what it should: the mitochondrial calls vanish and the confident CLR hit list collapses from a handful to **one** — those few "hits" really were compositional confounders, nothing more. And the number printed alongside it is the one that matters: across the ~17,000 surviving genes, the cleaned CLR contrast still correlates with the biological log-fold-change at **Spearman ≈ 0.97**. So name-based filtering does its job as non-circular hygiene, and in doing so it makes the real point unmistakable — under this broad perturbation there is no coherent program hiding *in the composition* behind a few loud genes. CLR and the biological mean are measuring the **same** response; they differ only in how confidently each is willing to commit to it. We read the biological view — the confident one — next.
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### The biological view, and the panobinostat signature
 
-    The complementary lens is the **biological log-fold-change** (`mode="bio"`): the change in each gene's underlying NB **mean expression**, with its own lfsr. Where CLR asks "how did the composition shift," the biological view asks "how did this gene's expression change" — the directly interpretable question for a global drug response. It is unaffected by the reference drift that made CLR uncertain, so the canonical markers that carried high *CLR* lfsr come back here with **biological lfsr ≈ 0** (the posterior is certain of their direction). For a broad perturbation like this, the biological view is the **primary** readout and CLR is the compositional guardrail; the textbook signature lives here.
-    """
-    )
+    The complementary lens is the **biological log-fold-change** (`mode="bio"`): the change in each gene's underlying NB **mean expression**, with its own lfsr. Where CLR asks "how did the *proportion* shift," the biological view asks "how did this gene's *expression* change" — the directly interpretable question for a global drug response. It never has to sign a *relative* change against a moving composition, so the canonical markers that carried high *CLR* lfsr come back here with **biological lfsr ≈ 0** (the posterior is certain of their direction). For a broad perturbation like this, the biological view is the **primary** readout and CLR is the compositional guardrail; the textbook signature lives here.
+    """)
     return
 
 
@@ -810,11 +725,9 @@ def _(TARGET_PEFP, TAU, results_de, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     Let's read the actual hit list. We export the full table and orient the biological log-fold-change as **panobinostat vs control** (positive = up after treatment). One honest caveat: a fold-change ranking rewards the largest *relative* swings, and for the least-expressed retained genes those are the noisiest. So we read the table with **mean expression in view** and focus the headline on **well-expressed** hits (mean $\geq 5$ UMIs in an arm), then validate against known markers below.
-    """
-    )
+    """)
     return
 
 
@@ -870,13 +783,11 @@ def _(down_in_pano):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Validating against known markers
 
     The cleanest sanity check is a targeted one: do the **canonical HDAC-inhibitor / panobinostat markers** come back with the sign biology predicts, and with the posterior confident about it? We pull a curated panel straight from the DE table.
-    """
-    )
+    """)
     return
 
 
@@ -915,46 +826,43 @@ def _(de_table):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Does it make biological sense?
 
     Yes — emphatically. Every canonical marker returns with the expected direction and **lfsr $\approx 0$** (the posterior is essentially certain of the sign), and the well-expressed hit list is a coherent program:
 
     **Up after treatment.**
 
-    - **Metallothioneins** (`MT2A`: mean 26 → 108 UMIs; `MT1X`, `MT1G`, `MT1H`, `MT1E`) — a hallmark metal/oxidative-stress response, a dominant high-confidence block.
+    - **Metallothioneins** (`MT1G`, `MT1H`, `MT1X`, `MT1E`, and `MT2A`: mean 42 → 145 UMIs) — a hallmark metal/oxidative-stress response, the dominant high-confidence block.
     - **Linker histones** (`H1F0`, `HIST1H1C`) — the chromatin-remodeling response that is the defining footprint of HDAC inhibition.
     - **Heat-shock and the integrated stress / p53 program** (`HSPA1A`, `HSPB1`, `GADD45A`, `DDIT3`, `NEAT1`, and the cell-cycle brake **`CDKN1A`**/p21), plus acute-phase genes (`SAA1`, `PI3`).
 
     **Down after treatment.**
 
-    - **`MYC`** and cyclins (`CCND1`, `CCNE2`) — proliferation shutting down, the expected cytostatic effect.
+    - **`MYC`** and the cyclin **`CCND1`** — proliferation shutting down, the expected cytostatic effect.
     - **`MDM2`** — the p53 E3 ligase falling, consistent with **p53 activation**.
-    - A coherent **myeloid / macrophage program** (`CD163`, `CD14`, `MSR1`, `FCGR3A`, `FCER1G`, `SRGN`) — the drug suppressing/depleting the monocyte–macrophage compartment.
+    - A coherent **myeloid / macrophage program** (`CD163`, `CD14`, `MSR1`, `FCGR3A`, `FCER1G`, `SLC11A1`, `S100A8`) — the drug suppressing/depleting the monocyte–macrophage compartment.
+    - A block of **mitochondrially-encoded transcripts** (`MT-CO1`, `MT-RNR1/2`, `MT-ND1`–`ND5`, `MT-CYB`, `MT-ATP6`) — the mitochondrial transcript fraction dropping as the mitochondria-rich myeloid compartment is suppressed. Here these are read cleanly as **biology**, with confident sign — not as the compositional confounder they would look like if we trusted proportions alone.
 
     Crucially, this is the effect **averaged over seven donors with their heterogeneity modeled away** — not an artifact of one dominant sample. The hierarchy estimated the contrast we asked about while absorbing the donor variation we did not.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## A shortcut: differential expression straight from the fixed effect
 
     Everything above used `estimand="paired_main_effect"` — it samples per-donor compositions and contrasts them in CLR space. But recall what the model encodes: the treatment is a **fixed, shared effect** $\alpha$, and within any donor the baseline $\beta$ cancels, so the biological log-fold-change *is* $\alpha[\text{panobinostat}] - \alpha[\text{control}]$ — the same for every donor. We can therefore read the treatment DEG **straight from the fitted $\alpha$**, with no composition sampling at all.
 
     `scribe.compare_groups(..., estimand="effect")` does exactly that: it pulls the $\alpha$ contrast from the hierarchy (`get_factor_effect` under the hood), so it is essentially **instant and memory-light** — the practical choice when the full paired-CLR pass is too heavy, and the *coherent* view for a broad perturbation like this. The returned `delta` is now a **log-mean** effect (not a CLR contrast), carrying its own lfsr; the `_other` pseudo-gene is dropped automatically. Because it is the same quantity as the biological log-fold-change computed the long way, the two agree to numerical precision (we check the correlation below).
-    """
-    )
+    """)
     return
 
 
 @app.cell
-def _(gene_mask, np, results_de, results_joint, scribe):
+def _(np, results_de, results_joint, scribe):
     # The treatment effect, read directly from the fitted alpha — no composition
     # sampling. Reuses the already-drawn posterior, so this is near-instant.
     results_effect = scribe.compare_groups(
@@ -963,7 +871,6 @@ def _(gene_mask, np, results_de, results_joint, scribe):
         "control",
         "panobinostat",
         estimand="effect",
-        gene_mask=gene_mask,
         n_samples=5_000,
     )
 
@@ -1011,13 +918,11 @@ def _(gene_mask, np, results_de, results_joint, scribe):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ### CLR and the biological view agree — conservative, not incoherent
 
-    We have treated the compositional (CLR) and biological views as answering different questions — and they do — but it is worth asking directly: do they *disagree*? They do not. Plotting every gene's CLR contrast against its biological log-fold-change (left) shows a clear positive correlation: the canonical markers fall in the expected quadrants (metallothioneins / histones / p53-stress up, the myeloid program down), and the two lenses rank the response the same way. The scatter also makes **compositional closure** visible — the cloud of genes that rise in absolute expression yet *fall* in proportion, squeezed as the high-mass drivers claim more of the simplex. That is real compositional structure, not error.
-    """
-    )
+    We have treated the compositional (CLR) and biological views as answering different questions — and they do — but it is worth asking directly: do they *disagree*? They do not. Plotting every gene's CLR contrast against its biological log-fold-change (left) traces a **tight diagonal — Spearman ≈ 0.97**: the canonical markers fall in the expected quadrants (metallothioneins / histones / p53-stress up, the myeloid and mitochondrial programs down), and the two lenses agree on both the **sign** and very nearly the **magnitude** of every gene's response. The one residual compositional signature is a gentle *compression* at the down end: the CLR contrast reaches about $-4$ log2 where the biological fold-change reaches $-6$, because closure pulls the largest losers a little toward the reference as the high-mass drivers claim more of the simplex. That is real compositional structure — and it is mild, not the decorrelating cloud one might fear.
+    """)
     return
 
 
@@ -1113,22 +1018,19 @@ def _(np, pd, plt, results_de):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-    What separates the two views is **confidence, not direction.** CLR assigns the markers higher lfsr, so at a strict PEFP only the few ultra-confident driver genes clear the bar. But that is a property of the *threshold*, not the signal: relax the tolerated false proportion (right panel) and the full canonical signature emerges from CLR, the calls still agreeing with biology in sign.
+    mo.md(r"""
+    What separates the two views is **confidence, not direction.** CLR assigns every gene a higher lfsr — under a genome-wide shift the *relative* change is intrinsically harder to sign — so at a strict PEFP almost nothing clears the bar, and the few genes that do are the compositional confounders the volcano flagged. But that is a property of the *threshold*, not the signal: relax the tolerated false proportion (right panel) and the canonical signature emerges from CLR a few genes at a time — only past a PEFP of ~0.3, but emerge it does — and **every single CLR call agrees with biology in sign** (the dashed line sits flat at 1.0 across the whole sweep). CLR is slow to *commit*, never *wrong* about direction.
 
-    And CLR is the more conservative lens for a principled reason — it **assumes less and accounts for more.** It is provably invariant to capture-probability misspecification (the biological mean is *not* — it must trust the capture / library model); it references each gene against the whole composition; and under the gene-specific $p_g$ model it carries *shape* / overdispersion uncertainty into its lfsr, a term that simply cancels in the biological log-fold-change. Its wider intervals are **earned honesty** about what compositional data alone can claim — not noise.
+    And CLR is the more conservative lens for a principled reason — it **assumes less and accounts for more.** It is provably invariant to capture-probability misspecification (the biological mean is *not* — it must trust the capture / library model); it references each gene against the whole composition; and because we sample a gene-specific dispersion $r_g$, it carries *shape* / over-dispersion uncertainty into its lfsr — a term that simply cancels in the biological log-fold-change. Its wider intervals are **earned honesty** about what compositional data alone can claim — not noise.
 
-    The scientific reading, then, is not "believe whichever lens clears a $p$-value-like cutoff." It is that a **robust, assumption-light estimator (CLR) and a confident, model-dependent one (the biological mean) converge** on the same panobinostat signature. That convergence — read with knowledge of the marker biology — is what earns confidence in the result, far more than any single PEFP threshold could. The generative model hands us *both* lenses from one posterior; the scientific judgment is ours to bring.
-    """
-    )
+    The scientific reading, then, is not "believe whichever lens clears a $p$-value-like cutoff." It is that a **robust, assumption-light estimator (CLR) and a confident, model-dependent one (the biological mean) converge** on the same panobinostat signature — here, almost exactly (Spearman ≈ 0.97). That convergence — read with knowledge of the marker biology — is what earns confidence in the result, far more than any single PEFP threshold could. The generative model hands us *both* lenses from one posterior; the scientific judgment is ours to bring.
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Recap
 
     We built **one** joint generative model of a crossed *donor × condition* experiment and, from a single posterior, read off:
@@ -1137,9 +1039,8 @@ def _(mo):
     2. the **fitted structure** — a fixed treatment effect and the random donor deviations it was protected from, both as inspectable posteriors;
     3. a **donor-averaged, paired differential-expression** result whose **biological** log-fold-changes reproduce the canonical panobinostat / HDAC-inhibitor signature with high sign-confidence (lfsr ≈ 0 on every marker) — and the same calls, essentially for free, by reading the treatment effect $\alpha$ directly (`estimand="effect"`).
 
-    Three lessons worth carrying forward. First, **CLR is principled but needs a stable reference**: pooling near-silent genes into "other" (an exact Dirichlet operation) is what lets the compositional contrast see signal instead of noise. Second, **CLR and the biological view answer different questions, and which one is the *confident* headline depends on the perturbation.** CLR asks "did the *relative* composition shift?" — invaluable as a guard against compositional artifacts, but under a broad, genome-wide response (like this one) the only calls it is *confident* about are the genes whose proportion swings hardest (here, mitochondrial genes). The biological log-fold-change asks "did the *mean expression* change?" — unaffected by the reference drift, and where the textbook signature emerged with high confidence. Third — and this is the subtle one — **conservative is not the same as wrong.** CLR is *under-confident here, not incoherent*: it agrees with the biological view in direction, recovers the full signature as the error tolerance relaxes, and is conservative precisely because it assumes less (capture-invariant) and accounts for more (global structure, gene-specific shape). The trustworthy conclusion comes from the **convergence** of the robust and the confident lens — read with scientific judgment — not from whichever one clears a threshold. The hierarchy ties it together: it estimates the effect we care about while explicitly accounting for the donor variation we do not.
-    """
-    )
+    Three lessons worth carrying forward. First, **the parameterization is what makes the composition trustworthy.** Sampling the orthogonal $(\mu, r)$ pair directly — rather than a derived success probability — gives each gene's compositional weight $\mu_g/r_g$ faithfully, so the CLR reference is stable on the raw transcriptome and the contrast is well-behaved with no post-hoc surgery (the fit's `gene_coverage=0.99` `_other` pool is the only pooling needed). Second, **CLR and the biological view answer different questions, and which one is the *confident* headline depends on the perturbation.** CLR asks "did the *relative* composition shift?" — invaluable as a guard against compositional artifacts, but under a broad, genome-wide response (like this one) the only calls it is *confident* about are the genes whose proportion swings hardest (here, a few mitochondrial genes and pseudogenes). The biological log-fold-change asks "did the *mean expression* change?" — and that is where the textbook signature emerges with high confidence. Third — and this is the subtle one — **conservative is not the same as wrong.** CLR is *under-confident here, not incoherent*: across the transcriptome it agrees with the biological view in both **direction and magnitude** (Spearman ≈ 0.97), every confident call matches biology in sign, and it recovers the full signature as the error tolerance relaxes. It is conservative precisely because it assumes less (capture-invariant) and accounts for more (global compositional structure, and the gene-specific dispersion $r_g$). The trustworthy conclusion comes from the **convergence** of the robust and the confident lens — read with scientific judgment — not from whichever one clears a threshold. The hierarchy ties it together: it estimates the effect we care about while explicitly accounting for the donor variation we do not.
+    """)
     return
 
 
