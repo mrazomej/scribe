@@ -309,20 +309,24 @@ class TestParameterMappingRegistry:
     """Test the parameter mapping registry."""
 
     def test_all_parameterizations_present(self):
-        """Test that all parameterizations have mappings."""
+        """Test that the NB-family parameterizations have mappings."""
         mappings = PARAMETERIZATION_MAPPINGS
 
-        assert Parameterization.STANDARD in mappings
-        assert Parameterization.LINKED in mappings
-        assert Parameterization.ODDS_RATIO in mappings
+        # NB-family parameterizations and their legacy aliases.
+        for param in (
+            Parameterization.STANDARD,
+            Parameterization.CANONICAL,
+            Parameterization.LINKED,
+            Parameterization.MEAN_PROB,
+            Parameterization.ODDS_RATIO,
+            Parameterization.MEAN_ODDS,
+            Parameterization.MEAN_DISP,
+        ):
+            assert param in mappings
 
-        assert Parameterization.CANONICAL in mappings
-        assert Parameterization.MEAN_PROB in mappings
-        assert Parameterization.MEAN_ODDS in mappings
-
-        # Hierarchical parameterizations are now handled via boolean flags
-        # (hierarchical_p, hierarchical_gate) instead of enum values
-        assert len(mappings) == 6
+        # The registry also holds the count_lognormal, logistic_normal, and
+        # TwoState families, so the total grows as families are added; we do
+        # not assert an exact count here (a recurring source of staleness).
 
     def test_parameterization_summary(self):
         """Test parameterization summary generation."""
