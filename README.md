@@ -57,7 +57,7 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
 - **Model Comparison**: WAIC, PSIS-LOO, stacking weights, and goodness-of-fit
   diagnostics for principled model selection
 - **GPU Accelerated**: JAX-based implementation with automatic GPU support
-- **Flexible Architecture**: Three parameterizations, constrained/unconstrained
+- **Flexible Architecture**: Four parameterizations, constrained/unconstrained
   modes, hierarchical priors, horseshoe sparsity, and normalizing flows
 - **Scalable**: From small experiments to large-scale atlases with mini-batch
   support
@@ -80,8 +80,8 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
   well-identified NBVCP-SVI fit into the harder NBLN-Laplace problem -- pinning
   the gauge, regularizing the loadings matrix with horseshoe / NEG sparsity,
   and adaptively selecting the effective rank
-- **Multiple Parameterizations**: Canonical, linked (mean-prob), and odds-ratio
-  with constrained or unconstrained priors
+- **Multiple Parameterizations**: Canonical, linked (mean-prob), odds-ratio, and
+  mean-dispersion (Fisher-orthogonal) with constrained or unconstrained priors
 - **Advanced Guide Families**: Mean-field, low-rank, joint low-rank, and
   amortized variational guides
 - **Mixture Models**: K-component mixtures for cell type discovery with
@@ -151,6 +151,7 @@ graph TD
         canonical["canonical<br/><i>sample p, r directly</i>"]
         linked["linked<br/><i>sample p, mu; derive r</i>"]
         oddsRatio["odds_ratio<br/><i>sample phi, mu; derive p, r</i>"]
+        meanDisp["mean_disp<br/><i>sample mu, r directly</i>"]
     end
 
     subgraph constraint ["3 - Constraint Mode"]
@@ -192,7 +193,7 @@ graph TD
     VAE_node --> guide
 ```
 
-This compositional design means you can combine **6 likelihood families x 3
+This compositional design means you can combine **6 likelihood families x 4
 parameterizations x 2 constraint modes** as a starting point, then layer on
 mixture components, hierarchical priors, multi-dataset structure, and more.
 The LNM, PLN, and NBLN families extend the NB core with low-rank
@@ -430,7 +431,7 @@ calibration workflow.
 
 ### Parameterizations
 
-The NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept three
+The NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept four
 parameterizations of the gene-level dispersion/mean structure:
 
 | Parameterization | Aliases     | Core Parameters | Derived                   | When to Use                   |
@@ -438,6 +439,7 @@ parameterizations of the gene-level dispersion/mean structure:
 | **canonical**    | `standard`  | p, r            | --                        | Direct interpretation         |
 | **linked**       | `mean_prob` | p, mu           | r = mu(1-p)/p             | Captures p-r correlation      |
 | **odds_ratio**   | `mean_odds` | phi, mu         | p = 1/(1+phi), r = mu*phi | Numerically stable near p ~ 1 |
+| **mean_disp**    | --          | mu, r           | phi = r/mu, p = mu/(mu+r) | Fisher-orthogonal mean & dispersion; faithful compositional DE |
 
 The TwoState family (twostate / twostatevcp) has its own four
 parameterizations — see [the TwoState section](#two-state-promoter-poisson-beta-family)

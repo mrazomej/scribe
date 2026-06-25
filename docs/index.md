@@ -63,7 +63,7 @@ For the full mathematical derivation, see the
   stacking weights, and goodness-of-fit diagnostics for principled model
   selection
 - **GPU Accelerated**: JAX-based implementation with automatic GPU support
-- **Flexible Architecture**: Three parameterizations, constrained/unconstrained
+- **Flexible Architecture**: Four parameterizations, constrained/unconstrained
   modes, hierarchical priors,
   horseshoe sparsity, and
   [normalizing flows](https://en.wikipedia.org/wiki/Flow-based_generative_model)
@@ -83,8 +83,9 @@ For the full mathematical derivation, see the
     - VAE for representation learning with normalizing flow priors
 - **Constructive Likelihood System**: Negative Binomial as the base, extended
   with zero inflation and/or variable capture probability
-- **Multiple Parameterizations**: Canonical, mean probs, and mean odds
-  (with `linked` / `odds_ratio` aliases), constrained or unconstrained priors
+- **Multiple Parameterizations**: Canonical, mean probs, mean odds, and mean
+  dispersion (Fisher-orthogonal), with `linked` / `odds_ratio` aliases,
+  constrained or unconstrained priors
 - **Advanced Guide Families**:
   [Mean-field](https://en.wikipedia.org/wiki/Mean-field_approximation),
   low-rank, joint low-rank, and amortized variational guides
@@ -126,6 +127,7 @@ graph TD
         canonical["canonical<br/><i>sample p, r directly</i>"]
         meanProbs["mean_prob<br/><i>sample p, mu; derive r</i>"]
         meanOdds["mean_odds<br/><i>sample phi, mu; derive p, r</i>"]
+        meanDisp["mean_disp<br/><i>sample mu, r directly</i>"]
     end
 
     subgraph constraint ["3 - Constraint Mode"]
@@ -252,7 +254,7 @@ for the full math and a decision guide.
 
 ### Parameterizations
 
-NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept three
+NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept four
 parameterizations of the dispersion/mean structure:
 
 | Name           | `parameterization=` | Aliases      | Core    | Derived                   | When to Use             |
@@ -260,6 +262,7 @@ parameterizations of the dispersion/mean structure:
 | **Canonical**  | `canonical`         | `standard`   | p, r    | --                        | Direct interpretation   |
 | **Mean probs** | `mean_prob`         | `linked`     | p, mu   | r = mu(1-p)/p             | Couples mean and p      |
 | **Mean odds**  | `mean_odds`         | `odds_ratio` | phi, mu | p = 1/(1+phi), r = mu*phi | Stable when p is near 1 |
+| **Mean disp**  | `mean_disp`         | --           | mu, r   | phi = r/mu, p = mu/(mu+r) | Orthogonal mean & dispersion; compositional DE |
 
 TwoState-family likelihoods (twostate / twostatevcp) accept four
 parameterizations of their shape coordinate — see the

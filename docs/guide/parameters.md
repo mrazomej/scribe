@@ -156,8 +156,9 @@ The NB distribution can be parameterized in three equivalent ways. The
 | **Canonical**    | `"canonical"` (alias `"standard"`)   | \(\color{#e07a5f}{r_g}\), \(\color{#3d85c6}{p}\)      | ---                                              | ---                                            |
 | **Mean probs**   | `"mean_prob"` (alias `"linked"`)     | \(\color{#81b29a}{\mu_g}\), \(\color{#3d85c6}{p}\)    | \(\color{#e07a5f}{r_g}\)                         | \(r_g = \mu_g\,(1-p)\,/\,p\)                   |
 | **Mean odds**    | `"mean_odds"` (alias `"odds_ratio"`) | \(\color{#81b29a}{\mu_g}\), \(\color{#f2cc8f}{\phi}\) | \(\color{#3d85c6}{p}\), \(\color{#e07a5f}{r_g}\) | \(p = 1/(1+\phi)\), \(r_g = \mu_g \cdot \phi\) |
+| **Mean disp**    | `"mean_disp"`                        | \(\color{#81b29a}{\mu_g}\), \(\color{#e07a5f}{r_g}\)  | \(\color{#f2cc8f}{\phi}\), \(\color{#3d85c6}{p}\) | \(\phi = r_g/\mu_g\), \(p = \mu_g/(\mu_g+r_g)\) |
 
-All three produce the **same NB distribution** for any given
+All four produce the **same NB distribution** for any given
 \((\mu_g, r_g, p)\) triple --- they differ only in which quantities the
 optimizer directly targets.
 
@@ -236,12 +237,12 @@ under binomial thinning makes the prior math likelihood-agnostic.
 
 | Parameter name      | Symbol                         | Role                                                                                         | Domain           | Models                         | Parameterization                                              |
 | ------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- | ---------------- | ------------------------------ | ------------------------------------------------------------- |
-| `r`                 | \(\color{#e07a5f}{r_g}\)       | Gene-specific NB dispersion (burst rate). Higher \(r_g\) means less overdispersion           | \(\mathbb{R}^+\) | All                            | Sampled in canonical; derived in mean_prob and mean_odds      |
-| `p`                 | \(\color{#3d85c6}{p}\)         | NB success probability. Shared across genes in NBDM; gene-specific \(p_g\) when hierarchical | \((0, 1)\)       | All                            | Sampled in canonical and mean_prob; derived in mean_odds      |
-| `mu`                | \(\color{#81b29a}{\mu_g}\)     | Biological mean expression per gene (before capture)                                         | \(\mathbb{R}^+\) | All                            | Sampled in mean_prob and mean_odds; not directly in canonical |
-| `phi`               | \(\color{#f2cc8f}{\phi}\)      | Odds of success probability: \(\phi = (1-p)/p\)                                              | \(\mathbb{R}^+\) | All                            | Sampled only in mean_odds                                     |
+| `r`                 | \(\color{#e07a5f}{r_g}\)       | Gene-specific NB dispersion (burst rate). Higher \(r_g\) means less overdispersion           | \(\mathbb{R}^+\) | All                            | Sampled in canonical and mean_disp; derived in mean_prob and mean_odds |
+| `p`                 | \(\color{#3d85c6}{p}\)         | NB success probability. Shared across genes in NBDM; gene-specific \(p_g\) when hierarchical | \((0, 1)\)       | All                            | Sampled in canonical and mean_prob; derived in mean_odds and mean_disp |
+| `mu`                | \(\color{#81b29a}{\mu_g}\)     | Biological mean expression per gene (before capture)                                         | \(\mathbb{R}^+\) | All                            | Sampled in mean_prob, mean_odds, and mean_disp; not in canonical |
+| `phi`               | \(\color{#f2cc8f}{\phi}\)      | Odds of success probability: \(\phi = (1-p)/p\)                                              | \(\mathbb{R}^+\) | All                            | Sampled in mean_odds; derived in mean_disp                     |
 | `gate`              | \(\color{#e74c3c}{\pi_g}\)     | Per-gene zero-inflation probability (technical dropout)                                      | \((0, 1)\)       | ZINB, ZINBVCP                  | All parameterizations                                         |
-| `p_capture`         | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor)                                      | \((0, 1)\)       | NBVCP, ZINBVCP, TwoStateVCP    | Canonical, mean_prob; always for TwoState                     |
+| `p_capture`         | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor)                                      | \((0, 1)\)       | NBVCP, ZINBVCP, TwoStateVCP    | Canonical, mean_prob, mean_disp; always for TwoState           |
 | `phi_capture`       | \(\phi^{(c)}_{\text{cap}}\)    | Cell-specific capture odds                                                                   | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Mean odds only                                                |
 | `eta_capture`       | \(\eta_c\)                     | Latent log-ratio \(\log(M_c / L_c)\) under biology-informed prior                            | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Any (when biology-informed prior is active)                   |
 | `bnb_concentration` | \(\color{#f39c12}{\kappa_g}\)  | Beta concentration controlling BNB tail heaviness. \(\kappa_g \to \infty\) recovers NB       | \((2, \infty)\)  | Any + `overdispersion="bnb"`   | All parameterizations                                         |
@@ -498,8 +499,8 @@ Which parameters appear in which model configuration:
 | --------------------------- | :---: | :---: | :---: | :-----: | :---: | :-----------: |
 | `r` / `r_g`                 |  yes  |  yes  |  yes  |   yes   |  yes  | per-component |
 | `p`                         |  yes  |  yes  |  yes  |   yes   |  yes  |      yes      |
-| `mu`                        | MP/MO | MP/MO | MP/MO |  MP/MO  | MP/MO | per-component |
-| `phi`                       |  MO   |  MO   |  MO   |   MO    |  MO   |      MO       |
+| `mu`                        | MP/MO/MD | MP/MO/MD | MP/MO/MD | MP/MO/MD | MP/MO/MD | per-component |
+| `phi`                       | MO/MD | MO/MD | MO/MD | MO/MD | MO/MD |     MO/MD     |
 | `gate`                      |  ---  |  ---  |  yes  |   yes   |  yes  | per-component |
 | `p_capture` / `phi_capture` |  ---  |  yes  |  ---  |   yes   |  yes  |      yes      |
 | `eta_capture`               |  ---  |  opt  |  ---  |   opt   |  opt  |      opt      |
@@ -521,8 +522,9 @@ Which parameters appear in which model configuration:
 | `p_capture`                             |   ---    |     yes     |      yes      |
 | `mixing_weights`                        |   ---    |     ---     |      yes      |
 
-**Legend:** "yes" = always present; "MP/MO" = only with mean_prob or mean_odds
-parameterization; "MO" = only with mean_odds; "opt" = optional (biology-informed
+**Legend:** "yes" = always present; "MP/MO/MD" = present with mean_prob,
+mean_odds, or mean_disp (not canonical); "MO/MD" = present with mean_odds
+(sampled) or mean_disp (derived); "opt" = optional (biology-informed
 prior); "VAE" = only with `inference_method="vae"`; "per-component" = one per
 mixture component.
 

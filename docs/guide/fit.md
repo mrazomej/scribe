@@ -148,6 +148,7 @@ string (both remain valid; see [Model selection](#2-model-selection)).
 | **Canonical**  | `"canonical"` | \(p, r\)      | ---                                 | Direct interpretation                |
 | **Mean probs** | `"mean_prob"` | \(p, \mu\)    | \(r = \mu(1-p)/p\)                  | Couples mean and success probability |
 | **Mean odds**  | `"mean_odds"` | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1          |
+| **Mean disp**  | `"mean_disp"` | \(\mu, r\)    | \(\phi = r/\mu\), \(p = \mu/(\mu+r)\) | Fisher-orthogonal mean & dispersion; faithful compositional DE |
 
 **TwoState-family parameterizations** (`model` in `twostate` / `twostatevcp`):
 
