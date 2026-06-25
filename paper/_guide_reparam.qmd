@@ -117,4 +117,102 @@ $${#eq-reparam_odds_r_corrected}
 This corrected "odds-ratio" parameterization, based on a factorized guide
 $q(\mu, \phi) = q(\mu)q(\phi)$, provides a numerically stable and flexible
 framework for approximating the complex posterior of the NBDM model, forming the
-basis of the `odds_ratio` models used in this work. 
+basis of the `odds_ratio` models used in this work.
+
+### Fisher Orthogonality and the Mean–Dispersion Parameterization
+
+The reparameterizations above were motivated by *numerical* stability. There is
+a complementary, more fundamental question we can ask: among all the ways to
+coordinatize the Negative Binomial, is there one in which the two parameters are
+*statistically* uncoupled? The answer is yes, and it is neither $(r, p)$ nor
+$(\mu, \phi)$ but the **mean–dispersion** pair $(\mu, r)$.
+
+Write the Negative Binomial in terms of its mean $\mu$ and dispersion (size) $r$,
+so that the variance is
+
+$$
+\sigma^2 = \mu + \frac{\mu^2}{r}.
+$${#eq-reparam_meandisp_var}
+
+This is the coordinate system in which the first two moments separate cleanly:
+$\mu$ controls the mean directly, while $r$ governs the excess variance above the
+Poisson floor. The single-observation log-likelihood in these coordinates is
+
+$$
+\ell = \log\Gamma(y + r) - \log\Gamma(r) - \log y!
+     + r\log\!\frac{r}{r+\mu} + y\log\!\frac{\mu}{r+\mu}.
+$${#eq-reparam_meandisp_loglik}
+
+Differentiating with respect to the mean gives the score
+
+$$
+\frac{\partial \ell}{\partial \mu} = \frac{y}{\mu} - \frac{r + y}{r + \mu},
+$${#eq-reparam_meandisp_score}
+
+which has expectation zero at $\langle y \rangle = \mu$, as a score should. The
+key quantity is the mixed second derivative,
+
+$$
+\frac{\partial^2 \ell}{\partial \mu \, \partial r}
+  = \frac{y - \mu}{(r + \mu)^2}.
+$${#eq-reparam_meandisp_mixed}
+
+Taking expectations and using $\langle y \rangle = \mu$, the off-diagonal entry
+of the Fisher information matrix vanishes:
+
+$$
+\mathcal{I}_{\mu r}
+  = -\left\langle \frac{\partial^2 \ell}{\partial \mu \, \partial r} \right\rangle
+  = -\frac{\langle y \rangle - \mu}{(r + \mu)^2} = 0.
+$${#eq-reparam_meandisp_orthogonal}
+
+The parameters $\mu$ and $r$ are therefore **orthogonal** in the Fisher sense:
+to leading order their posterior is uncoupled, and a mean-field guide
+$q(\mu)q(r)$ is already an excellent approximation. This is the cleanest
+possible setting for variational inference—there is no banana to fight.
+
+It is now illuminating to see *why* the odds-ratio coordinates re-introduce
+coupling. Recall $\phi = (1-p)/p$, so that $\mu = r\phi$ and hence $\phi =
+\mu / r$. Working in the log-coordinates that the guide actually optimizes,
+
+$$
+\log \phi = \log \mu - \log r.
+$${#eq-reparam_meandisp_logphi}
+
+Even though $\log\mu$ and $\log r$ are uncoupled (orthogonality is preserved
+under the coordinate-wise log transform), $\log\phi$ is a *difference* of the two
+and therefore inherits a dependence on $\log\mu$. Let $s_\mu^2$ and $s_r^2$ denote
+the marginal posterior variances of $\log\mu$ and $\log r$. Then
+
+$$
+\operatorname{cov}(\log\mu,\,\log\phi)
+  = \operatorname{cov}(\log\mu,\,\log\mu - \log r) = s_\mu^2,
+$${#eq-reparam_meandisp_cov}
+
+so that regressing $\log\phi$ on $\log\mu$ yields a slope of exactly $+1$, a
+residual variance of exactly $s_r^2$, and a correlation
+
+$$
+\operatorname{corr}(\log\mu,\,\log\phi)
+  = \frac{1}{\sqrt{1 + (s_r/s_\mu)^2}}.
+$${#eq-reparam_meandisp_corr}
+
+The coupling is real but it is *exactly linear*: it is the projection of an
+orthogonal pair onto a sheared coordinate, not the curved ridge of the canonical
+$(r, p)$ posterior. This has a precise practical consequence. A mean-field guide
+on $(\mu, \phi)$ cannot represent even this linear dependence and will inflate
+the marginal of $\phi$ to compensate; but a guide that augments the $\phi$
+marginal with a **single per-gene linear coefficient** on $\log\mu$ recovers the
+coupling exactly—no low-rank factor or normalizing flow is required, because
+there is no curvature to capture. Equivalently, one may simply sample the
+orthogonal pair $(\mu, r)$ directly: in the **mean–dispersion parameterization**
+the induced coupling disappears altogether and mean-field is near-exact, at the
+cost of giving up the closed-form odds-ratio interpretation that makes the
+compositional algebra of @sec-reparam convenient.
+
+> **A note on conventions.** The probability $p$ above is the *failure*-style
+> success parameter for which $\mu = r(1-p)/p$, giving $\phi = \mu/r$. The
+> software adopts the opposite (NumPyro) convention, in which the analogous odds
+> ratio is the reciprocal $r/\mu$ and the induced regression slope is therefore
+> $-1$. The geometry—orthogonality of $(\mu, r)$ and an exactly linear coupling
+> in the odds-ratio coordinate—is identical either way.
