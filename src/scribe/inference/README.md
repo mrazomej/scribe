@@ -148,7 +148,11 @@ Main entry point for all SCRIBE inference methods.
 - `model`: Model type ("nbdm", "zinb", "nbvcp", "zinbvcp") - required if
   `model_config` is None
 - `parameterization`: Parameterization scheme ("canonical", "mean_prob",
-  "mean_odds")
+  "mean_odds", "mean_disp"). `"mean_disp"` samples `(mu, r)` directly (the
+  Fisher-orthogonal coords; derives `p`, `phi`) and is **SVI/MCMC only** —
+  `build_config_from_preset` raises if combined with `inference_method="vae"`,
+  and it rejects `dense_params` without a `guide_rank` (the linear-only
+  `joint_params=["mu","r"]` path needs no rank).
 - `inference_method`: Inference method ("svi", "mcmc", "vae")
 - `model_config`: Fully configured ModelConfig (optional, overrides preset
   params)

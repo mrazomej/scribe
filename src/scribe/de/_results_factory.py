@@ -442,6 +442,12 @@ def compare(
     _mix_weights_A = mixture_weights_A
     _mix_weights_B = mixture_weights_B
 
+    # Whether to use the native mean_disp composition scale (mu/r) instead of
+    # the derived-p path. Set only for mean_disp result objects (where mu and r
+    # are sampled directly); raw-array / other-parameterization inputs keep the
+    # p path.
+    _use_native_scale = False
+
     if _a_is_results or _b_is_results:
         if not (_a_is_results and _b_is_results):
             raise TypeError(
@@ -465,6 +471,19 @@ def compare(
         r_B, p_B, mu_B, phi_B, names_B, layouts_B = _extract_de_inputs(
             model_B, component_B
         )
+
+        # mean_disp result objects sample (mu, r) directly, so the composition
+        # scale is exactly mu/r. Flag it so the empirical builders use the
+        # native scale (no p round-trip / no p-clamp).
+        _pa = getattr(
+            getattr(model_A, "model_config", None), "parameterization", None
+        )
+        if (
+            getattr(_pa, "value", _pa) == "mean_disp"
+            and mu_A is not None
+            and mu_B is not None
+        ):
+            _use_native_scale = True
 
         # Auto-extract mixture weights from results objects
         if mixture_weighted and _mix_weights_A is None:
@@ -580,6 +599,7 @@ def compare(
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
             reference=reference,
+            use_native_scale=_use_native_scale,
         )
 
         if method == "shrinkage":
@@ -622,6 +642,7 @@ def compare(
             phi_samples_B=_phi_samples_B,
             param_layouts=_param_layouts,
             reference=reference,
+            use_native_scale=_use_native_scale,
         )
     if method == "shrinkage":
         return _compare_shrinkage(
@@ -754,6 +775,7 @@ def _compare_empirical(
     phi_samples_B: Optional[jnp.ndarray] = None,
     param_layouts: Optional[dict] = None,
     reference: Union[str, jnp.ndarray, List[str]] = "clr",
+    use_native_scale: bool = False,
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison from posterior concentration samples.
 
@@ -854,6 +876,20 @@ def _compare_empirical(
     if phi_bio_B is not None:
         phi_bio_B = _np.asarray(phi_bio_B)
 
+    # Native mean_disp path: compute the composition scale (mu/r) from the
+    # component-sliced, truncated bio arrays -- AFTER slicing, BEFORE the
+    # mu_*/r_* device locals are freed below. Using mu/r directly skips the
+    # derived-p round-trip and its (eps, 1-eps) clamp. We pass the scale to the
+    # COMPOSITION sampler only (via _p_for_sampler_*=None); the derived p_bio_*
+    # are preserved for the biological-DE metrics and stored on the result.
+    scale_bio_A = scale_bio_B = None
+    _p_for_sampler_A, _p_for_sampler_B = p_bio_A, p_bio_B
+    if use_native_scale and mu_bio_A is not None and mu_bio_B is not None:
+        scale_bio_A = mu_bio_A / r_bio_A
+        scale_bio_B = mu_bio_B / r_bio_B
+        _p_for_sampler_A = None
+        _p_for_sampler_B = None
+
     # Drop references to the full device arrays.  The bio slices above
     # are already on CPU and contain exactly the component-sliced,
     # truncated data that sample_compositions would recompute, so we
@@ -879,9 +915,11 @@ def _compare_empirical(
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
-        p_samples_A=p_bio_A,
-        p_samples_B=p_bio_B,
+        p_samples_A=_p_for_sampler_A,
+        p_samples_B=_p_for_sampler_B,
         param_layouts=_composition_layouts,
+        scale_samples_A=scale_bio_A,
+        scale_samples_B=scale_bio_B,
     )
 
     # simplex_A/B and delta_samples are numpy (CPU) arrays -- the
@@ -1131,6 +1169,7 @@ def _compare_empirical_mixture(
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
     reference: Union[str, jnp.ndarray, List[str]] = "clr",
+    use_native_scale: bool = False,
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison using mixture-weighted compositions.
 
@@ -1179,6 +1218,18 @@ def _compare_empirical_mixture(
     from ._biological import weight_bio_samples
     from .results import ScribeEmpiricalDEResults
 
+    # Native mean_disp path: component-wise composition scale (mu/r), computed
+    # before mixture weighting. Supersedes the derived-p path (no p-clamp). The
+    # scale is passed to the COMPOSITION sampler only; p_samples_* are preserved
+    # for the weighted biological-DE metrics below.
+    scale_samples_A = scale_samples_B = None
+    _p_for_sampler_A, _p_for_sampler_B = p_samples_A, p_samples_B
+    if use_native_scale and mu_samples_A is not None and mu_samples_B is not None:
+        scale_samples_A = jnp.asarray(mu_samples_A) / jnp.asarray(r_samples_A)
+        scale_samples_B = jnp.asarray(mu_samples_B) / jnp.asarray(r_samples_B)
+        _p_for_sampler_A = None
+        _p_for_sampler_B = None
+
     # --- Sample mixture-weighted compositions ---
     simplex_A, simplex_B = sample_mixture_compositions(
         r_samples_A=r_samples_A,
@@ -1189,8 +1240,10 @@ def _compare_empirical_mixture(
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
-        p_samples_A=p_samples_A,
-        p_samples_B=p_samples_B,
+        p_samples_A=_p_for_sampler_A,
+        p_samples_B=_p_for_sampler_B,
+        scale_samples_A=scale_samples_A,
+        scale_samples_B=scale_samples_B,
     )
 
     # --- CLR differences ---

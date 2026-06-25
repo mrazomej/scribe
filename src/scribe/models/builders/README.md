@@ -501,6 +501,13 @@ variational parameters (e.g., after SVI inference). It handles all
 parameterizations and guide families, including **joint-aware** extraction for
 `JointLowRankGuide`.
 
+> **`mean_disp`**: `_build_mean_disp_posteriors` builds **both** `mu` and `r`
+> as gene-specific positive posteriors (each honoring `skip`, joint-group
+> prefixes, and `_W`/`log_*_W` low-rank guides — so `joint_params=["mu","r"]`
+> works with and without `guide_rank`). `p`/`phi` are derived deterministics
+> and are not built here. `_pos_targets` registers `MEAN_DISP: ["mu", "r"]`,
+> and mixed per-name positive transforms are supported.
+
 **Joint-aware posterior extraction:**
 
 - `posterior.py` handles `joint_{group}_{name}_*` param keys produced by

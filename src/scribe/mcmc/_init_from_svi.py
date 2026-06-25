@@ -38,6 +38,13 @@ _MEAN_PROB_PARAMETERIZATIONS = {
     Parameterization.LINKED,
 }
 
+# Parameterization that samples (mu, r) directly. Its sampled sites are mu
+# and r (both already derivable from the canonical pair); phi/p are derived
+# downstream and are NOT sampled, so no phi/p init is needed.
+_MEAN_DISP_PARAMETERIZATIONS = {
+    Parameterization.MEAN_DISP,
+}
+
 # Known parameter names and their distribution support types.
 # "unit" → Beta(0, 1);  "positive" → (0, ∞)
 _SUPPORT: Dict[str, str] = {
@@ -170,7 +177,11 @@ def compute_init_values(
     if (
         target_param in _MEAN_ODDS_PARAMETERIZATIONS
         or target_param in _MEAN_PROB_PARAMETERIZATIONS
+        or target_param in _MEAN_DISP_PARAMETERIZATIONS
     ):
+        # mu = r * p / (1 - p) (code convention NB mean). For mean_disp this
+        # seeds the sampled ``mu`` from the SVI optimum; ``r`` is already the
+        # canonical dispersion, so the (mu, r) pair is fully initialized.
         if "mu" not in init:
             init["mu"] = jnp.clip(r * p / (1.0 - p), _EPS, None)
 

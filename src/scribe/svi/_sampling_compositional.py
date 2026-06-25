@@ -148,6 +148,20 @@ class CompositionalSamplingMixin:
         r_samples = self.posterior_samples["r"]
         p_samples = self.posterior_samples.get("p")
 
+        # Native mean_disp path: mu and r are sampled directly, so the
+        # composition scale is exactly mu/r. Pass it as scale_samples (no p
+        # round-trip / no p-clamp). Other parameterizations keep deriving the
+        # scale from p inside the sampler.
+        scale_samples = None
+        _param = getattr(self.model_config, "parameterization", None)
+        _is_mean_disp = (
+            getattr(_param, "value", _param) == "mean_disp"
+        )
+        if _is_mean_disp and "mu" in self.posterior_samples:
+            mu_samples = self.posterior_samples["mu"]
+            scale_samples = np.asarray(mu_samples) / np.asarray(r_samples)
+            p_samples = None
+
         # Build semantic axis layouts for the posterior sample tensors.
         # _build_canonical_layouts handles both directly-sampled parameters
         # (from param_specs) and derived keys like "r" and "p" that are
@@ -175,6 +189,7 @@ class CompositionalSamplingMixin:
             rng_key=rng_key,
             batch_size=batch_size,
             param_layouts=param_layouts,
+            scale_samples=scale_samples,
         )
 
         if store_samples:

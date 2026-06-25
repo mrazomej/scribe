@@ -39,6 +39,10 @@ params = ParameterCollector.collect_non_none(
 Collects and maps prior parameters to ModelConfig attribute names based on
 parameterization type and constraint settings.
 
+> **`mean_disp`**: samples both `mu` and `r` as unconstrained primaries, so its
+> unconstrained mapping carries **both** `mu_unconstrained_prior` (from
+> `expression_prior`) and `r_unconstrained_prior` (from `r_prior`).
+
 ```python
 # Standard parameterization (constrained)
 prior_config = ParameterCollector.collect_and_map_priors(

@@ -20,6 +20,8 @@ src/scribe/mcmc/
   results_factory.py          # Factory: MCMC -> ScribeMCMCResults
   results.py                  # ScribeMCMCResults @dataclass (~120 lines)
   _init_from_svi.py           # SVI-to-MCMC cross-parameterization init
+                              #   (mean_disp target: seeds mu = r*p/(1-p) and r
+                              #    from the SVI canonical optimum)
   _parameter_extraction.py    # ParameterExtractionMixin
   _gene_subsetting.py         # GeneSubsettingMixin
   _component.py               # ComponentMixin

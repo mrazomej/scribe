@@ -227,6 +227,17 @@ class ParameterCollector:
                         ),
                     }
                 )
+            elif parameterization == "mean_disp":
+                # mean_disp samples BOTH mu and r as unconstrained primaries.
+                # r_unconstrained_prior is already set in the base mapping
+                # above; add mu_unconstrained_prior (from expression_prior).
+                mapped_priors.update(
+                    {
+                        "mu_unconstrained_prior": user_priors.get(
+                            "expression_prior"
+                        ),
+                    }
+                )
         else:
             # For constrained parameterization, use standard prior names
             mapped_priors = {

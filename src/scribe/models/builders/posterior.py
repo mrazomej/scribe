@@ -679,6 +679,18 @@ def _apply_base_parameterization(
                 pos_transform=pos_transform,
             )
         )
+    elif parameterization == Parameterization.MEAN_DISP:
+        distributions.update(
+            _build_mean_disp_posteriors(
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
+            )
+        )
     elif parameterization in _LNM_FAMILY_ENUMS:
         # The three LNM variants share the compositional path but
         # differ in which scalars of the totals NB are sampled vs
@@ -2051,6 +2063,9 @@ def get_posterior_distributions(
             Parameterization.LINKED: ["mu"],
             Parameterization.MEAN_ODDS: ["phi", "mu"],
             Parameterization.ODDS_RATIO: ["phi", "mu"],
+            # mean_disp samples both mu and r as positive parameters; both
+            # consume pos_transform during MAP reconstruction.
+            Parameterization.MEAN_DISP: ["mu", "r"],
         }.get(parameterization, [])
         if (
             _pos_targets
@@ -2086,14 +2101,17 @@ def get_posterior_distributions(
                 Parameterization.TWO_STATE_MOMENT_DELTA,
                 Parameterization.MEAN_ODDS,
                 Parameterization.ODDS_RATIO,
+                # mean_disp's Pass-1 builder resolves pos_transform per
+                # parameter (mu and r), so mixed transforms are supported.
+                Parameterization.MEAN_DISP,
             ):
                 raise NotImplementedError(
                     "Per-parameter positive_transform (dict form with mixed "
-                    "effective transforms) is supported for the TwoState and "
-                    "odds-family (mean_odds / odds_ratio) parameterizations. "
-                    "For other parameterizations, pass a single string "
-                    "(\"softplus\" or \"exp\") or a dict whose listed values "
-                    "match the softplus default."
+                    "effective transforms) is supported for the TwoState, "
+                    "odds-family (mean_odds / odds_ratio), and mean_disp "
+                    "parameterizations. For other parameterizations, pass a "
+                    "single string (\"softplus\" or \"exp\") or a dict whose "
+                    "listed values match the softplus default."
                 )
             pos_transform = _resolver
     else:
@@ -2135,6 +2153,8 @@ def get_posterior_distributions(
         Parameterization.LINKED,
         Parameterization.MEAN_ODDS,
         Parameterization.ODDS_RATIO,
+        # mean_disp's expression hierarchy targets the gene mean mu.
+        Parameterization.MEAN_DISP,
         Parameterization.TWO_STATE_NATURAL,
         Parameterization.TWO_STATE_RATIO,
         Parameterization.TWO_STATE_MEAN_FANO,
@@ -3562,6 +3582,79 @@ def _build_mean_odds_posteriors(
             else:
                 distributions["mu"] = _build_lognormal_posterior(
                     params, "mu", is_mixture, split
+                )
+
+    return distributions
+
+
+def _build_mean_disp_posteriors(
+    params: Dict[str, jnp.ndarray],
+    unconstrained: bool,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+    skip: Optional[set] = None,
+    *,
+    pos_transform=None,
+) -> Dict[str, Any]:
+    """Build posteriors for mean_disp parameterization (samples mu and r).
+
+    Both ``mu`` and ``r`` are gene-specific positive parameters; ``p`` and
+    ``phi`` are derived deterministics computed downstream, so they are NOT
+    built here. ``mu`` and ``r`` may carry different positive transforms (e.g.
+    ``positive_transform={"mean_expression": "exp"}`` leaves ``r`` on the
+    softplus default), so each is resolved separately. Each parameter honors
+    ``skip``, joint-group prefixes, and ``_W`` / ``log_*_W`` low-rank guides —
+    so ``guide_rank`` / ``joint_params=["mu","r"]`` (with or without a rank)
+    are both supported.
+    """
+    distributions = {}
+    skip = skip or set()
+
+    _pt_mu = _resolve_pos_transform_for(pos_transform, "mu")
+    _pt_r = _resolve_pos_transform_for(pos_transform, "r")
+
+    if unconstrained:
+        for name, _pt in (("mu", _pt_mu), ("r", _pt_r)):
+            if name in skip:
+                continue
+            jp = _find_joint_prefix(params, name)
+            if jp:
+                distributions[name] = _build_joint_low_rank_posterior(
+                    params, name, jp, split, transform=_pt
+                )
+            elif f"{name}_W" in params:
+                distributions[name] = (
+                    _build_low_rank_positive_normal_posterior(
+                        params,
+                        name,
+                        is_mixture,
+                        split,
+                        transform=_pt,
+                    )
+                )
+            else:
+                distributions[name] = _build_positive_normal_posterior(
+                    params,
+                    name,
+                    is_mixture,
+                    split,
+                    transform=_pt,
+                )
+    else:
+        for name in ("mu", "r"):
+            if name in skip:
+                continue
+            # Constrained low-rank guides store log-space MVN params
+            # (e.g., log_mu_W / log_r_W), while unconstrained guides use
+            # mu_W / r_W.
+            if f"{name}_W" in params or f"log_{name}_W" in params:
+                distributions[name] = _build_low_rank_lognormal_posterior(
+                    params, name, is_mixture, split
+                )
+            else:
+                distributions[name] = _build_lognormal_posterior(
+                    params, name, is_mixture, split
                 )
 
     return distributions

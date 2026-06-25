@@ -196,6 +196,20 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
+    Parameterization.MEAN_DISP: ParameterizationMapping(
+        parameterization=Parameterization.MEAN_DISP,
+        core_parameters={"mu", "r"},
+        # p and phi are derived deterministics (NOT sampled), but they are
+        # materialised on the posterior so downstream consumers find them;
+        # listing them as optional keeps ModelConfig spec validation happy.
+        optional_parameters={"p", "phi"},
+        parameter_descriptions={
+            "mu": "Mean parameter (LogNormal distribution)",
+            "r": "Dispersion parameter (LogNormal distribution)",
+            "p": "Success probability (derived: p = mu / (mu + r))",
+            "phi": "Odds ratio (derived: phi = r / mu)",
+        },
+    ),
     # ------------------------------------------------------------------
     # LNM family: three parameterizations of the totals NB submodel.
     # Each maps the same compositional path (y_alr, multinomial,
@@ -739,6 +753,10 @@ def get_active_parameters(
             Parameterization.ODDS_RATIO,
             Parameterization.MEAN_PROB,
             Parameterization.LINKED,
+            # mean_disp also carries the expression hierarchy on mu (its
+            # gene mean), so its hyperparameters are log_mu_* like the other
+            # mean-parameterized families.
+            Parameterization.MEAN_DISP,
         ):
             active_params.update({"log_mu_loc", "log_mu_scale"})
         else:

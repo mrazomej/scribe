@@ -388,6 +388,28 @@ de = compare(
 pipeline samples compositions first (Gamma-normalize path) and then applies
 mask aggregation in simplex space before CLR differencing.
 
+### Native `mu/r` scale (mean_disp)
+
+The per-gene Gamma multiplier `p_g/(1-p_g)` equals **`mu_g/r_g`** exactly (in the
+paper's convention it is `(1-p)/p = mu/r`). The `mean_disp` parameterization
+samples `mu` and `r` directly, so `compare()` (and `get_compositional_samples`)
+compute the scale as `mu/r` **natively** and skip the derived-`p` round-trip:
+
+- Fewer ops (no `p = mu/(mu+r)` then `p/(1-p)`).
+- **Robustness**: the `p`-path clamps `p ∈ (ε, 1-ε)` before forming `p/(1-p)`,
+  which caps the multiplier for high-mean/low-dispersion genes (`mu >> r ⇒ p→1`);
+  `mu/r` avoids that cap.
+
+This is threaded through the whole compositional surface via an optional
+`scale_samples` (`_batched_gamma_normalize`, `sample_composition`,
+`sample_compositions`, `sample_mixture_compositions`, `compute_clr_differences`).
+When absent, behavior is unchanged (scale derived from `p`). The resulting **mean
+composition is `mu_g / sum_j mu_j`** — *not* `(mu_g/r_g)/sum_j(mu_j/r_j)` (the
+`mu/r` is the Gamma multiplier, not the composition ratio). For mean_disp result
+objects, `compare()` auto-selects this path (`use_native_scale`); see
+`paper/_diffexp_compositional_robustness.qmd` (eq-why-model-gamma-comp /
+-mean-ratio-hier).
+
 ## Gene Expression Filter (`gene_mask`)
 
 Low-expression genes can appear spuriously DE due to compositional artefacts:

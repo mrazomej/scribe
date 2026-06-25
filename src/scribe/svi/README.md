@@ -394,6 +394,10 @@ results = ScribeSVIResults.from_anndata(
 map_params = results.get_map()
 # Canonical/standard MAP also includes deterministic mu:
 # mu = r * p / (1 - p)
+# mean_disp MAP samples (mu, r) and derives p = mu/(mu+r), phi = r/mu
+# (posterior *samples* carry p/phi as deterministics; the MAP path
+# reconstructs them in _parameter_extraction._compute_canonical_parameters).
+# get_compositional_samples uses the native mu/r scale for mean_disp.
 
 # Get only one MAP key (avoids unrelated expensive flow MAP work)
 p_capture_map = results.get_map("p_capture")

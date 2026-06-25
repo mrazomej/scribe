@@ -59,9 +59,16 @@ to keep one global mixing vector shared by all datasets.
 | `"canonical"`       | p, r       | -                                                                            |
 | `"mean_prob"`       | p, mu      | r = mu*(1-p)/p                                                               |
 | `"mean_odds"`       | phi, mu    | r = mu*phi, p = 1/(1+phi)                                                    |
+| `"mean_disp"`       | mu, r (both gene-specific) | phi = r/mu, p = mu/(mu+r) — Fisher-orthogonal coords; SVI/MCMC only |
 | `"logistic_normal"` | r_T, p | y_alr (via VAE decoder, reference gene configurable via `alr_reference_idx`) |
 
 **Aliases**: `"standard"` = `"canonical"`, `"linked"` = `"mean_prob"`, `"odds_ratio"` = `"mean_odds"`
+
+**`mean_disp` notes**: samples the mean `mu` and dispersion `r` directly (the
+orthogonal coordinate; `r` is gene-specific by construction). The factory
+targets the `expression_prior` hierarchy at `mu` and **rejects** `prob_prior` /
+`prob_dataset_prior` (no scalar success-probability to hierarchicalize). VAE is
+rejected (two gene-specific primaries can't share the single-head decoder).
 
 **LNM-only stability defaults** (active when `model in {"lnm", "lnmvcp"}`):
 

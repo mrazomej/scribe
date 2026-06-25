@@ -116,11 +116,13 @@ def _has_fallback_mixture_evidence(
     #   - canonical: mu derived from r, p
     #   - linked/mean_prob: r derived from p, mu
     #   - mean_odds: r derived from phi, mu; p derived from phi
+    #   - mean_disp: p and phi derived from mu, r (both gene-specific
+    #     primaries), so mu/r corroborate the component axis of p/phi.
     reference_map = {
-        "p": ("p", "phi"),
+        "p": ("p", "phi", "mu", "r"),
         "r": ("r", "mu", "phi"),
         "mu": ("mu", "r", "p"),
-        "phi": ("phi",),
+        "phi": ("phi", "mu", "r"),
         "gate": ("gate",),
     }
     for ref_key in reference_map.get(key, ()):

@@ -84,6 +84,50 @@ capture_param = param_strategy.transform_model_param("p_capture")
 # Returns: "phi_capture"
 ```
 
+### `MeanDispParameterization`
+
+Samples the gene mean `mu` and the NB dispersion (size) `r` **directly** — the
+**Fisher-orthogonal** coordinate of the Negative Binomial (the mean / Gamma-shape
+pair, where the off-diagonal Fisher information vanishes; see
+`paper/_guide_reparam.qmd` §"Fisher Orthogonality and the Mean–Dispersion
+Parameterization"). Both `mu` and `r` are gene-specific; `p` and `phi` are
+derived:
+
+- **Core parameters**: `mu`, `r` (both gene-specific)
+- **Derived parameters**:
+  - `phi = r / mu`
+  - `p = mu / (mu + r)` (code convention; equals `mean_odds`'s `1/(1+phi)` and
+    makes `NegativeBinomialProbs(r, p)` have mean `mu`)
+- **Gene parameter**: `mu`. (Wart: the `"prob"` shorthand resolves to `["r"]`,
+  which is not meaningful here — pass an explicit list to target a subset.)
+
+Because both primaries are gene-specific, the derived `p` is gene-specific too:
+this is the orthogonal-coordinate analog of `mean_odds`-with-gene-specific-`phi`,
+**not** the shared-`p` NBDM.
+
+**Scope (v1)**:
+
+- **SVI / MCMC only** — the single-head VAE decoder cannot emit two
+  gene-specific primaries (guarded in the preset builder and a `ModelConfig`
+  validator).
+- `expression_prior` is supported (hierarchical pooling on `mu`).
+- `prob_prior` / `prob_dataset_prior` are **rejected** (no scalar
+  success-probability to hierarchicalize; `r` already carries gene-specific
+  shape). Use `expression_prior` for a hierarchical prior on the mean.
+- Pairs with `joint_params=["mu", "r"]` (with `guide_rank` for a cross-gene
+  low-rank coupling, or without for per-gene linear coupling).
+
+**DE note**: because `mu` and `r` are sampled directly, the compositional DE
+path computes the per-gene Gamma scale as `mu/r` natively (skipping the derived-
+`p` round-trip and its clamp); the mean composition is `mu_g / sum_j mu_j` (see
+`scribe/de/README.md` and `paper/_diffexp_compositional_robustness.qmd`).
+
+```python
+param_strategy = PARAMETERIZATIONS["mean_disp"]
+# Core: [PositiveNormalSpec("mu"), PositiveNormalSpec("r")] (both gene-specific)
+# Derived: [DerivedParam("phi", r/mu), DerivedParam("p", mu/(mu+r))]
+```
+
 ## Hierarchical Priors (Boolean Flags)
 
 Hierarchical behavior is controlled by **boolean flags on ModelConfig**, not by
@@ -190,6 +234,7 @@ PARAMETERIZATIONS = {
     "canonical": CanonicalParameterization(),
     "mean_prob": MeanProbParameterization(),
     "mean_odds": MeanOddsParameterization(),
+    "mean_disp": MeanDispParameterization(),  # samples (mu, r); SVI/MCMC only
     "logistic_normal_canonical": LogisticNormalParameterization(...),
     "logistic_normal_mean_prob": LogisticNormalParameterization(...),
     "logistic_normal_mean_odds": LogisticNormalParameterization(...),

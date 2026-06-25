@@ -445,6 +445,14 @@ Data processing configuration:
 The parameter mapping system provides a robust, declarative way to define which
 parameters are active for each parameterization type:
 
+> **`Parameterization.MEAN_DISP`** (`"mean_disp"`): samples `mu` and `r`
+> directly (both gene-specific) and lists `p`, `phi` as *optional* (derived)
+> parameters in its `PARAMETERIZATION_MAPPINGS` entry. `get_active_parameters`
+> places its `expression_prior` hierarchy hypers under `log_mu_*` (like the
+> other mean parameterizations). Two `ModelConfig` validators enforce its
+> scope: VAE is rejected, and `prob_prior` / `prob_dataset_prior` are rejected
+> (no scalar success-probability to hierarchicalize).
+
 ```python
 from scribe.models.config import get_active_parameters, Parameterization
 

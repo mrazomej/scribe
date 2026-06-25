@@ -1052,6 +1052,26 @@ def create_model(
     # Step 4.5: Apply gene-level p/phi hierarchy (Gaussian, horseshoe, or NEG)
     # ==========================================================================
     _NONE = HierarchicalPriorType.NONE
+
+    # Guard: mean_disp has no scalar success-probability site (p and phi are
+    # derived deterministics from the gene-specific mu, r). Running any
+    # p-hierarchy helper (_hierarchicalize_p / _datasetify_p / horseshoe / NEG)
+    # would emit orphan logit_p_* hyperpriors with no consuming spec and a
+    # guide/model mismatch. Reject both the gene-level and dataset-level p
+    # priors up front, before any of those helpers execute. Use
+    # ``expression_prior`` for a hierarchical prior on the gene mean mu.
+    if param_key == "mean_disp" and (
+        model_config.prob_prior != _NONE
+        or model_config.prob_dataset_prior != _NONE
+    ):
+        raise ValueError(
+            "prob_prior / prob_dataset_prior are not supported for the "
+            "mean_disp parameterization: it samples (mu, r) directly and has "
+            "no scalar success-probability to hierarchicalize (p and phi are "
+            "derived). The dispersion r is already gene-specific; use "
+            "expression_prior for a hierarchical prior on the gene mean mu."
+        )
+
     if model_config.prob_prior != _NONE:
         # Target is "phi" for mean_odds, "p" otherwise (matches the
         # target_name resolution inside _hierarchicalize_p).
@@ -1069,8 +1089,8 @@ def create_model(
     # Step 4.55: Apply gene-level mu hierarchy (across-component shrinkage)
     # ==========================================================================
     if model_config.expression_prior != _NONE:
-        # Target is "mu" for mean_prob/mean_odds, "r" otherwise.
-        _mu_target = "mu" if param_key in ("mean_prob", "mean_odds") else "r"
+        # Target is "mu" for mean_prob/mean_odds/mean_disp, "r" otherwise.
+        _mu_target = "mu" if _expression_target_is_mu(param_key) else "r"
         param_specs = _hierarchicalize_mu(
             param_specs=param_specs,
             param_key=param_key,
@@ -1631,9 +1651,13 @@ def _expression_target_is_mu(param_key: str) -> bool:
     bool
         True when the target expression parameter is ``mu``.
     """
-    return param_key in ("mean_odds", "mean_prob") or param_key.startswith(
-        "two_state"
-    )
+    return param_key in (
+        "mean_odds",
+        "mean_prob",
+        # mean_disp samples mu (gene mean) directly, so the expression
+        # hierarchy targets mu just like the other mean parameterizations.
+        "mean_disp",
+    ) or param_key.startswith("two_state")
 
 
 # ------------------------------------------------------------------------------
@@ -1775,7 +1799,7 @@ def _hierarchicalize_mu(
         hierarchical triplet (hyper_loc, hyper_scale, hier_mu).
     """
     # Determine target parameter and hyperparameter names
-    if param_key in ("mean_odds", "mean_prob"):
+    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
         target_name = "mu"
         hyper_loc_name = "log_mu_loc"
         hyper_scale_name = "log_mu_scale"
@@ -1864,7 +1888,7 @@ def _apply_mean_anchor(
     """
     # Determine target hyper_loc name based on parameterization.
     # Also check for the dataset-level variant.
-    if param_key in ("mean_odds", "mean_prob"):
+    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
         loc_names = ("log_mu_loc", "log_mu_dataset_loc")
     else:
         loc_names = ("log_r_loc", "log_r_dataset_loc")
@@ -1924,7 +1948,7 @@ def _horseshoe_mu(
     List[ParamSpec]
         Updated specs with horseshoe mu.
     """
-    if param_key in ("mean_odds", "mean_prob"):
+    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
         target_name = "mu"
         scale_name = "log_mu_scale"
         loc_name = "log_mu_loc"
@@ -2001,7 +2025,7 @@ def _neg_mu(
     List[ParamSpec]
         Updated specs with NEG mu.
     """
-    if param_key in ("mean_odds", "mean_prob"):
+    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
         target_name = "mu"
         scale_name = "log_mu_scale"
         loc_name = "log_mu_loc"

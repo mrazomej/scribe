@@ -399,6 +399,17 @@ def build_config_from_preset(
             "omit dense_params."
         )
 
+    # mean_disp samples two gene-specific primaries (mu, r); the single-head
+    # VAE decoder cannot emit both, so restrict it to svi / mcmc in v1. (A
+    # ModelConfig validator enforces the same on the direct builder path.)
+    if parameterization == "mean_disp" and inference_method.lower() == "vae":
+        raise ValueError(
+            "parameterization='mean_disp' is supported for svi and mcmc "
+            "only; it samples two gene-specific parameters (mu, r) which the "
+            "single-head VAE decoder cannot emit. Use 'mean_odds' for a "
+            "VAE-compatible parameterization."
+        )
+
     # Resolve parameterization strategy (needed by both low-rank and flow)
     param_strategy = PARAMETERIZATIONS[parameterization]
     gene_param_name = param_strategy.gene_param_name  # "r" or "mu"

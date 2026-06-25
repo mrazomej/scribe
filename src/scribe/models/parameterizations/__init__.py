@@ -515,6 +515,142 @@ class MeanOddsParameterization(Parameterization):
 
 
 # ------------------------------------------------------------------------------
+# Mean Dispersion Parameterization
+# ------------------------------------------------------------------------------
+
+
+class MeanDispParameterization(Parameterization):
+    """Mean-dispersion parameterization: samples mu and r, derives p and phi.
+
+    This parameterization samples the gene mean ``mu`` and the NB
+    size/dispersion ``r`` **directly** -- the two coordinates in which the
+    Negative Binomial is Fisher-orthogonal (the mean/Gamma-shape pair, where
+    the off-diagonal Fisher information vanishes; see
+    ``paper/_guide_reparam.qmd`` §"Fisher Orthogonality and the Mean-Dispersion
+    Parameterization"). Both ``mu`` and ``r`` are gene-specific. The success
+    probability ``p`` and odds ratio ``phi`` are derived:
+
+        phi = r / mu
+        p   = mu / (mu + r)
+
+    These are the **code-convention** derivations: the NB likelihood uses
+    ``dist.NegativeBinomialProbs(r, p)`` whose mean is ``r * p / (1 - p) = mu``,
+    so ``p = mu / (mu + r)`` (the reciprocal of the paper's success-probability
+    convention -- see the convention note in the paper). Equivalently, with
+    ``phi = r / mu`` this matches ``mean_odds``'s ``p = 1 / (1 + phi)``.
+
+    Unlike ``mean_odds`` (where ``phi`` is a scalar promoted to gene-specific
+    only under ``prob_prior``), ``mean_disp`` makes ``r`` gene-specific by
+    construction. The derived ``p`` is therefore gene-specific too, so this is
+    the orthogonal-coordinate analog of ``mean_odds`` with gene-specific
+    dispersion -- NOT the shared-``p`` NBDM.
+
+    Core parameters:
+    - mu: Mean expression (LogNormal or PositiveNormal), gene-specific
+    - r: Dispersion / NB size (LogNormal or PositiveNormal), gene-specific
+
+    Derived parameters:
+    - phi: Odds ratio (computed from mu and r)
+    - p: Success probability (computed from mu and r)
+
+    Notes
+    -----
+    - **SVI / MCMC only** in v1: the single-head VAE decoder contract cannot
+      emit two gene-specific primaries. The preset builder and a ``ModelConfig``
+      validator guard against ``inference_method="vae"``.
+    - ``prob_prior`` / ``prob_dataset_prior`` are rejected (there is no scalar
+      success-probability to hierarchicalize). Use ``expression_prior`` for a
+      hierarchical prior on the gene mean ``mu``.
+    """
+
+    @property
+    def name(self) -> str:
+        return "mean_disp"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["mu", "r"]
+
+    @property
+    def gene_param_name(self) -> str:
+        # Both mu and r are gene-specific; "mu" is the mean knob, so the
+        # "mean" shorthand resolves to it. (The "prob" shorthand resolves to
+        # ["r"], which is not meaningful for this parameterization -- callers
+        # who want a specific subset should pass an explicit list.)
+        return "mu"
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build parameter specs for mean-dispersion parameterization."""
+        mu_family = guide_families.get("mu")
+        r_family = guide_families.get("r")
+
+        # Determine which parameters are mixture-specific
+        if n_components is not None:
+            if mixture_params is None:
+                # Default: make all sampled core params mixture-specific
+                mixture_params = ["mu", "r"]
+            is_mu_mixture = "mu" in mixture_params
+            is_r_mixture = "r" in mixture_params
+        else:
+            is_mu_mixture = False
+            is_r_mixture = False
+
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=is_mu_mixture,
+                ),
+                PositiveNormalSpec(
+                    name="r",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=r_family,
+                    is_mixture=is_r_mixture,
+                ),
+            ]
+        else:
+            return [
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=is_mu_mixture,
+                ),
+                LogNormalSpec(
+                    name="r",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=r_family,
+                    is_mixture=is_r_mixture,
+                ),
+            ]
+
+    # --------------------------------------------------------------------------
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        """Build derived parameters: phi = r/mu, p = mu/(mu+r)."""
+        return [
+            DerivedParam("phi", _compute_phi_from_mu_r, ["mu", "r"]),
+            DerivedParam("p", _compute_p_from_mu_r, ["mu", "r"]),
+        ]
+
+
+# ------------------------------------------------------------------------------
 # Logistic-Normal Multinomial Parameterization
 # ------------------------------------------------------------------------------
 
@@ -1109,6 +1245,60 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 
 
 # ------------------------------------------------------------------------------
+
+
+def _compute_phi_from_mu_r(mu: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
+    """Compute the odds ratio ``phi = r / mu`` (mean-dispersion).
+
+    Code-convention odds ratio for the ``mean_disp`` parameterization, the
+    inverse of ``_compute_r_from_mu_phi`` (where ``r = mu * phi``). Inputs are
+    pre-aligned by the caller. Provided as a top-level function (not a lambda)
+    so that ``DerivedParam`` instances stay picklable.
+
+    Parameters
+    ----------
+    mu : jnp.ndarray
+        Mean parameter (pre-aligned).
+    r : jnp.ndarray
+        Dispersion parameter (pre-aligned).
+
+    Returns
+    -------
+    jnp.ndarray
+        Odds ratio ``phi = r / mu``.
+    """
+    return r / mu
+
+
+# ------------------------------------------------------------------------------
+
+
+def _compute_p_from_mu_r(mu: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
+    """Compute the success probability ``p = mu / (mu + r)`` (mean-dispersion).
+
+    Code-convention success probability for the ``mean_disp``
+    parameterization. With ``phi = r / mu`` this equals ``mean_odds``'s
+    ``p = 1 / (1 + phi)``, and the NB likelihood
+    ``NegativeBinomialProbs(r, p)`` then has mean ``r * p / (1 - p) = mu``.
+    Inputs are pre-aligned by the caller. Top-level (not a lambda) so
+    ``DerivedParam`` stays picklable.
+
+    Parameters
+    ----------
+    mu : jnp.ndarray
+        Mean parameter (pre-aligned).
+    r : jnp.ndarray
+        Dispersion parameter (pre-aligned).
+
+    Returns
+    -------
+    jnp.ndarray
+        Success probability ``p = mu / (mu + r)``.
+    """
+    return mu / (mu + r)
+
+
+# ------------------------------------------------------------------------------
 # LNM-totals derived computations.
 # ------------------------------------------------------------------------------
 #
@@ -1662,6 +1852,7 @@ class TwoStateMomentDeltaParameterization(Parameterization):
 _canonical = CanonicalParameterization()
 _mean_prob = MeanProbParameterization()
 _mean_odds = MeanOddsParameterization()
+_mean_disp = MeanDispParameterization()
 _logistic_normal_canonical = LogisticNormalParameterization(variant="canonical")
 _logistic_normal_mean_prob = LogisticNormalParameterization(variant="mean_prob")
 _logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
@@ -1681,6 +1872,9 @@ PARAMETERIZATIONS = {
     "canonical": _canonical,
     "mean_prob": _mean_prob,
     "mean_odds": _mean_odds,
+    # Mean-dispersion: samples (mu, r) directly -- the Fisher-orthogonal
+    # coordinate; derives (phi, p). DM-family, SVI/MCMC only.
+    "mean_disp": _mean_disp,
     # LNM-family parameterizations (variants of the totals NB)
     "logistic_normal_canonical": _logistic_normal_canonical,
     "logistic_normal_mean_prob": _logistic_normal_mean_prob,
@@ -1917,8 +2111,10 @@ def resolve_user_parameterization_for_model(
         return f"logistic_normal_{param_lower}"
 
     # DM-family path. The legacy "logistic_normal" string would never
-    # have made sense here, so we don't special-case it.
-    if param_lower not in ("canonical", "mean_prob", "mean_odds"):
+    # have made sense here, so we don't special-case it.  ``mean_disp``
+    # samples (mu, r) directly and is DM-family only (the LNM branch above
+    # continues to reject it).
+    if param_lower not in ("canonical", "mean_prob", "mean_odds", "mean_disp"):
         raise ValueError(
             f"parameterization={parameterization!r} not recognized."
         )
@@ -1931,6 +2127,7 @@ __all__ = [
     "CanonicalParameterization",
     "MeanProbParameterization",
     "MeanOddsParameterization",
+    "MeanDispParameterization",
     "LogisticNormalParameterization",
     "PoissonLogNormalParameterization",
     "TwoStateParameterization",
@@ -1951,6 +2148,8 @@ __all__ = [
     "_compute_mu_from_r_p",
     "_compute_r_from_mu_phi",
     "_compute_r_from_mu_p",
+    "_compute_phi_from_mu_r",
+    "_compute_p_from_mu_r",
     "_compute_r_T_from_mu_T_p",
     "_compute_r_T_from_mu_T_phi_T",
     "_compute_p_from_phi_T",

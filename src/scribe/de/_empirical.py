@@ -537,6 +537,9 @@ def sample_compositions(
     p_samples_A: Optional[Array] = None,
     p_samples_B: Optional[Array] = None,
     param_layouts: Optional[dict] = None,
+    *,
+    scale_samples_A: Optional[Array] = None,
+    scale_samples_B: Optional[Array] = None,
 ) -> tuple:
     """Draw full-dimensional simplex samples from posterior parameters.
 
@@ -656,8 +659,31 @@ def sample_compositions(
     p_A = _drop_scalar_p(p_A, p_post)
     p_B = _drop_scalar_p(p_B, p_post)
 
-    # Gamma-based sampling only when p is gene-specific (2D)
-    use_gamma = p_A is not None or p_B is not None
+    # Native mean_disp path: a precomputed per-gene scale (mu/r) supersedes
+    # the derived-p path. Slice on the same (gene-specific) layout as r and
+    # ignore p when present.
+    scale_A, _ = (
+        _slice_component(scale_samples_A, component_A, "A", layout=r_layout)
+        if scale_samples_A is not None
+        else (None, None)
+    )
+    scale_B, _ = (
+        _slice_component(scale_samples_B, component_B, "B", layout=r_layout)
+        if scale_samples_B is not None
+        else (None, None)
+    )
+    if scale_A is not None or scale_B is not None:
+        p_A = None
+        p_B = None
+
+    # Gamma-based sampling when p is gene-specific (2D) or a native scale is
+    # supplied.
+    use_gamma = (
+        p_A is not None
+        or p_B is not None
+        or scale_A is not None
+        or scale_B is not None
+    )
 
     # --- Validate sample counts ---
     N_A, D_A = r_A.shape
@@ -682,6 +708,10 @@ def sample_compositions(
         p_A = p_A[:N]
     if p_B is not None:
         p_B = p_B[:N]
+    if scale_A is not None:
+        scale_A = scale_A[:N]
+    if scale_B is not None:
+        scale_B = scale_B[:N]
 
     # Query the device memory budget once; the adaptive wrapper uses it
     # to decide how many chunks (ideally just 1) to split the work into.
@@ -696,10 +726,22 @@ def sample_compositions(
     if use_gamma:
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_gamma_normalize(
-            r_A, p_A, n_samples_dirichlet, key_A, batch_size, budget
+            r_A,
+            p_A,
+            n_samples_dirichlet,
+            key_A,
+            batch_size,
+            budget,
+            scale_samples=scale_A,
         )
         simplex_B = _batched_gamma_normalize(
-            r_B, p_B, n_samples_dirichlet, key_B, batch_size, budget
+            r_B,
+            p_B,
+            n_samples_dirichlet,
+            key_B,
+            batch_size,
+            budget,
+            scale_samples=scale_B,
         )
     elif paired:
         simplex_A, simplex_B = _paired_dirichlet_sample(
@@ -725,6 +767,8 @@ def sample_composition(
     rng_key=None,
     batch_size: int = 2048,
     param_layouts: Optional[dict] = None,
+    *,
+    scale_samples: Optional[Array] = None,
 ) -> np.ndarray:
     """Draw full-dimensional simplex samples from a single condition's posterior.
 
@@ -803,17 +847,27 @@ def sample_composition(
     # component axis removed.
     r, _ = _slice_component(r_samples, component, "A", layout=r_layout)
 
-    # Slice and possibly drop scalar p
-    if p_samples is not None:
-        p, p_post_layout = _slice_component(
-            p_samples, component, "A", layout=p_layout
+    # Native mean_disp path: a precomputed per-gene scale (mu/r) supersedes
+    # the derived-p path. Slice it on the same (gene-specific) layout as r.
+    if scale_samples is not None:
+        scale, _ = _slice_component(
+            scale_samples, component, "A", layout=r_layout
         )
-        p = _drop_scalar_p(p, p_post_layout)
-    else:
         p = None
+    else:
+        scale = None
+        # Slice and possibly drop scalar p
+        if p_samples is not None:
+            p, p_post_layout = _slice_component(
+                p_samples, component, "A", layout=p_layout
+            )
+            p = _drop_scalar_p(p, p_post_layout)
+        else:
+            p = None
 
-    # Choose sampling path: Gamma-normalize for gene-specific p, else Dirichlet
-    use_gamma = p is not None
+    # Choose sampling path: Gamma-normalize for gene-specific p or a native
+    # scale; else Dirichlet.
+    use_gamma = p is not None or scale is not None
 
     from ..core._array_dispatch import _gpu_memory_budget
 
@@ -821,7 +875,13 @@ def sample_composition(
 
     if use_gamma:
         return _batched_gamma_normalize(
-            r, p, n_samples_dirichlet, rng_key, batch_size, budget
+            r,
+            p,
+            n_samples_dirichlet,
+            rng_key,
+            batch_size,
+            budget,
+            scale_samples=scale,
         )
     else:
         return _batched_dirichlet(
@@ -1088,6 +1148,9 @@ def compute_clr_differences(
     p_samples_A: Optional[Array] = None,
     p_samples_B: Optional[Array] = None,
     reference: Union[str, np.ndarray] = "clr",
+    *,
+    scale_samples_A: Optional[Array] = None,
+    scale_samples_B: Optional[Array] = None,
 ) -> np.ndarray:
     """Compute log-ratio posterior differences from Dirichlet concentration samples.
 
@@ -1152,6 +1215,8 @@ def compute_clr_differences(
         batch_size=batch_size,
         p_samples_A=p_samples_A,
         p_samples_B=p_samples_B,
+        scale_samples_A=scale_samples_A,
+        scale_samples_B=scale_samples_B,
     )
     return compute_delta_from_simplex(
         simplex_A, simplex_B, gene_mask, reference=reference
@@ -1677,6 +1742,50 @@ def _jit_gamma_normalize_multi(
     return jax.vmap(_one)(keys, r, p).reshape(-1, r.shape[-1])
 
 
+@jax.jit
+def _jit_scale_normalize_single(
+    key: random.PRNGKey,
+    r: jax.Array,
+    scale: jax.Array,
+) -> jax.Array:
+    """Single Gamma-normalise draw using a precomputed per-gene scale.
+
+    Identical to :func:`_jit_gamma_normalize_single` except the per-gene
+    multiplier ``scale`` (= ``p_g/(1-p_g)`` = ``mu_g/r_g``) is supplied
+    directly, so there is **no** ``p`` clamp. This is the mean_disp native
+    path: ``scale = mu/r`` is exact and avoids capping the multiplier when
+    ``mu >> r`` (``p -> 1``).
+    """
+    gamma_raw = jax.random.gamma(key, r)
+    lam = gamma_raw * scale
+    total = jnp.maximum(lam.sum(axis=-1, keepdims=True), 1e-30)
+    return lam / total
+
+
+@partial(jax.jit, static_argnums=(3,))
+def _jit_scale_normalize_multi(
+    keys: jax.Array,
+    r: jax.Array,
+    scale: jax.Array,
+    n_samples: int,
+) -> jax.Array:
+    """Multiple scale-normalise draws per row, flattened to ``(B*S, D)``.
+
+    Precomputed-scale analog of :func:`_jit_gamma_normalize_multi` (no
+    ``p`` clamp).
+    """
+
+    def _one(key, alpha, scale_gene):
+        gamma_raw = jax.random.gamma(
+            key, alpha, shape=(n_samples,) + alpha.shape
+        )
+        lam = gamma_raw * scale_gene
+        total = jnp.maximum(lam.sum(axis=-1, keepdims=True), 1e-30)
+        return lam / total
+
+    return jax.vmap(_one)(keys, r, scale).reshape(-1, r.shape[-1])
+
+
 @partial(jax.jit, static_argnums=(3,))
 def _jit_paired_dirichlet_multi(
     keys: jax.Array,
@@ -1956,11 +2065,13 @@ def _batched_dirichlet(
 
 def _batched_gamma_normalize(
     r_samples: Array,
-    p_samples: Array,
+    p_samples: Optional[Array],
     n_samples_dirichlet: int,
     rng_key: random.PRNGKey,
     batch_size: int,
     memory_budget: float = math.inf,
+    *,
+    scale_samples: Optional[Array] = None,
 ) -> np.ndarray:
     """Gamma-normalise sampling with JIT compilation and adaptive chunking.
 
@@ -1971,12 +2082,18 @@ def _batched_gamma_normalize(
     2. Scale: ``lambda_g = lambda_raw_g * p_g / (1 - p_g)``.
     3. Normalise: ``rho_g = lambda_g / sum_j lambda_j``.
 
+    When ``scale_samples`` is given, step 2 uses that per-gene multiplier
+    **directly** (``lambda_g = lambda_raw_g * scale_g``) and ``p_samples`` is
+    ignored — the mean_disp native path, where ``scale_g = mu_g/r_g`` is exact
+    and avoids the ``p``-clamp that caps the multiplier when ``mu >> r``.
+
     Parameters
     ----------
     r_samples : array-like, shape ``(N, D)``
         Dirichlet concentration (dispersion) parameters.
-    p_samples : array-like, shape ``(N, D)``
-        Gene-specific success probabilities in ``(0, 1)``.
+    p_samples : array-like, shape ``(N, D)``, optional
+        Gene-specific success probabilities in ``(0, 1)``.  Ignored when
+        ``scale_samples`` is provided.
     n_samples_dirichlet : int
         Number of composition draws per posterior sample.
     rng_key : random.PRNGKey
@@ -1985,12 +2102,36 @@ def _batched_gamma_normalize(
         Upper-bound cap on chunk size.
     memory_budget : float, default=math.inf
         Usable device bytes.
+    scale_samples : array-like, shape ``(N, D)``, optional
+        Precomputed per-gene Gamma multiplier (``mu_g/r_g``).  When given,
+        used directly without a ``p`` clamp; ``p_samples`` is then ignored.
 
     Returns
     -------
     numpy.ndarray, shape ``(N * n_samples_dirichlet, D)``
         Simplex samples on CPU.
     """
+    if scale_samples is not None:
+        # Native path: per-gene multiplier supplied directly (no p clamp).
+        if n_samples_dirichlet == 1:
+            return _adaptive_sample(
+                _jit_scale_normalize_single,
+                [r_samples, scale_samples],
+                n_samples_dirichlet,
+                rng_key,
+                batch_size,
+                memory_budget,
+                multi=False,
+            )
+        return _adaptive_sample(
+            _jit_scale_normalize_multi,
+            [r_samples, scale_samples],
+            n_samples_dirichlet,
+            rng_key,
+            batch_size,
+            memory_budget,
+            multi=True,
+        )
     if n_samples_dirichlet == 1:
         return _adaptive_sample(
             _jit_gamma_normalize_single,
@@ -2116,6 +2257,9 @@ def sample_mixture_compositions(
     p_samples_A: Optional[Array] = None,
     p_samples_B: Optional[Array] = None,
     param_layouts: Optional[dict] = None,
+    *,
+    scale_samples_A: Optional[Array] = None,
+    scale_samples_B: Optional[Array] = None,
 ) -> tuple:
     """Draw mixture-weighted simplex samples from all components.
 
@@ -2227,6 +2371,15 @@ def sample_mixture_compositions(
     p_A_3d = jnp.asarray(p_samples_A[:N]) if p_samples_A is not None else None
     p_B_3d = jnp.asarray(p_samples_B[:N]) if p_samples_B is not None else None
 
+    # Native mean_disp path: a precomputed per-gene, per-component scale
+    # (mu/r, shape (N, K, D)) supersedes the derived-p path.
+    scale_A_3d = (
+        jnp.asarray(scale_samples_A[:N]) if scale_samples_A is not None else None
+    )
+    scale_B_3d = (
+        jnp.asarray(scale_samples_B[:N]) if scale_samples_B is not None else None
+    )
+
     from ..core._array_dispatch import _gpu_memory_budget
 
     budget = _gpu_memory_budget()
@@ -2236,16 +2389,21 @@ def sample_mixture_compositions(
     # existing JIT-compiled sampling kernels for each slice.
     K = K_A
 
-    def _sample_all_components(r_3d, p_3d, rng_base):
-        """Sample Dirichlet (or Gamma-normalise) per component."""
+    def _sample_all_components(r_3d, p_3d, scale_3d, rng_base):
+        """Sample Dirichlet (or Gamma-/scale-normalise) per component."""
         per_component = []
         for k in range(K):
             r_k = r_3d[:, k, :]  # (N, D)
             key_k = random.fold_in(rng_base, k)
 
+            # Native scale takes precedence over p (component-wise mu/r).
+            scale_k = None
+            if scale_3d is not None and scale_3d.ndim == 3:
+                scale_k = scale_3d[:, k, :]
+
             # Check if this component has gene-specific p
             p_k = None
-            if p_3d is not None:
+            if scale_k is None and p_3d is not None:
                 if p_3d.ndim == 3:
                     p_k = p_3d[:, k, :]
                 elif p_3d.ndim == 2:
@@ -2256,9 +2414,15 @@ def sample_mixture_compositions(
             if p_k is not None and p_k.ndim < 2:
                 p_k = None
 
-            if p_k is not None:
+            if scale_k is not None or p_k is not None:
                 simplex_k = _batched_gamma_normalize(
-                    r_k, p_k, n_samples_dirichlet, key_k, batch_size, budget
+                    r_k,
+                    p_k,
+                    n_samples_dirichlet,
+                    key_k,
+                    batch_size,
+                    budget,
+                    scale_samples=scale_k,
                 )
             else:
                 simplex_k = _batched_dirichlet(
@@ -2276,8 +2440,8 @@ def sample_mixture_compositions(
     else:
         key_A, key_B = random.split(rng_key)
 
-    components_A = _sample_all_components(r_A, p_A_3d, key_A)
-    components_B = _sample_all_components(r_B, p_B_3d, key_B)
+    components_A = _sample_all_components(r_A, p_A_3d, scale_A_3d, key_A)
+    components_B = _sample_all_components(r_B, p_B_3d, scale_B_3d, key_B)
 
     # Tile weights when n_samples_dirichlet > 1: each posterior row
     # fans out to S Dirichlet draws, so repeat each weight S times.

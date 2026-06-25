@@ -826,6 +826,57 @@ class ModelConfig(BaseModel):
     # --------------------------------------------------------------------------
 
     @model_validator(mode="after")
+    def validate_mean_disp_not_vae(self) -> "ModelConfig":
+        """mean_disp is SVI/MCMC only -- reject VAE on the direct builder path.
+
+        mean_disp samples two gene-specific primaries (mu, r), which the
+        single-head VAE decoder cannot emit. The preset builder guards the
+        ``scribe.fit`` path; this validator covers the direct
+        ``ModelConfigBuilder().with_parameterization("mean_disp").with_vae(...)``
+        path so the restriction cannot be bypassed.
+        """
+        if (
+            self.parameterization == Parameterization.MEAN_DISP
+            and self.inference_method == InferenceMethod.VAE
+        ):
+            raise ValueError(
+                "parameterization='mean_disp' is supported for svi and mcmc "
+                "only; it samples two gene-specific parameters (mu, r) which "
+                "the single-head VAE decoder cannot emit. Use 'mean_odds' for "
+                "a VAE-compatible parameterization."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_mean_disp_no_prob_hierarchy(self) -> "ModelConfig":
+        """mean_disp has no scalar success-probability to hierarchicalize.
+
+        ``p`` and ``phi`` are derived deterministics from the gene-specific
+        ``mu``, ``r``; there is no sampled scalar prob site for a gene- or
+        dataset-level prior to target (running the p-hierarchy helpers would
+        emit orphan ``logit_p_*`` hyperpriors). Reject both up front -- the
+        factory carries the same guard as a downstream safety net. Use
+        ``expression_prior`` for a hierarchical prior on the gene mean ``mu``.
+        """
+        if self.parameterization != Parameterization.MEAN_DISP:
+            return self
+        _NONE = HierarchicalPriorType.NONE
+        if self.prob_prior != _NONE or self.prob_dataset_prior != _NONE:
+            raise ValueError(
+                "prob_prior / prob_dataset_prior are not supported for the "
+                "mean_disp parameterization: it samples (mu, r) directly and "
+                "has no scalar success-probability to hierarchicalize (p and "
+                "phi are derived). The dispersion r is already gene-specific; "
+                "use expression_prior for a hierarchical prior on the gene "
+                "mean mu."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
     def validate_grouping_spec(self) -> "ModelConfig":
         """Ensure the multi-factor grouping descriptor is consistent.
 

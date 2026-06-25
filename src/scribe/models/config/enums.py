@@ -79,6 +79,10 @@ class Parameterization(str, Enum):
     CANONICAL = "canonical"
     MEAN_PROB = "mean_prob"
     MEAN_ODDS = "mean_odds"
+    # MEAN_DISP: Samples mu (mean) and r (dispersion) directly -- the
+    # Fisher-orthogonal coordinate -- and derives p and phi. Both mu and r
+    # are gene-specific. DM-family, SVI/MCMC only (no VAE in v1).
+    MEAN_DISP = "mean_disp"
     # LNM-family parameterizations. The three variants mirror the
     # DM-family trio: ``canonical`` keeps ``(r_T, p)`` as sampled
     # globals, ``mean_prob`` keeps ``(p, mu_T)``, and ``mean_odds``

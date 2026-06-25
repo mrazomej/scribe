@@ -724,6 +724,7 @@ def _normalize_map_targets(
 
 def _required_map_keys_for_targets(
     targets: Optional[Set[str]],
+    parameterization: Optional[str] = None,
 ) -> Optional[Set[str]]:
     """Expand requested MAP keys with derivation dependencies.
 
@@ -736,6 +737,11 @@ def _required_map_keys_for_targets(
     ----------
     targets : set of str, optional
         Requested output keys. ``None`` means full-map mode.
+    parameterization : str, optional
+        Active parameterization. Only ``"mean_disp"`` derives ``p``/``phi``
+        from ``(mu, r)``; for all others ``p`` derives from ``phi`` and adding
+        ``mu``/``r`` as parents would needlessly drag in (possibly
+        flow-guided) ``r`` when only ``p`` was requested.
 
     Returns
     -------
@@ -745,12 +751,29 @@ def _required_map_keys_for_targets(
     if targets is None:
         return None
 
+    _is_mean_disp = (
+        getattr(parameterization, "value", parameterization) == "mean_disp"
+    )
+
     # Dependency graph for keys derived in get_map /
     # _compute_canonical_parameters. Values list *candidate* parents, not
     # necessarily all required at runtime.
     deps = {
         "r": {"mu", "p", "phi", "r_unconstrained"},
-        "p": {"phi", "p_unconstrained"},
+        # mean_disp derives p and phi from (mu, r); every other
+        # parameterization derives p from phi only, so the mu/r parents are
+        # added ONLY under mean_disp (avoids dragging r into a "p"-only
+        # request, which would defeat flow pruning).
+        "p": (
+            {"phi", "p_unconstrained", "mu", "r"}
+            if _is_mean_disp
+            else {"phi", "p_unconstrained"}
+        ),
+        "phi": (
+            {"mu", "r", "phi_unconstrained"}
+            if _is_mean_disp
+            else {"phi_unconstrained"}
+        ),
         "mu": {"r", "p"},
         "p_capture": {
             "phi_capture",
@@ -1283,7 +1306,12 @@ class ParameterExtractionMixin:
             targets = None
 
         requested_targets = _normalize_map_targets(targets)
-        required_keys = _required_map_keys_for_targets(requested_targets)
+        required_keys = _required_map_keys_for_targets(
+            requested_targets,
+            parameterization=getattr(
+                self.model_config, "parameterization", None
+            ),
+        )
 
         # For amortized capture, we need to compute variational parameters
         # by running the amortizer with counts, then add them to params
@@ -1791,6 +1819,40 @@ class ParameterExtractionMixin:
                 layouts["p_capture"] = layouts.get(
                     "phi_capture", AxisLayout(())
                 )
+
+        # ------------------------------------------------------------------
+        # mean_disp: samples (mu, r) directly; derive phi = r/mu and
+        # p = mu/(mu+r). MAP reconstructs from the variational guide params,
+        # where the model's deterministic p/phi sites do NOT exist (posterior
+        # *samples* carry them via Predictive, but the MAP dict does not), so
+        # we must materialize them here. Capture (for VCP) stays the standard
+        # sigmoid ``p_capture`` — mean_disp does not rename it to phi_capture.
+        # ------------------------------------------------------------------
+        elif parameterization == "mean_disp":
+            if "mu" in estimates and "r" in estimates:
+                mu_layout = layouts.get("mu", AxisLayout(()))
+                r_layout = layouts.get("r", AxisLayout(()))
+                target = merge_layouts(mu_layout, r_layout)
+                mu_aligned = align_to_layout(estimates["mu"], mu_layout, target)
+                r_aligned = align_to_layout(estimates["r"], r_layout, target)
+
+                if "phi" not in estimates:
+                    if verbose:
+                        print(
+                            "Computing phi from mu and r for mean_disp "
+                            "parameterization"
+                        )
+                    estimates["phi"] = r_aligned / mu_aligned
+                    layouts["phi"] = target
+
+                if "p" not in estimates:
+                    if verbose:
+                        print(
+                            "Computing p from mu and r for mean_disp "
+                            "parameterization"
+                        )
+                    estimates["p"] = mu_aligned / (mu_aligned + r_aligned)
+                    layouts["p"] = target
 
         # ------------------------------------------------------------------
         # Unconstrained transforms: exp / sigmoid / softmax
