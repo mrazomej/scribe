@@ -373,10 +373,6 @@ PARAMETERIZATION_MAPPINGS = {
                 "produce bursty / bimodal counts. "
                 "PositiveNormal / SoftplusNormal."
             ),
-            "p_capture": (
-                "Per-cell capture probability "
-                "(Beta / SigmoidNormal). TwoStateVCP only."
-            ),
             "alpha": "DERIVED: Beta first shape = mu / burst_size.",
             "beta": "DERIVED: Beta second shape = k_off.",
             "k_on": "DERIVED: ON rate = mu / burst_size (= alpha).",
@@ -439,10 +435,6 @@ PARAMETERIZATION_MAPPINGS = {
                 "Large s → NB regime; small s → bursty / Poisson-like. "
                 "PositiveNormal / SoftplusNormal."
             ),
-            "p_capture": (
-                "Per-cell capture probability "
-                "(Beta / SigmoidNormal). TwoStateVCP only."
-            ),
             "alpha": "DERIVED: Beta first shape = mu / burst_size (= k_on).",
             "beta": (
                 "DERIVED: Beta second shape = k_off = switching_ratio · k_on."
@@ -504,10 +496,6 @@ PARAMETERIZATION_MAPPINGS = {
                 "approaches the NB shape (peaked latent p); small κ "
                 "admits a U-shaped Beta and bursty / bimodal counts. "
                 "PositiveNormal / SoftplusNormal."
-            ),
-            "p_capture": (
-                "Per-cell capture probability "
-                "(Beta / SigmoidNormal). TwoStateVCP only."
             ),
             "alpha": (
                 "DERIVED: Beta first shape = κ · μ / "
@@ -579,10 +567,6 @@ PARAMETERIZATION_MAPPINGS = {
                 "Per-gene shape coordinate delta = 1/(kappa + 1) "
                 "in (0, 1). delta -> 0 is the NB limit, delta near "
                 "1 is the extreme bursty regime. SigmoidNormal."
-            ),
-            "p_capture": (
-                "Per-cell capture probability "
-                "(Beta / SigmoidNormal). TwoStateVCP only."
             ),
             "alpha": (
                 "DERIVED: Beta first shape = mu * (1 - delta) / "
@@ -1422,11 +1406,14 @@ def resolve_param_shorthand(
         )
 
     # --- Explicit list: resolve descriptive aliases ---
+    # Accept both the formal descriptive names (``mean_expression``,
+    # ``odds_ratio``) and the shorter ``priors``-dict aliases (``expression``,
+    # ``odds``); overlapping keys map to the same internal name, so the two
+    # tables compose unambiguously.
     resolved: "List[str]" = []
     for name in value:
         internal = _DESCRIPTIVE_TO_INTERNAL.get(name)
-        if internal is not None:
-            resolved.append(internal)
-        else:
-            resolved.append(name)
+        if internal is None:
+            internal = PRIOR_KEY_ALIASES.get(name)
+        resolved.append(internal if internal is not None else name)
     return resolved
