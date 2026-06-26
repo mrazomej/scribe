@@ -130,7 +130,11 @@ def process_data_and_datasets(ctx: FitContext) -> None:
             "regime": "regime_dataset_prior",
         }
         for _tgt, _lvlmap in _hier_p.items():
-            _lvl_families = {_lvl: _spec.type for _lvl, _spec in _lvlmap.items()}
+            # Pass the full PriorFamilySpec objects (carrying any per-spec
+            # hyperparameters) into the grouping; normalize_grouping stores
+            # them on Factor.priors and the multi-factor factory path honors
+            # them. (The single-axis path later reduces to the type string.)
+            _lvl_families = dict(_lvlmap)
             _field = _DATASET_FIELD.get(_tgt)
             if _field is not None:
                 kw[_field] = _lvl_families

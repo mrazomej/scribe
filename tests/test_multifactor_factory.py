@@ -238,3 +238,41 @@ def test_dispersion_hierarchy_forces_exp_link():
         config2 = _force_exp_for_expression_hierarchy(config)
     # Δ log r interpretability requires the exp link on r.
     assert config2.resolve_positive_transform("r") == "exp"
+
+
+def test_dispersion_horseshoe_honors_per_spec_tau0():
+    # A dict family-spec on the dispersion hierarchy overrides the global
+    # horseshoe tau0 default (family-as-spec hyperparameter threading).
+    obs = pd.DataFrame(
+        {
+            "sample": ["D1", "D2", "D3", "D1", "D2", "D3"],
+            "treatment": ["control", "control", "control", "drug", "drug", "drug"],
+        }
+    )
+    spec, _ = normalize_grouping(
+        dataset_key=None,
+        hierarchy=[GroupLevel(name="treatment"), GroupLevel(name="sample")],
+        interactions=None,
+        obs=obs,
+        dataset_priors={
+            "expression": "none",
+            "dispersion": {"treatment": {"type": "horseshoe", "tau0": 5.0}},
+            "prob": "none",
+            "zero_inflation": "none",
+            "overdispersion": "none",
+            "regime": "none",
+        },
+    )
+    b = (
+        ModelConfigBuilder()
+        .for_model("nbvcp")
+        .with_parameterization("mean_disp")
+        .unconstrained()
+    )
+    b._n_datasets = spec.n_leaves
+    b._grouping_spec = spec
+    config = b.build()
+    _, _, specs = create_model(config)
+    by_name = {s.name: s for s in specs}
+    # Global default tau0 is 1.0; the per-spec value must win.
+    assert float(by_name["tau_r_treatment"].scale) == 5.0

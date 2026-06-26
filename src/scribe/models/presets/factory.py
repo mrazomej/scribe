@@ -2278,8 +2278,17 @@ def _multifactor_hier(
                     f"horseshoe multi-factor prior on {target_name!r} requires "
                     "a gene-specific target (the local scale is per-gene)."
                 )
+            # Per-spec hyperparameters (from a dict family-spec, e.g.
+            # {"type": "horseshoe", "tau0": 1.0}) override the global defaults.
+            _hs = dict(horseshoe_kwargs)
+            _spec = fac.priors.get(target_kwarg)
+            if _spec is not None:
+                for _k in ("tau0", "slab_df", "slab_scale"):
+                    _v = getattr(_spec, _k, None)
+                    if _v is not None:
+                        _hs[_k] = _v
             tau_spec, lam_spec, c_sq_spec = _make_horseshoe_hypers(
-                prefix=prefix, **horseshoe_kwargs
+                prefix=prefix, **_hs
             )
             hyper_specs.extend([tau_spec, lam_spec, c_sq_spec])
             factor_specs.append(
