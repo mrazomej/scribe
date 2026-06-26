@@ -33,10 +33,10 @@ from scribe.models.presets.registry import (
     build_extra_param_spec,
 )
 from scribe.models.presets.factory import (
+    _gaussianize,
     _get_parameterization_key,
-    _hierarchicalize_mu,
-    _hierarchicalize_p,
 )
+from scribe.models.builders.hier_descriptors import gene_hier_param
 from scribe.models.config import ModelConfig, ModelConfigBuilder
 from scribe.models.config.enums import HierarchicalPriorType
 from scribe.models.config.groups import GuideFamilyConfig
@@ -60,21 +60,25 @@ def _build_full_param_specs(model_config):
     )
 
     if model_config.prob_prior != HierarchicalPriorType.NONE:
-        specs = _hierarchicalize_p(
-            param_specs=specs,
-            param_key=param_key,
+        _p_target = "phi" if param_key == "mean_odds" else "p"
+        _p_is_mixture = False
+        if model_config.n_components is not None:
+            _p_is_mixture = (
+                model_config.mixture_params is None
+                or _p_target in model_config.mixture_params
+            )
+        specs = _gaussianize(
+            specs,
+            gene_hier_param("prob", param_key),
             guide_families=guide_families,
-            n_components=model_config.n_components,
-            mixture_params=model_config.mixture_params,
+            is_target_mixture=_p_is_mixture,
         )
 
     if model_config.hierarchical_mu:
-        specs = _hierarchicalize_mu(
-            param_specs=specs,
-            param_key=param_key,
+        specs = _gaussianize(
+            specs,
+            gene_hier_param("expression", param_key),
             guide_families=guide_families,
-            n_components=model_config.n_components,
-            mixture_params=model_config.mixture_params,
         )
 
     for name in MODEL_EXTRA_PARAMS.get(model_config.base_model, []):

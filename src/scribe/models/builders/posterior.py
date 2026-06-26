@@ -1093,6 +1093,72 @@ def _build_multifactor_leaf_posterior(
     return posterior
 
 
+def _apply_ncp_dataset_posterior(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    *,
+    kind: str,
+    target: str,
+    hyper_loc: str,
+    hs_prefix: str,
+    raw_name: str,
+    target_tf,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Reconstruct one NCP (horseshoe/NEG) dataset-level target posterior.
+
+    This is the shared body of the horseshoe/NEG branches that every Pass-3/4/4b/5
+    builder repeated verbatim (8 near-identical copies): a joint-prefix check on
+    the raw-z site (or the target inside a joint block), the population-loc and
+    shrinkage hyperparameter posteriors, and either the joint-block target
+    reconstruction or the standalone raw-z normal. The per-pass differences are
+    only the site names and the ``target_tf`` applied to a joint reconstruction,
+    so they are passed in — this helper carries no transform or target logic.
+
+    Parameters
+    ----------
+    kind : str
+        ``"horseshoe"`` (τ/λ/c² hypers) or ``"neg"`` (ζ/ψ Gamma-Gamma hypers).
+    target, hyper_loc, hs_prefix, raw_name : str
+        The target site, its population-location site, the shrinkage hyper
+        prefix, and the non-centered raw-z site name.
+    target_tf : Transform or None
+        Transform applied when the target is reconstructed from a joint block
+        (the caller's per-target choice; ``None`` for the standalone raw-z path).
+    """
+    if kind == "horseshoe":
+        hyper_present = f"tau_{hs_prefix}_loc" in params
+        build_shrinkage = _build_horseshoe_hyperparameter_posteriors
+    else:  # neg
+        hyper_present = f"psi_{hs_prefix}_concentration" in params
+        build_shrinkage = _build_neg_hyperparameter_posteriors
+
+    jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+        params, target
+    )
+    if jp:
+        # Joint path: the raw z lives in the joint block, but the hyper-priors
+        # may still carry individual params (not folded into the joint guide).
+        if f"{hyper_loc}_loc" in params:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+        if hyper_present:
+            distributions.update(build_shrinkage(params, hs_prefix))
+        distributions[target] = _build_joint_low_rank_posterior(
+            params, target, jp, split, transform=target_tf
+        )
+    else:
+        distributions.update(
+            _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+        )
+        distributions.update(build_shrinkage(params, hs_prefix))
+        distributions[raw_name] = _build_normal_posterior(
+            params, raw_name, low_rank=low_rank
+        )
+
+
 def _apply_dataset_hierarchy_target(
     distributions: Dict[str, Any],
     params: Dict[str, jnp.ndarray],
@@ -1148,73 +1214,36 @@ def _apply_dataset_hierarchy_target(
     if not single_axis_active:
         return
 
+    # The horseshoe/NEG raw z lives inside the joint block under either
+    # "{target}_raw" or "{target}"; the shared helper tries both.
     if horseshoe_dataset:
-        raw_name = f"{target}_raw"
-        # When joint_params includes the target, the horseshoe raw z lives
-        # inside the joint block under either "{target}_raw" or "{target}".
-        # Try both to find the joint prefix.
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="horseshoe",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=f"{target}_raw",
+            target_tf=pos_transform,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            # Joint path: hyper-priors may still have individual params
-            # (they are not folded into the joint guide).
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"tau_{hs_prefix}_loc" in params:
-                distributions.update(
-                    _build_horseshoe_hyperparameter_posteriors(
-                        params, hs_prefix
-                    )
-                )
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=pos_transform
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
     if neg_dataset:
-        raw_name = f"{target}_raw"
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="neg",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=f"{target}_raw",
+            target_tf=pos_transform,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"psi_{hs_prefix}_concentration" in params:
-                distributions.update(
-                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
-                )
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=pos_transform
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_neg_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
     distributions.update(
@@ -1288,75 +1317,42 @@ def _apply_dataset_hierarchy_p(
         hs_prefix = "p_dataset"
         raw_name = "p_raw_dataset"
 
+    # phi is positive (use pos_transform); p is (0, 1) (no joint transform).
+    _jp_tf = pos_transform if target == "phi" else None
+
     if horseshoe_dataset_p:
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="horseshoe",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=raw_name,
+            target_tf=_jp_tf,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"tau_{hs_prefix}_loc" in params:
-                distributions.update(
-                    _build_horseshoe_hyperparameter_posteriors(
-                        params, hs_prefix
-                    )
-                )
-            # phi is positive (use pos_transform), p is (0,1).
-            _jp_tf = pos_transform if target == "phi" else None
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=_jp_tf
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
     if neg_dataset_p:
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="neg",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=raw_name,
+            target_tf=_jp_tf,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"psi_{hs_prefix}_concentration" in params:
-                distributions.update(
-                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
-                )
-            _jp_tf = pos_transform if target == "phi" else None
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=_jp_tf
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_neg_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
     distributions.update(
         _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
     )
-    _jp_tf = pos_transform if target == "phi" else None
     jp = _find_joint_prefix(params, target)
     if jp:
         distributions[target] = _build_joint_low_rank_posterior(
@@ -1430,68 +1426,35 @@ def _apply_dataset_hierarchy_regime(
     hs_prefix = f"{coord}_dataset"
     raw_name = f"{coord}_raw_dataset"
 
-    # --- Horseshoe (NCP): hyper-loc + horseshoe trio + raw-z normal --------
+    # --- Horseshoe / NEG (NCP): hyper-loc + shrinkage hypers + raw-z normal -
     if regime_prior == HierarchicalPriorType.HORSESHOE:
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="horseshoe",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=raw_name,
+            target_tf=target_tf,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"tau_{hs_prefix}_loc" in params:
-                distributions.update(
-                    _build_horseshoe_hyperparameter_posteriors(
-                        params, hs_prefix
-                    )
-                )
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=target_tf
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
-    # --- NEG (NCP): hyper-loc + Gamma-Gamma hypers + raw-z normal ----------
     if regime_prior == HierarchicalPriorType.NEG:
-        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
-            params, target
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="neg",
+            target=target,
+            hyper_loc=hyper_loc,
+            hs_prefix=hs_prefix,
+            raw_name=raw_name,
+            target_tf=target_tf,
+            low_rank=low_rank,
+            split=split,
         )
-        if jp:
-            if f"{hyper_loc}_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-            if f"psi_{hs_prefix}_concentration" in params:
-                distributions.update(
-                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
-                )
-            distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split, transform=target_tf
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
-            )
-            distributions.update(
-                _build_neg_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
         return
 
     # --- Gaussian (centered) dataset hierarchy: hyperparams + (D, G) target -
@@ -1556,79 +1519,33 @@ def _apply_dataset_hierarchy_gate(
         return
 
     if horseshoe_dataset_gate:
-        jp = _find_joint_prefix(
-            params, "gate_raw_dataset"
-        ) or _find_joint_prefix(params, "gate")
-        if jp:
-            if "logit_gate_dataset_loc_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params,
-                        "logit_gate_dataset_loc",
-                        "logit_gate_dataset_loc",
-                    )
-                )
-            if "tau_gate_dataset_loc" in params:
-                distributions.update(
-                    _build_horseshoe_hyperparameter_posteriors(
-                        params, "gate_dataset"
-                    )
-                )
-            distributions["gate"] = _build_joint_low_rank_posterior(
-                params, "gate", jp, split
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params,
-                    "logit_gate_dataset_loc",
-                    "logit_gate_dataset_loc",
-                )
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(
-                    params, "gate_dataset"
-                )
-            )
-            distributions["gate_raw_dataset"] = _build_normal_posterior(
-                params, "gate_raw_dataset", low_rank=low_rank
-            )
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="horseshoe",
+            target="gate",
+            hyper_loc="logit_gate_dataset_loc",
+            hs_prefix="gate_dataset",
+            raw_name="gate_raw_dataset",
+            target_tf=None,  # gate is sigmoid; no joint transform
+            low_rank=low_rank,
+            split=split,
+        )
         return
 
     if neg_dataset_gate:
-        jp = _find_joint_prefix(
-            params, "gate_raw_dataset"
-        ) or _find_joint_prefix(params, "gate")
-        if jp:
-            if "logit_gate_dataset_loc_loc" in params:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params,
-                        "logit_gate_dataset_loc",
-                        "logit_gate_dataset_loc",
-                    )
-                )
-            if "psi_gate_dataset_concentration" in params:
-                distributions.update(
-                    _build_neg_hyperparameter_posteriors(params, "gate_dataset")
-                )
-            distributions["gate"] = _build_joint_low_rank_posterior(
-                params, "gate", jp, split
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params,
-                    "logit_gate_dataset_loc",
-                    "logit_gate_dataset_loc",
-                )
-            )
-            distributions.update(
-                _build_neg_hyperparameter_posteriors(params, "gate_dataset")
-            )
-            distributions["gate_raw_dataset"] = _build_normal_posterior(
-                params, "gate_raw_dataset", low_rank=low_rank
-            )
+        _apply_ncp_dataset_posterior(
+            distributions,
+            params,
+            kind="neg",
+            target="gate",
+            hyper_loc="logit_gate_dataset_loc",
+            hs_prefix="gate_dataset",
+            raw_name="gate_raw_dataset",
+            target_tf=None,  # gate is sigmoid; no joint transform
+            low_rank=low_rank,
+            split=split,
+        )
         return
 
     distributions.update(

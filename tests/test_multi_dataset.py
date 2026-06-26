@@ -1282,8 +1282,9 @@ class TestMixtureDatasetComposition:
     # ------------------------------------------------------------------
 
     def test_datasetify_mu_preserves_is_mixture(self):
-        """_datasetify_mu keeps is_mixture from the original spec."""
-        from scribe.models.presets.factory import _datasetify_mu
+        """Dataset mu hierarchy keeps is_mixture from the original spec."""
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         # Create a spec list where 'r' is mixture-specific
         original_r = PositiveNormalSpec(
@@ -1294,11 +1295,10 @@ class TestMixtureDatasetComposition:
             is_mixture=True,
             unconstrained=True,
         )
-        result_specs = _datasetify_mu(
-            param_specs=[original_r],
-            param_key="canonical",
+        result_specs = _gaussianize(
+            [original_r],
+            dataset_hier_param("expression", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
 
         # The dataset-hierarchical r spec should have both flags
@@ -1308,8 +1308,9 @@ class TestMixtureDatasetComposition:
         assert r_specs[0].is_mixture is True
 
     def test_datasetify_p_preserves_is_mixture(self):
-        """_datasetify_p keeps is_mixture from the original spec."""
-        from scribe.models.presets.factory import _datasetify_p
+        """Dataset p hierarchy keeps is_mixture from the original spec."""
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_p = SigmoidNormalSpec(
             name="p",
@@ -1319,11 +1320,10 @@ class TestMixtureDatasetComposition:
             is_mixture=True,
             unconstrained=True,
         )
-        result_specs = _datasetify_p(
-            param_specs=[original_p],
-            param_key="mean_prob",
+        result_specs = _gaussianize(
+            [original_p],
+            dataset_hier_param("prob", "mean_prob"),
             guide_families={},
-            n_datasets=2,
             mode="gene_specific",
         )
 
@@ -1333,8 +1333,9 @@ class TestMixtureDatasetComposition:
         assert p_specs[0].is_mixture is True
 
     def test_datasetify_mu_non_mixture_stays_non_mixture(self):
-        """_datasetify_mu does not add is_mixture when original lacks it."""
-        from scribe.models.presets.factory import _datasetify_mu
+        """Dataset mu hierarchy does not add is_mixture when original lacks it."""
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_r = PositiveNormalSpec(
             name="r",
@@ -1344,11 +1345,10 @@ class TestMixtureDatasetComposition:
             is_mixture=False,
             unconstrained=True,
         )
-        result_specs = _datasetify_mu(
-            param_specs=[original_r],
-            param_key="canonical",
+        result_specs = _gaussianize(
+            [original_r],
+            dataset_hier_param("expression", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
 
         r_specs = [s for s in result_specs if s.name == "r"]
@@ -1364,7 +1364,8 @@ class TestMixtureDatasetComposition:
         always a scalar shared across genes, datasets, and components —
         so it must have is_mixture=False and is_gene_specific=False.
         """
-        from scribe.models.presets.factory import _datasetify_gate
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         # Simulate a mixture-aware gate spec (as produced by Step 5)
         original_gate = SigmoidNormalSpec(
@@ -1375,10 +1376,10 @@ class TestMixtureDatasetComposition:
             is_mixture=True,
             unconstrained=True,
         )
-        result_specs = _datasetify_gate(
-            param_specs=[original_gate],
+        result_specs = _gaussianize(
+            [original_gate],
+            dataset_hier_param("gate", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
 
         # The dataset-hierarchical gate spec must preserve is_mixture
@@ -1398,7 +1399,8 @@ class TestMixtureDatasetComposition:
 
     def test_datasetify_gate_non_mixture_stays_non_mixture(self):
         """_datasetify_gate does not add is_mixture when original lacks it."""
-        from scribe.models.presets.factory import _datasetify_gate
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_gate = SigmoidNormalSpec(
             name="gate",
@@ -1408,10 +1410,10 @@ class TestMixtureDatasetComposition:
             is_mixture=False,
             unconstrained=True,
         )
-        result_specs = _datasetify_gate(
-            param_specs=[original_gate],
+        result_specs = _gaussianize(
+            [original_gate],
+            dataset_hier_param("gate", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
 
         gate_specs = [s for s in result_specs if s.name == "gate"]
@@ -1430,7 +1432,8 @@ class TestMixtureDatasetComposition:
 
     def test_datasetify_gate_scalar_loc_default_params(self):
         """_datasetify_gate creates scalar loc with N(-5, 0.01) defaults."""
-        from scribe.models.presets.factory import _datasetify_gate
+        from scribe.models.presets.factory import _gaussianize
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_gate = SigmoidNormalSpec(
             name="gate",
@@ -1440,10 +1443,10 @@ class TestMixtureDatasetComposition:
             is_mixture=False,
             unconstrained=True,
         )
-        result_specs = _datasetify_gate(
-            param_specs=[original_gate],
+        result_specs = _gaussianize(
+            [original_gate],
+            dataset_hier_param("gate", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
 
         hyper_loc = [
@@ -1459,9 +1462,10 @@ class TestMixtureDatasetComposition:
     def test_datasetify_gate_neg_upgrade_preserves_scalar_loc(self):
         """NEG upgrade of dataset gate keeps hyper_loc as scalar."""
         from scribe.models.presets.factory import (
-            _datasetify_gate,
-            _neg_dataset_gate,
+            _gaussianize,
+            _neg_ncp,
         )
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_gate = SigmoidNormalSpec(
             name="gate",
@@ -1472,13 +1476,15 @@ class TestMixtureDatasetComposition:
             unconstrained=True,
         )
         # First apply the Gaussian datasetification
-        specs = _datasetify_gate(
-            param_specs=[original_gate],
+        specs = _gaussianize(
+            [original_gate],
+            dataset_hier_param("gate", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
         # Then upgrade to NEG
-        neg_specs = _neg_dataset_gate(specs, a=1.0, u=0.5, tau=1.0)
+        neg_specs = _neg_ncp(
+            specs, dataset_hier_param("gate", "canonical"), a=1.0, u=0.5, tau=1.0
+        )
 
         hyper_loc = [
             s for s in neg_specs if s.name == "logit_gate_dataset_loc"
@@ -1494,9 +1500,10 @@ class TestMixtureDatasetComposition:
     def test_datasetify_gate_horseshoe_upgrade_preserves_scalar_loc(self):
         """Horseshoe upgrade of dataset gate keeps hyper_loc as scalar."""
         from scribe.models.presets.factory import (
-            _datasetify_gate,
-            _horseshoe_dataset_gate,
+            _gaussianize,
+            _horseshoe_ncp,
         )
+        from scribe.models.builders.hier_descriptors import dataset_hier_param
 
         original_gate = SigmoidNormalSpec(
             name="gate",
@@ -1506,12 +1513,14 @@ class TestMixtureDatasetComposition:
             is_mixture=False,
             unconstrained=True,
         )
-        specs = _datasetify_gate(
-            param_specs=[original_gate],
+        specs = _gaussianize(
+            [original_gate],
+            dataset_hier_param("gate", "canonical"),
             guide_families={},
-            n_datasets=2,
         )
-        hs_specs = _horseshoe_dataset_gate(specs)
+        hs_specs = _horseshoe_ncp(
+            specs, dataset_hier_param("gate", "canonical")
+        )
 
         hyper_loc = [s for s in hs_specs if s.name == "logit_gate_dataset_loc"][
             0

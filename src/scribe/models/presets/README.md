@@ -359,50 +359,59 @@ LIKELIHOOD_REGISTRY = {
 }
 ```
 
-## Sparsity-Inducing Prior Factory Functions
+## Hierarchical-Prior Cores (descriptor-driven)
 
-**Horseshoe:** Gene-level: `_horseshoe_p`, `_horseshoe_gate`, `_horseshoe_mu`.
-Dataset-level: `_horseshoe_dataset_mu`, `_horseshoe_dataset_p`,
-`_horseshoe_dataset_gate`. Helper `_make_horseshoe_hypers` creates
-HalfCauchy/InverseGamma specs; `_horseshoe_kwargs_from_config` extracts
-horseshoe config from ModelConfig.
+Every hierarchical prior — gene-level shrinkage across components and
+dataset-level shrinkage across datasets, for `mu`/`r`, `p`/`phi`, `gate`, and
+the two-state regime coordinate — is built by **three generic cores** in
+`factory.py`, parametrized by a `HierParam` descriptor
+(`builders/hier_descriptors.py`). The descriptor declares the exact site names,
+spec classes, and construction geometry for a given `(role, param_key)` at a
+given level, so the cores carry no per-parameter `if` ladders.
 
-- `_horseshoe_mu(param_specs, param_key, tau0, slab_df, slab_scale)`: Upgrades
-  gene-level hierarchical mu/r to horseshoe. Replaces `log_mu_scale`
-  (SoftplusNormalSpec) with horseshoe trio, and `HierarchicalPositiveNormalSpec`
-  with `HorseshoeHierarchicalPositiveNormalSpec`. Dispatched when
-  `model_config.expression_prior == HORSESHOE`.
+- **`_gaussianize(param_specs, desc, *, guide_families, mode=None, ...)`** —
+  builds the Gaussian hierarchy triplet `[hyper_loc, hyper_scale, hier_spec]`.
+  Replaces the former `_hierarchicalize_{mu,p}` (gene), `_datasetify_{mu,p,gate}`
+  (dataset) and `_datasetify_regime`. The only conditional is regime's
+  `inherit_pop_loc_from_flat` (its `hyper_loc` inherits the flat regime prior).
+- **`_horseshoe_ncp(param_specs, desc, tau0, slab_df, slab_scale)`** — upgrades a
+  Gaussian hierarchy to a regularized horseshoe (replaces `desc.scale` with the
+  τ/λ/c² trio and `desc.hier_cls` with `desc.hs_cls`). Replaces the former
+  `_horseshoe_{mu,p,gate}` (gene), `_horseshoe_dataset_{mu,p,gate}` and
+  `_horseshoe_dataset_regime`. Helper `_make_horseshoe_hypers` creates the
+  HalfCauchy/InverseGamma specs; `_horseshoe_kwargs_from_config` reads the
+  hyperparameters from `ModelConfig`.
+- **`_neg_ncp(param_specs, desc, u, a, tau)`** — NEG counterpart of
+  `_horseshoe_ncp` (ζ/ψ Gamma-Gamma pair via `_make_neg_hypers`,
+  `desc.neg_cls`). Replaces the former `_neg_{mu,p,gate}` (gene),
+  `_neg_dataset_{mu,p,gate}` and `_neg_dataset_regime`.
 
-**NEG:** Gene-level: `_neg_p`, `_neg_gate`, `_neg_mu`. Dataset-level:
-`_neg_dataset_mu`, `_neg_dataset_p`, `_neg_dataset_gate`. Helper
-`_make_neg_hypers` creates GammaSpec pair (zeta, psi); `_neg_kwargs_from_config`
-extracts NEG config from ModelConfig.
-
-- `_neg_mu(param_specs, param_key, u, a, tau)`: Upgrades gene-level
-  hierarchical mu/r to NEG. Replaces `log_mu_scale` with zeta/psi pair, and
-  `HierarchicalPositiveNormalSpec` with `NEGHierarchicalPositiveNormalSpec`.
-  Dispatched when `model_config.expression_prior == NEG`.
-
-Both `_horseshoe_mu` and `_neg_mu` are applied only when
-`model_config.expression_prior != _NONE` (i.e., when gene-level hierarchical mu
-is enabled).
+Descriptors are produced by `gene_hier_param(role, param_key)`,
+`dataset_hier_param(role, param_key)`, and
+`regime_dataset_hier_param(parameterization, target_override)`. The NCP cores
+thread `is_dataset=spec.is_dataset` uniformly, so one implementation serves both
+the gene-level (`Hierarchical*` specs) and dataset-level (`DatasetHierarchical*`
+specs) families. The horseshoe/NEG upgrades run only when the corresponding
+`*_prior == HORSESHOE`/`NEG`.
 
 ## Multi-Dataset Mixture Hierarchy
 
 When combining mixture models with dataset-level hierarchy (`hierarchical_dataset_mu`
-or `hierarchical_dataset_p`), `_datasetify_mu()` and `_datasetify_p()` propagate
-`is_mixture=True` to `hyper_loc` specs when the original parameter is
-mixture-aware. Each component then gets its own population expression profile
-(shape `(K, G)` instead of `(G,)`). Both functions accept a `shared_component_indices`
-parameter, passed through to hierarchical specs for scale masking (components
-shared across 2+ datasets use learned cross-dataset scale; others use clamped
-near-zero scale). The factory reads `model_config.shared_component_indices`,
-populated at runtime by `fit()` when `annotation_key` and `dataset_key` are both
-provided, and threads this through to the datasetify helpers.
+or `hierarchical_dataset_p`), `_gaussianize()` (driven by
+`dataset_hier_param("expression"|"prob", ...)`) propagates `is_mixture=True` to
+`hyper_loc` specs when the original parameter is mixture-aware (the descriptor's
+`pop_loc_inherits_mixture`). Each component then gets its own population
+expression profile (shape `(K, G)` instead of `(G,)`). The core accepts a
+`shared_component_indices` parameter, threaded into hierarchical specs for scale
+masking when `desc.threads_shared_components` (components shared across 2+
+datasets use learned cross-dataset scale; others use clamped near-zero scale).
+The factory reads `model_config.shared_component_indices`, populated at runtime
+by `fit()` when `annotation_key` and `dataset_key` are both provided.
 
 ### Dataset-Level Gate (`zero_inflation_dataset_prior`)
 
-Unlike mu/p, `_datasetify_gate()` produces **independent** per-dataset gates
+Unlike mu/p, the gate dataset hierarchy (`_gaussianize` with
+`dataset_hier_param("gate", ...)`) produces **independent** per-dataset gates
 pushed toward zero, not a pooling hierarchy. The population location
 `logit_gate_dataset_loc` is a **scalar** `N(-5, 0.01)` shared across all genes,
 datasets, and components. The very tight variance (0.01) anchors logit(gate)

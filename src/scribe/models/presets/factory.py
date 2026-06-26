@@ -42,30 +42,23 @@ import numpyro
 from flax import linen as nn
 
 from ..builders import GuideBuilder, ModelBuilder
+from ..builders.hier_descriptors import (
+    dataset_hier_param,
+    gene_hier_param,
+    regime_dataset_hier_param,
+)
 from ..builders.parameter_specs import (
     AnchoredNormalSpec,
-    DatasetHierarchicalPositiveNormalSpec,
-    DatasetHierarchicalSigmoidNormalSpec,
     DirichletSpec,
     LogNormalSpec,
     PositiveNormalSpec,
     GaussianLatentSpec,
     GammaSpec,
     HalfCauchySpec,
-    HierarchicalPositiveNormalSpec,
-    HierarchicalSigmoidNormalSpec,
-    HorseshoeDatasetPositiveNormalSpec,
-    HorseshoeDatasetSigmoidNormalSpec,
-    HorseshoeHierarchicalPositiveNormalSpec,
-    HorseshoeHierarchicalSigmoidNormalSpec,
     InverseGammaSpec,
     GroupingFactorSpec,
     MultiFactorPositiveNormalSpec,
     MultiFactorSigmoidNormalSpec,
-    NEGDatasetPositiveNormalSpec,
-    NEGDatasetSigmoidNormalSpec,
-    NEGHierarchicalPositiveNormalSpec,
-    NEGHierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
     SoftplusNormalSpec,
 )
@@ -1055,7 +1048,7 @@ def create_model(
 
     # Guard: mean_disp has no scalar success-probability site (p and phi are
     # derived deterministics from the gene-specific mu, r). Running any
-    # p-hierarchy helper (_hierarchicalize_p / _datasetify_p / horseshoe / NEG)
+    # p-hierarchy pass (gene/dataset _gaussianize / _horseshoe_ncp / _neg_ncp)
     # would emit orphan logit_p_* hyperpriors with no consuming spec and a
     # guide/model mismatch. Reject both the gene-level and dataset-level p
     # priors up front, before any of those helpers execute. Use
@@ -1073,15 +1066,21 @@ def create_model(
         )
 
     if model_config.prob_prior != _NONE:
-        # Target is "phi" for mean_odds, "p" otherwise (matches the
-        # target_name resolution inside _hierarchicalize_p).
+        # Target is "phi" for mean_odds, "p" otherwise.
         _p_target = "phi" if param_key == "mean_odds" else "p"
-        param_specs = _hierarchicalize_p(
-            param_specs=param_specs,
-            param_key=param_key,
+        # The gene-level p hierarchy derives its mixture flag from
+        # n_components/mixture_params (not the flat spec being replaced).
+        _p_is_mixture = False
+        if model_config.n_components is not None:
+            _p_is_mixture = (
+                effective_mixture_params is None
+                or _p_target in effective_mixture_params
+            )
+        param_specs = _gaussianize(
+            param_specs,
+            gene_hier_param("prob", param_key),
             guide_families=guide_families,
-            n_components=model_config.n_components,
-            mixture_params=effective_mixture_params,
+            is_target_mixture=_p_is_mixture,
             positive_transform=_pos_transform_for_name(_p_target),
         )
 
@@ -1091,12 +1090,10 @@ def create_model(
     if model_config.expression_prior != _NONE:
         # Target is "mu" for mean_prob/mean_odds/mean_disp, "r" otherwise.
         _mu_target = "mu" if _expression_target_is_mu(param_key) else "r"
-        param_specs = _hierarchicalize_mu(
-            param_specs=param_specs,
-            param_key=param_key,
+        param_specs = _gaussianize(
+            param_specs,
+            gene_hier_param("expression", param_key),
             guide_families=guide_families,
-            n_components=model_config.n_components,
-            mixture_params=effective_mixture_params,
             positive_transform=_pos_transform_for_name(_mu_target),
         )
 
@@ -1153,11 +1150,10 @@ def create_model(
                     ),
                 )
             else:
-                param_specs = _datasetify_mu(
-                    param_specs=param_specs,
-                    param_key=param_key,
+                param_specs = _gaussianize(
+                    param_specs,
+                    dataset_hier_param("expression", param_key),
                     guide_families=guide_families,
-                    n_datasets=n_ds,
                     shared_component_indices=_sci,
                     positive_transform=_pos_transform_for_name(_mu_target),
                 )
@@ -1167,11 +1163,10 @@ def create_model(
             dataset_p_mode = model_config.hierarchical_dataset_p
             if dataset_p_mode in ("scalar", "gene_specific"):
                 _p_target = "phi" if param_key == "mean_odds" else "p"
-                param_specs = _datasetify_p(
-                    param_specs=param_specs,
-                    param_key=param_key,
+                param_specs = _gaussianize(
+                    param_specs,
+                    dataset_hier_param("prob", param_key),
                     guide_families=guide_families,
-                    n_datasets=n_ds,
                     mode=dataset_p_mode,
                     shared_component_indices=_sci,
                     positive_transform=_pos_transform_for_name(_p_target),
@@ -1235,10 +1230,10 @@ def create_model(
         model_config.n_datasets is not None
         and model_config.zero_inflation_dataset_prior != _NONE
     ):
-        param_specs = _datasetify_gate(
-            param_specs=param_specs,
+        param_specs = _gaussianize(
+            param_specs,
+            dataset_hier_param("gate", param_key),
             guide_families=guide_families,
-            n_datasets=model_config.n_datasets,
         )
 
     # ==========================================================================
@@ -1255,21 +1250,24 @@ def create_model(
         # Link the regime coordinate across datasets: it is the weakly
         # identified "NB ↔ bursty" axis and benefits from partial pooling.
         if model_config.regime_dataset_prior != _NONE:
-            param_specs = _datasetify_regime(
-                param_specs=param_specs,
-                parameterization=model_config.parameterization,
-                guide_families=guide_families,
-                n_datasets=model_config.n_datasets,
-                shared_component_indices=getattr(
-                    model_config, "shared_component_indices", None
-                ),
-                positive_transform=(
-                    _pos_transform_for_name(_regime_coord)
-                    if _regime_coord is not None
-                    else None
-                ),
+            _regime_desc = regime_dataset_hier_param(
+                model_config.parameterization,
                 target_override=model_config.regime_dataset_target,
             )
+            if _regime_desc is not None:
+                param_specs = _gaussianize(
+                    param_specs,
+                    _regime_desc,
+                    guide_families=guide_families,
+                    shared_component_indices=getattr(
+                        model_config, "shared_component_indices", None
+                    ),
+                    positive_transform=(
+                        _pos_transform_for_name(_regime_coord)
+                        if _regime_coord is not None
+                        else None
+                    ),
+                )
         # Give the overdispersion coordinate an independent, free value per
         # dataset (well identified by each dataset's variance; no shrinkage).
         if model_config.overdispersion_dataset_independent:
@@ -1286,34 +1284,52 @@ def create_model(
     horseshoe_kwargs = _horseshoe_kwargs_from_config(model_config)
 
     if model_config.expression_prior == _HS:
-        param_specs = _horseshoe_mu(param_specs, param_key, **horseshoe_kwargs)
+        param_specs = _horseshoe_ncp(
+            param_specs,
+            gene_hier_param("expression", param_key),
+            **horseshoe_kwargs,
+        )
 
     if model_config.prob_prior == _HS:
-        param_specs = _horseshoe_p(param_specs, param_key, **horseshoe_kwargs)
+        param_specs = _horseshoe_ncp(
+            param_specs, gene_hier_param("prob", param_key), **horseshoe_kwargs
+        )
 
     if model_config.zero_inflation_prior == _HS:
-        param_specs = _horseshoe_gate(param_specs, **horseshoe_kwargs)
+        param_specs = _horseshoe_ncp(
+            param_specs, gene_hier_param("gate", param_key), **horseshoe_kwargs
+        )
 
     if model_config.expression_dataset_prior == _HS and not _multifactor:
-        param_specs = _horseshoe_dataset_mu(
-            param_specs, param_key, **horseshoe_kwargs
+        param_specs = _horseshoe_ncp(
+            param_specs,
+            dataset_hier_param("expression", param_key),
+            **horseshoe_kwargs,
         )
 
     if model_config.prob_dataset_prior == _HS:
-        param_specs = _horseshoe_dataset_p(
-            param_specs, param_key, **horseshoe_kwargs
+        param_specs = _horseshoe_ncp(
+            param_specs,
+            dataset_hier_param("prob", param_key),
+            **horseshoe_kwargs,
         )
 
     if model_config.zero_inflation_dataset_prior == _HS:
-        param_specs = _horseshoe_dataset_gate(param_specs, **horseshoe_kwargs)
-
-    if model_config.regime_dataset_prior == _HS:
-        param_specs = _horseshoe_dataset_regime(
+        param_specs = _horseshoe_ncp(
             param_specs,
-            model_config.parameterization,
-            target_override=model_config.regime_dataset_target,
+            dataset_hier_param("gate", param_key),
             **horseshoe_kwargs,
         )
+
+    if model_config.regime_dataset_prior == _HS:
+        _regime_desc = regime_dataset_hier_param(
+            model_config.parameterization,
+            target_override=model_config.regime_dataset_target,
+        )
+        if _regime_desc is not None:
+            param_specs = _horseshoe_ncp(
+                param_specs, _regime_desc, **horseshoe_kwargs
+            )
 
     # ==========================================================================
     # Step 5.8: Apply NEG priors (upgrade normal hierarchies in-place)
@@ -1322,30 +1338,46 @@ def create_model(
     neg_kwargs = _neg_kwargs_from_config(model_config)
 
     if model_config.expression_prior == _NEG:
-        param_specs = _neg_mu(param_specs, param_key, **neg_kwargs)
+        param_specs = _neg_ncp(
+            param_specs, gene_hier_param("expression", param_key), **neg_kwargs
+        )
 
     if model_config.prob_prior == _NEG:
-        param_specs = _neg_p(param_specs, param_key, **neg_kwargs)
+        param_specs = _neg_ncp(
+            param_specs, gene_hier_param("prob", param_key), **neg_kwargs
+        )
 
     if model_config.zero_inflation_prior == _NEG:
-        param_specs = _neg_gate(param_specs, **neg_kwargs)
+        param_specs = _neg_ncp(
+            param_specs, gene_hier_param("gate", param_key), **neg_kwargs
+        )
 
     if model_config.expression_dataset_prior == _NEG and not _multifactor:
-        param_specs = _neg_dataset_mu(param_specs, param_key, **neg_kwargs)
-
-    if model_config.prob_dataset_prior == _NEG:
-        param_specs = _neg_dataset_p(param_specs, param_key, **neg_kwargs)
-
-    if model_config.zero_inflation_dataset_prior == _NEG:
-        param_specs = _neg_dataset_gate(param_specs, **neg_kwargs)
-
-    if model_config.regime_dataset_prior == _NEG:
-        param_specs = _neg_dataset_regime(
+        param_specs = _neg_ncp(
             param_specs,
-            model_config.parameterization,
-            target_override=model_config.regime_dataset_target,
+            dataset_hier_param("expression", param_key),
             **neg_kwargs,
         )
+
+    if model_config.prob_dataset_prior == _NEG:
+        param_specs = _neg_ncp(
+            param_specs, dataset_hier_param("prob", param_key), **neg_kwargs
+        )
+
+    if model_config.zero_inflation_dataset_prior == _NEG:
+        param_specs = _neg_ncp(
+            param_specs, dataset_hier_param("gate", param_key), **neg_kwargs
+        )
+
+    if model_config.regime_dataset_prior == _NEG:
+        _regime_desc = regime_dataset_hier_param(
+            model_config.parameterization,
+            target_override=model_config.regime_dataset_target,
+        )
+        if _regime_desc is not None:
+            param_specs = _neg_ncp(
+                param_specs, _regime_desc, **neg_kwargs
+            )
 
     # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
@@ -1686,189 +1718,120 @@ def _expression_target_is_mu(param_key: str) -> bool:
 # ------------------------------------------------------------------------------
 
 
-def _hierarchicalize_p(
+def _gaussianize(
     param_specs: List,
-    param_key: str,
+    desc,
+    *,
     guide_families,
-    n_components: Optional[int] = None,
-    mixture_params: Optional[List[str]] = None,
+    mode: Optional[str] = None,
+    is_target_mixture: Optional[bool] = None,
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
     positive_transform=None,
 ) -> List:
-    """Replace the flat p or phi spec with a hierarchical triplet.
+    """Replace a flat target spec with its Gaussian hierarchy triplet (Core B).
 
-    Given a list of parameter specs, this function finds the p (or phi) spec
-    and replaces it with three specs: hyperprior loc, hyperprior scale, and
-    a hierarchical gene-specific spec. The p/phi hyper names depend on the
-    parameterization.
+    Generalizes the former gaussian builders ``_hierarchicalize_{mu,p}`` (gene),
+    ``_datasetify_{mu,p,gate}`` (dataset) and ``_datasetify_regime``: each found
+    the flat target spec and replaced it with ``[hyper_loc, hyper_scale,
+    hier_spec]``. The site names, spec class, and the population-loc / scale
+    geometry are all carried by the :class:`HierParam` ``desc``; the only
+    remaining conditional is regime's ``inherit_pop_loc_from_flat``.
 
     Parameters
     ----------
     param_specs : List[ParamSpec]
-        Current list of parameter specs (from parameterization strategy).
-    param_key : str
-        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
+        Specs containing the flat target spec to hierarchicalize.
+    desc : HierParam
+        Resolved descriptor (see :func:`gene_hier_param` /
+        :func:`dataset_hier_param` / :func:`regime_dataset_hier_param`).
     guide_families : GuideFamilyConfig
         Per-parameter guide family configuration.
-    n_components : int, optional
-        Number of mixture components.
-    mixture_params : List[str], optional
-        Parameters marked as mixture-specific.
+    mode : str, optional
+        Dataset ``p`` only: ``"scalar"`` (one p per dataset) vs
+        ``"gene_specific"`` (per (dataset, gene)). Flips both the pop-loc and the
+        hierarchy spec between scalar ``()`` and per-gene ``("n_genes",)``.
+    is_target_mixture : bool, optional
+        Gene-level only: the mixture flag for the hierarchy spec, derived by the
+        caller from ``n_components`` / ``mixture_params`` (the dataset builders
+        instead inherit it from the flat spec being replaced).
+    shared_component_indices : tuple of int, optional
+        Component indices shared across 2+ datasets; threaded into the hierarchy
+        spec when ``desc.threads_shared_components``.
+    positive_transform : Transform, optional
+        Positive transform applied to positive (non-sigmoid) targets.
 
     Returns
     -------
     List[ParamSpec]
-        Updated parameter specs with the flat p/phi replaced by the
-        hierarchical triplet.
+        Updated specs with the flat target replaced by its Gaussian triplet.
     """
-    # Determine target parameter and hyperparameter names
-    if param_key == "mean_odds":
-        target_name = "phi"
-        hyper_loc_name = "log_phi_loc"
-        hyper_scale_name = "log_phi_scale"
-        HierSpec = HierarchicalPositiveNormalSpec
-    else:
-        target_name = "p"
-        hyper_loc_name = "logit_p_loc"
-        hyper_scale_name = "logit_p_scale"
-        HierSpec = HierarchicalSigmoidNormalSpec
+    target_family = guide_families.get(desc.target)
 
-    # Get guide family for the target parameter
-    target_family = guide_families.get(target_name)
+    pop_loc_gene = desc.pop_loc_gene
+    hier_gene = desc.hier_gene
+    if mode is not None:  # dataset p: scalar vs gene_specific flips both
+        pop_loc_gene = hier_gene = mode == "gene_specific"
 
-    # Determine mixture flag for the target parameter
-    is_target_mixture = False
-    if n_components is not None:
-        if mixture_params is None:
-            is_target_mixture = True
-        else:
-            is_target_mixture = target_name in mixture_params
-
-    # Build the hierarchical triplet
-    hyper_loc = NormalWithTransformSpec(
-        name=hyper_loc_name,
-        shape_dims=(),
-        default_params=(0.0, 1.0),
-    )
-    hyper_scale = SoftplusNormalSpec(
-        name=hyper_scale_name,
-        shape_dims=(),
-        default_params=(0.0, 0.5),
-    )
-    # Only pass transform for positive (Exp/Softplus) specs, not Sigmoid
-    extra_kwargs = {}
-    if (
-        positive_transform is not None
-        and HierSpec is HierarchicalPositiveNormalSpec
-    ):
-        extra_kwargs["transform"] = positive_transform
-    hier_spec = HierSpec(
-        name=target_name,
-        shape_dims=("n_genes",),
-        default_params=(0.0, 1.0),
-        hyper_loc_name=hyper_loc_name,
-        hyper_scale_name=hyper_scale_name,
-        is_gene_specific=True,
-        guide_family=target_family,
-        is_mixture=is_target_mixture,
-        **extra_kwargs,
-    )
-
-    # Replace the flat spec with the hierarchical triplet
     new_specs = []
     for spec in param_specs:
-        if spec.name == target_name:
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
-        else:
+        if spec.name != desc.target:
             new_specs.append(spec)
-    return new_specs
+            continue
 
+        orig_is_mixture = getattr(spec, "is_mixture", False)
+        # Gene-level builders compute the hierarchy mixture flag from
+        # n_components/mixture_params; dataset builders inherit it from the flat
+        # spec. ``is_target_mixture`` is supplied only in the gene-level case.
+        hier_is_mixture = (
+            is_target_mixture
+            if is_target_mixture is not None
+            else orig_is_mixture
+        )
 
-# ------------------------------------------------------------------------------
-
-
-def _hierarchicalize_mu(
-    param_specs: List,
-    param_key: str,
-    guide_families,
-    n_components: Optional[int] = None,
-    mixture_params: Optional[List[str]] = None,
-    positive_transform=None,
-) -> List:
-    """Replace the flat mu (or r) spec with a hierarchical triplet.
-
-    Adds population-level hyperparameters (per-gene loc and scalar scale)
-    and replaces the flat mu/r spec with a ``HierarchicalPositiveNormalSpec``
-    that draws per-component, per-gene values from the population prior.
-    This provides shrinkage across mixture components: most genes share
-    similar means across cell types, with only some deviating.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Current list of parameter specs (from parameterization strategy).
-    param_key : str
-        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
-    guide_families : GuideFamilyConfig
-        Per-parameter guide family configuration.
-    n_components : int, optional
-        Number of mixture components.
-    mixture_params : List[str], optional
-        Parameters marked as mixture-specific.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated parameter specs with the flat mu/r replaced by a
-        hierarchical triplet (hyper_loc, hyper_scale, hier_mu).
-    """
-    # Determine target parameter and hyperparameter names
-    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
-        target_name = "mu"
-        hyper_loc_name = "log_mu_loc"
-        hyper_scale_name = "log_mu_scale"
-    else:
-        target_name = "r"
-        hyper_loc_name = "log_r_loc"
-        hyper_scale_name = "log_r_scale"
-
-    target_family = guide_families.get(target_name)
-
-    # Population-level hyperparameters: per-gene location, scalar scale
-    hyper_loc = NormalWithTransformSpec(
-        name=hyper_loc_name,
-        shape_dims=("n_genes",),
-        default_params=(0.0, 1.0),
-        is_gene_specific=True,
-    )
-    hyper_scale = SoftplusNormalSpec(
-        name=hyper_scale_name,
-        shape_dims=(),
-        default_params=(-2.0, 0.5),
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == target_name:
-            # Preserve is_mixture from the original spec
-            orig_is_mixture = getattr(spec, "is_mixture", False)
-            hier_spec = HierarchicalPositiveNormalSpec(
-                name=target_name,
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name=hyper_loc_name,
-                hyper_scale_name=hyper_scale_name,
-                is_gene_specific=True,
-                is_mixture=orig_is_mixture,
-                guide_family=target_family,
-                **(
-                    {"transform": positive_transform}
-                    if positive_transform is not None
-                    else {}
-                ),
+        if desc.inherit_pop_loc_from_flat:
+            pop_loc_params = (
+                spec.prior
+                if getattr(spec, "prior", None) is not None
+                else spec.default_params
             )
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
-            new_specs.append(spec)
+            pop_loc_params = desc.pop_loc_default
+
+        hyper_loc = NormalWithTransformSpec(
+            name=desc.loc,
+            shape_dims=("n_genes",) if pop_loc_gene else (),
+            default_params=pop_loc_params,
+            is_gene_specific=pop_loc_gene,
+            is_mixture=(
+                orig_is_mixture if desc.pop_loc_inherits_mixture else False
+            ),
+        )
+        hyper_scale = SoftplusNormalSpec(
+            name=desc.scale,
+            shape_dims=(),
+            default_params=desc.pop_scale_default,
+        )
+
+        extra_kwargs = {}
+        if positive_transform is not None and not desc.is_sigmoid:
+            extra_kwargs["transform"] = positive_transform
+        if desc.is_dataset_level:
+            extra_kwargs["is_dataset"] = True
+        if desc.threads_shared_components:
+            extra_kwargs["shared_component_indices"] = shared_component_indices
+
+        hier_spec = desc.hier_cls(
+            name=desc.target,
+            shape_dims=("n_genes",) if hier_gene else (),
+            default_params=(0.0, 1.0),
+            hyper_loc_name=desc.loc,
+            hyper_scale_name=desc.scale,
+            is_gene_specific=hier_gene,
+            is_mixture=hier_is_mixture,
+            guide_family=target_family,
+            **extra_kwargs,
+        )
+        new_specs.extend([hyper_loc, hyper_scale, hier_spec])
     return new_specs
 
 
@@ -1932,261 +1895,6 @@ def _apply_mean_anchor(
                 anchor_sigma=anchor_sigma,
             )
             new_specs.append(anchored)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Gene-level horseshoe mu
-# ------------------------------------------------------------------------------
-
-
-def _horseshoe_mu(
-    param_specs: List,
-    param_key: str,
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-) -> List:
-    """Upgrade gene-level hierarchical mu/r to horseshoe.
-
-    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-mu)
-    produced by ``_hierarchicalize_mu``, replaces hyper_scale
-    (SoftplusNormalSpec) with the horseshoe trio (tau, lambda, c_sq),
-    and replaces the ``HierarchicalPositiveNormalSpec`` with
-    ``HorseshoeHierarchicalPositiveNormalSpec``.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_hierarchicalize_mu`` has run.
-    param_key : str
-        Parameterization key.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with horseshoe mu.
-    """
-    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
-        target_name = "mu"
-        scale_name = "log_mu_scale"
-        loc_name = "log_mu_loc"
-        prefix = "mu"
-    else:
-        target_name = "r"
-        scale_name = "log_r_scale"
-        loc_name = "log_r_loc"
-        prefix = "r"
-
-    raw_name = f"{target_name}_raw"
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        prefix, tau0, slab_df, slab_scale
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == target_name and isinstance(
-            spec, HierarchicalPositiveNormalSpec
-        ):
-            horseshoe_spec = HorseshoeHierarchicalPositiveNormalSpec(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"tau_{prefix}",
-                tau_name=f"tau_{prefix}",
-                lambda_name=f"lambda_{prefix}",
-                c_sq_name=f"c_sq_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Gene-level NEG mu
-# ------------------------------------------------------------------------------
-
-
-def _neg_mu(
-    param_specs: List,
-    param_key: str,
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-) -> List:
-    """Upgrade gene-level hierarchical mu/r to NEG.
-
-    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-mu)
-    produced by ``_hierarchicalize_mu``, replaces hyper_scale
-    (SoftplusNormalSpec) with the NEG pair (zeta, psi), and replaces the
-    ``HierarchicalPositiveNormalSpec`` with ``NEGHierarchicalPositiveNormalSpec``.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_hierarchicalize_mu`` has run.
-    param_key : str
-        Parameterization key.
-    u, a, tau : float
-        NEG hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with NEG mu.
-    """
-    if param_key in ("mean_odds", "mean_prob", "mean_disp"):
-        target_name = "mu"
-        scale_name = "log_mu_scale"
-        loc_name = "log_mu_loc"
-        prefix = "mu"
-    else:
-        target_name = "r"
-        scale_name = "log_r_scale"
-        loc_name = "log_r_loc"
-        prefix = "r"
-
-    raw_name = f"{target_name}_raw"
-    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == target_name and isinstance(
-            spec, HierarchicalPositiveNormalSpec
-        ):
-            neg_spec = NEGHierarchicalPositiveNormalSpec(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"psi_{prefix}",
-                psi_name=f"psi_{prefix}",
-                zeta_name=f"zeta_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(neg_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-
-
-def _datasetify_mu(
-    param_specs: List,
-    param_key: str,
-    guide_families,
-    n_datasets: int,
-    shared_component_indices: Optional[Tuple[int, ...]] = None,
-    positive_transform=None,
-) -> List:
-    """Replace mu (or r) with a dataset-hierarchical triplet.
-
-    Adds population-level hyperparameters (loc, scale) and replaces the flat
-    mu/r spec with a ``DatasetHierarchicalPositiveNormalSpec`` that produces
-    per-dataset gene-specific values.
-
-    When the original parameter is mixture-aware (``is_mixture=True``),
-    the population hyperprior ``hyper_loc`` is also made per-component so
-    that each cell type gets its own population expression profile.  The
-    ``shared_component_indices`` mask tells ``sample_hierarchical()``
-    which components should use the learned cross-dataset scale vs a
-    clamped near-zero scale.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Current list of parameter specs.
-    param_key : str
-        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
-    guide_families : GuideFamilyConfig
-        Per-parameter guide family configuration.
-    n_datasets : int
-        Number of datasets.
-    shared_component_indices : tuple of int, optional
-        Component indices shared across 2+ datasets.  Passed through to
-        the hierarchical spec for scale masking.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated parameter specs with the flat mu/r replaced by a
-        dataset-hierarchical triplet.
-    """
-    # The expression target is ``mu`` for the mean parameterizations AND for
-    # every two-state parameterization; it is ``r`` for canonical NB.
-    if _expression_target_is_mu(param_key):
-        target_name = "mu"
-        hyper_loc_name = "log_mu_dataset_loc"
-        hyper_scale_name = "log_mu_dataset_scale"
-    else:
-        target_name = "r"
-        hyper_loc_name = "log_r_dataset_loc"
-        hyper_scale_name = "log_r_dataset_scale"
-
-    target_family = guide_families.get(target_name)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == target_name:
-            # Preserve is_mixture from the original spec so the dataset-
-            # hierarchical parameter keeps its component dimension.
-            orig_is_mixture = getattr(spec, "is_mixture", False)
-
-            # Per-component hyperprior: when the parameter is mixture-
-            # aware, each component gets its own population profile.
-            hyper_loc = NormalWithTransformSpec(
-                name=hyper_loc_name,
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                is_mixture=orig_is_mixture,
-            )
-            # Shared scalar shrinkage across all components
-            hyper_scale = SoftplusNormalSpec(
-                name=hyper_scale_name,
-                shape_dims=(),
-                default_params=(-2.0, 0.5),
-            )
-
-            hier_spec = DatasetHierarchicalPositiveNormalSpec(
-                name=target_name,
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name=hyper_loc_name,
-                hyper_scale_name=hyper_scale_name,
-                is_gene_specific=True,
-                is_dataset=True,
-                is_mixture=orig_is_mixture,
-                guide_family=target_family,
-                shared_component_indices=shared_component_indices,
-                **(
-                    {"transform": positive_transform}
-                    if positive_transform is not None
-                    else {}
-                ),
-            )
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
             new_specs.append(spec)
     return new_specs
@@ -2433,347 +2141,6 @@ def _validate_dispersion_hierarchy(param_key: str, grouping_spec) -> None:
 # ------------------------------------------------------------------------------
 
 
-def _datasetify_p(
-    param_specs: List,
-    param_key: str,
-    guide_families,
-    n_datasets: int,
-    mode: str = "scalar",
-    shared_component_indices: Optional[Tuple[int, ...]] = None,
-    positive_transform=None,
-) -> List:
-    """Replace p/phi with a dataset-specific version.
-
-    For mode="scalar": one p per dataset (shared across genes), with a
-    population-level hierarchical prior.
-
-    For mode="gene_specific": single-level hierarchy where each (dataset,
-    gene) pair draws from a shared population distribution.
-
-    When the original parameter is mixture-aware, per-component
-    hyperpriors are created (see ``_datasetify_mu`` for rationale).
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Current list of parameter specs.
-    param_key : str
-        Parameterization registry key.
-    guide_families : GuideFamilyConfig
-        Per-parameter guide family configuration.
-    n_datasets : int
-        Number of datasets.
-    mode : str
-        "scalar" or "gene_specific".
-    shared_component_indices : tuple of int, optional
-        Component indices shared across 2+ datasets.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated parameter specs.
-    """
-    if param_key == "mean_odds":
-        target_name = "phi"
-        hyper_loc_name = "log_phi_dataset_loc"
-        hyper_scale_name = "log_phi_dataset_scale"
-        HierSpec = DatasetHierarchicalPositiveNormalSpec
-    else:
-        target_name = "p"
-        hyper_loc_name = "logit_p_dataset_loc"
-        hyper_scale_name = "logit_p_dataset_scale"
-        HierSpec = DatasetHierarchicalSigmoidNormalSpec
-
-    target_family = guide_families.get(target_name)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == target_name:
-            # Preserve is_mixture from the original spec so the dataset-
-            # hierarchical parameter keeps its component dimension.
-            orig_is_mixture = getattr(spec, "is_mixture", False)
-
-            # Per-component hyperprior when mixture-aware: each component
-            # gets its own population-level loc.  For scalar mode the
-            # hyper_loc shape_dims stays () (per-component but not per-gene);
-            # for gene_specific mode it becomes ("n_genes",).
-            hyper_loc_dims: Tuple[str, ...] = ()
-            hyper_loc_gene_specific = False
-            if mode == "gene_specific":
-                hyper_loc_dims = ("n_genes",)
-                hyper_loc_gene_specific = True
-
-            hyper_loc = NormalWithTransformSpec(
-                name=hyper_loc_name,
-                shape_dims=hyper_loc_dims,
-                default_params=(0.0, 1.0),
-                is_gene_specific=hyper_loc_gene_specific,
-                is_mixture=orig_is_mixture,
-            )
-            hyper_scale = SoftplusNormalSpec(
-                name=hyper_scale_name,
-                shape_dims=(),
-                default_params=(0.0, 0.5),
-            )
-
-            extra_kwargs = {}
-            if (
-                positive_transform is not None
-                and HierSpec is DatasetHierarchicalPositiveNormalSpec
-            ):
-                extra_kwargs["transform"] = positive_transform
-
-            if mode == "scalar":
-                hier_spec = HierSpec(
-                    name=target_name,
-                    shape_dims=(),
-                    default_params=(0.0, 1.0),
-                    hyper_loc_name=hyper_loc_name,
-                    hyper_scale_name=hyper_scale_name,
-                    is_gene_specific=False,
-                    is_dataset=True,
-                    is_mixture=orig_is_mixture,
-                    guide_family=target_family,
-                    shared_component_indices=shared_component_indices,
-                    **extra_kwargs,
-                )
-            else:
-                hier_spec = HierSpec(
-                    name=target_name,
-                    shape_dims=("n_genes",),
-                    default_params=(0.0, 1.0),
-                    hyper_loc_name=hyper_loc_name,
-                    hyper_scale_name=hyper_scale_name,
-                    is_gene_specific=True,
-                    is_dataset=True,
-                    is_mixture=orig_is_mixture,
-                    guide_family=target_family,
-                    shared_component_indices=shared_component_indices,
-                    **extra_kwargs,
-                )
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-
-
-def _datasetify_gate(
-    param_specs: List,
-    guide_families,
-    n_datasets: int,
-) -> List:
-    """Replace gate with per-dataset independent gates shrunk toward zero.
-
-    Each (dataset, gene) pair—and each (component, dataset, gene) triple
-    when the gate is mixture-aware—gets its own gate independently pushed
-    toward zero.  The structure mirrors the gene-level gate hierarchy but
-    with an extra dataset dimension on the NCP ``z`` variable:
-
-    * **Scalar loc** ``N(-5, 1)``—shared across genes, datasets, and
-      components.  A single scalar is robust against being overwhelmed
-      by the likelihood (unlike a per-gene loc).
-    * **Per-gene NEG/horseshoe psi** provides adaptive per-gene shrinkage.
-    * **Per-dataset z** gives each dataset its own independent gate draw.
-
-    Unlike ``_datasetify_mu`` / ``_datasetify_p``, this function does
-    **not** create a hierarchical structure that pools gates across
-    datasets.  The NEG/horseshoe controls how far each gene's gate can
-    deviate from the scalar center, not the cross-dataset spread.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Current list of parameter specs (must already contain a gate spec,
-        i.e. this should be called after Step 5 adds extra params).
-    guide_families : GuideFamilyConfig
-        Per-parameter guide family configuration.
-    n_datasets : int
-        Number of datasets.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated parameter specs with the gate replaced by a
-        dataset-level triplet (scalar loc, scalar scale, per-dataset gate).
-    """
-    hyper_loc_name = "logit_gate_dataset_loc"
-    hyper_scale_name = "logit_gate_dataset_scale"
-
-    gate_family = guide_families.get("gate")
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == "gate":
-            # Preserve is_mixture from the original spec so the dataset-
-            # hierarchical parameter keeps its component dimension.
-            orig_is_mixture = getattr(spec, "is_mixture", False)
-
-            # Population-level location is a scalar shared across all
-            # genes, datasets, and components.  A very tight prior
-            # N(-5, 0.01) anchors logit(gate) deep in the off region
-            # so the likelihood cannot drag it positive.  Per-gene
-            # adaptive shrinkage is handled by the NEG/horseshoe psi,
-            # and per-dataset independence comes from the NCP z variable.
-            hyper_loc = NormalWithTransformSpec(
-                name=hyper_loc_name,
-                shape_dims=(),
-                default_params=(-5.0, 0.01),
-                is_gene_specific=False,
-                is_mixture=False,
-            )
-            hyper_scale = SoftplusNormalSpec(
-                name=hyper_scale_name,
-                shape_dims=(),
-                default_params=(-2.0, 0.5),
-            )
-
-            hier_spec = DatasetHierarchicalSigmoidNormalSpec(
-                name="gate",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name=hyper_loc_name,
-                hyper_scale_name=hyper_scale_name,
-                is_gene_specific=True,
-                is_dataset=True,
-                is_mixture=orig_is_mixture,
-                guide_family=gate_family,
-            )
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Two-state dataset-level regime + overdispersion passes
-# ------------------------------------------------------------------------------
-
-
-def _datasetify_regime(
-    param_specs: List,
-    parameterization: "ParamEnum",
-    guide_families,
-    n_datasets: int,
-    shared_component_indices: Optional[Tuple[int, ...]] = None,
-    positive_transform=None,
-    target_override: Optional[str] = None,
-) -> List:
-    """Replace the two-state regime coordinate with a dataset-hierarchical triplet.
-
-    The regime coordinate (k_off / switching_ratio / concentration /
-    inv_concentration, depending on the parameterization) is the weakly
-    identified "NB ↔ bursty" axis.  Pooling it across datasets both
-    regularizes it and encodes the prior that the bursting regime is shared
-    between conditions unless the data disagree.
-
-    The spec class is chosen by the coordinate's support: ``inv_concentration``
-    lives on (0, 1) and uses :class:`DatasetHierarchicalSigmoidNormalSpec`
-    (logit hyperprior names); the others live on (0, ∞) and use
-    :class:`DatasetHierarchicalPositiveNormalSpec` (log hyperprior names).
-    The population-level location (``hyper_loc``) inherits the flat regime
-    spec's prior so the per-parameterization "default to NB" tilt is preserved
-    at the population level.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Current specs (must already contain the regime coordinate spec, i.e.
-        this runs after Step 5 builds the two-state extras).
-    parameterization : ParamEnum
-        Active parameterization; selects the regime coordinate via
-        ``TWOSTATE_REGIME_COORD``.
-    guide_families : GuideFamilyConfig
-        Per-parameter guide family configuration.
-    n_datasets : int
-        Number of datasets.
-    shared_component_indices : tuple of int, optional
-        Component indices shared across 2+ datasets (mixture models).
-    positive_transform : Transform, optional
-        Positive transform applied when the regime coordinate lives on
-        (0, ∞).  Ignored for the sigmoid (inv_concentration) coordinate.
-    target_override : str, optional
-        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with the regime coordinate replaced by a
-        dataset-hierarchical triplet.  Returned unchanged when the
-        parameterization has no regime coordinate (non-two-state).
-    """
-    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
-    if coord is None:
-        return param_specs
-
-    # Select hyperprior names + spec class by the coordinate's support.
-    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
-    if is_sigmoid:
-        hyper_loc_name = f"logit_{coord}_dataset_loc"
-        hyper_scale_name = f"logit_{coord}_dataset_scale"
-        HierSpec = DatasetHierarchicalSigmoidNormalSpec
-    else:
-        hyper_loc_name = f"log_{coord}_dataset_loc"
-        hyper_scale_name = f"log_{coord}_dataset_scale"
-        HierSpec = DatasetHierarchicalPositiveNormalSpec
-
-    target_family = guide_families.get(coord)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == coord:
-            orig_is_mixture = getattr(spec, "is_mixture", False)
-            # Preserve the flat regime prior at the population level so the
-            # per-parameterization NB tilt (e.g. logit δ ~ N(-4, 2),
-            # log k_off ~ N(3, 2)) carries through to μ-of-the-regime.
-            orig_params = (
-                spec.prior
-                if getattr(spec, "prior", None) is not None
-                else spec.default_params
-            )
-
-            hyper_loc = NormalWithTransformSpec(
-                name=hyper_loc_name,
-                shape_dims=("n_genes",),
-                default_params=orig_params,
-                is_gene_specific=True,
-                is_mixture=orig_is_mixture,
-            )
-            # Shared scalar cross-dataset scale (tight by default → tight
-            # linkage); upgraded to the horseshoe trio later when requested.
-            hyper_scale = SoftplusNormalSpec(
-                name=hyper_scale_name,
-                shape_dims=(),
-                default_params=(-2.0, 0.5),
-            )
-
-            # Pass the positive transform only for the (0, ∞) coordinates;
-            # the sigmoid spec already defaults to SigmoidTransform.
-            extra_kwargs = {}
-            if positive_transform is not None and not is_sigmoid:
-                extra_kwargs["transform"] = positive_transform
-
-            hier_spec = HierSpec(
-                name=coord,
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name=hyper_loc_name,
-                hyper_scale_name=hyper_scale_name,
-                is_gene_specific=True,
-                is_dataset=True,
-                is_mixture=orig_is_mixture,
-                guide_family=target_family,
-                shared_component_indices=shared_component_indices,
-                **extra_kwargs,
-            )
-            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
 def _datasetify_overdispersion_independent(
     param_specs: List,
     parameterization: "ParamEnum",
@@ -2823,164 +2190,6 @@ def _datasetify_overdispersion_independent(
             # Re-mark the flat gene-level spec as dataset-specific.  No
             # hyperprior and no shrinkage: each (dataset, gene) value is free.
             new_specs.append(spec.model_copy(update={"is_dataset": True}))
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-def _horseshoe_dataset_regime(
-    param_specs: List,
-    parameterization: "ParamEnum",
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-    target_override: Optional[str] = None,
-) -> List:
-    """Upgrade the dataset-level regime hierarchy to a regularized horseshoe.
-
-    Mirrors :func:`_horseshoe_dataset_p`: replaces the scalar cross-dataset
-    scale with the horseshoe trio (τ, λ_g, c²) and swaps the
-    ``DatasetHierarchical{Sigmoid,Positive}NormalSpec`` for its
-    ``HorseshoeDataset{Sigmoid,Positive}NormalSpec`` counterpart, selected by
-    the regime coordinate's support.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after :func:`_datasetify_regime` has run.
-    parameterization : ParamEnum
-        Active parameterization; selects the regime coordinate.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-    target_override : str, optional
-        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with a horseshoe dataset-level regime hierarchy.
-    """
-    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
-    if coord is None:
-        return param_specs
-
-    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
-    if is_sigmoid:
-        scale_name = f"logit_{coord}_dataset_scale"
-        loc_name = f"logit_{coord}_dataset_loc"
-        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
-        HorseshoeClass = HorseshoeDatasetSigmoidNormalSpec
-    else:
-        scale_name = f"log_{coord}_dataset_scale"
-        loc_name = f"log_{coord}_dataset_loc"
-        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
-        HorseshoeClass = HorseshoeDatasetPositiveNormalSpec
-
-    prefix = f"{coord}_dataset"
-    raw_name = f"{coord}_raw_dataset"
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        prefix, tau0, slab_df, slab_scale
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == coord and isinstance(spec, TargetHierClass):
-            horseshoe_spec = HorseshoeClass(
-                name=coord,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"tau_{prefix}",
-                tau_name=f"tau_{prefix}",
-                lambda_name=f"lambda_{prefix}",
-                c_sq_name=f"c_sq_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-def _neg_dataset_regime(
-    param_specs: List,
-    parameterization: "ParamEnum",
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-    target_override: Optional[str] = None,
-) -> List:
-    """Upgrade the dataset-level regime hierarchy to a NEG (TPBN) prior.
-
-    Mirrors :func:`_neg_dataset_p`: replaces the scalar cross-dataset scale
-    with the NEG Gamma-Gamma hierarchy (ζ_g, ψ_g) and swaps the dataset
-    hierarchical spec for its NEG counterpart, selected by the regime
-    coordinate's support.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after :func:`_datasetify_regime` has run.
-    parameterization : ParamEnum
-        Active parameterization; selects the regime coordinate.
-    u, a, tau : float
-        NEG hyperparameters.
-    target_override : str, optional
-        Explicit coordinate name overriding ``TWOSTATE_REGIME_COORD``.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with a NEG dataset-level regime hierarchy.
-    """
-    coord = target_override or TWOSTATE_REGIME_COORD.get(parameterization)
-    if coord is None:
-        return param_specs
-
-    is_sigmoid = coord in TWOSTATE_SIGMOID_REGIME_COORDS
-    if is_sigmoid:
-        scale_name = f"logit_{coord}_dataset_scale"
-        loc_name = f"logit_{coord}_dataset_loc"
-        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
-        NEGClass = NEGDatasetSigmoidNormalSpec
-    else:
-        scale_name = f"log_{coord}_dataset_scale"
-        loc_name = f"log_{coord}_dataset_loc"
-        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
-        NEGClass = NEGDatasetPositiveNormalSpec
-
-    prefix = f"{coord}_dataset"
-    raw_name = f"{coord}_raw_dataset"
-    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == coord and isinstance(spec, TargetHierClass):
-            neg_spec = NEGClass(
-                name=coord,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"psi_{prefix}",
-                psi_name=f"psi_{prefix}",
-                zeta_name=f"zeta_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(neg_spec)
         else:
             new_specs.append(spec)
     return new_specs
@@ -3062,349 +2271,70 @@ def _make_horseshoe_hypers(
 
 
 # ------------------------------------------------------------------------------
-# Gene-level horseshoe p
+# Horseshoe NCP upgrade (generic — Core A; gene- and dataset-level)
 # ------------------------------------------------------------------------------
 
 
-def _horseshoe_p(
+def _horseshoe_ncp(
     param_specs: List,
-    param_key: str,
+    desc,
     tau0: float = 1.0,
     slab_df: int = 4,
     slab_scale: float = 2.0,
 ) -> List:
-    """Upgrade gene-level hierarchical p/phi to horseshoe.
+    """Upgrade a Gaussian hierarchy (gene- or dataset-level) to horseshoe.
 
-    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-p) produced
-    by ``_hierarchicalize_p``, replaces hyper_scale (SoftplusNormalSpec) with
-    the horseshoe trio (tau, lambda, c_sq), and replaces the
-    ``HierarchicalSigmoidNormalSpec``/``HierarchicalPositiveNormalSpec`` with
-    the corresponding horseshoe spec.
+    Generalizes the former ``_horseshoe_{mu,p,gate}`` (gene),
+    ``_horseshoe_dataset_{mu,p,gate}`` (dataset) and ``_horseshoe_dataset_regime``
+    families: the only differences are the site/spec names and the matched
+    Positive/Sigmoid spec-class pair, all carried by the :class:`HierParam`
+    ``desc``. Replaces the hierarchy scale site (``desc.scale``) with the
+    horseshoe hyper triplet (τ, λ_g, c²) and the Gaussian hierarchy target spec
+    (``desc.hier_cls``) with the matching horseshoe spec (``desc.hs_cls``).
+
+    ``is_dataset=spec.is_dataset`` is threaded uniformly: it is ``False`` for the
+    gene-level specs (their default) and the real dataset flag for dataset-level
+    specs, so one core serves both.
 
     Parameters
     ----------
     param_specs : List[ParamSpec]
-        Specs after ``_hierarchicalize_p`` has run.
-    param_key : str
-        Parameterization key.
+        Specs after the corresponding Gaussian hierarchy pass has run.
+    desc : HierParam
+        Resolved descriptor (see :func:`gene_hier_param` /
+        :func:`dataset_hier_param` / :func:`regime_dataset_hier_param`).
     tau0, slab_df, slab_scale : float
         Horseshoe hyperparameters.
 
     Returns
     -------
     List[ParamSpec]
-        Updated specs with horseshoe p.
+        Updated specs with the horseshoe target.
     """
-    if param_key == "mean_odds":
-        target_name = "phi"
-        scale_name = "log_phi_scale"
-        loc_name = "log_phi_loc"
-        prefix = "phi"
-    else:
-        target_name = "p"
-        scale_name = "logit_p_scale"
-        loc_name = "logit_p_loc"
-        prefix = "p"
-
-    raw_name = f"{target_name}_raw"
     tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        prefix, tau0, slab_df, slab_scale
+        desc.prefix, tau0, slab_df, slab_scale
     )
 
     new_specs = []
     for spec in param_specs:
-        if spec.name == scale_name:
-            # Replace the SoftplusNormal hyper_scale with horseshoe trio
+        if spec.name == desc.scale:
             new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == target_name and isinstance(
-            spec,
-            (HierarchicalSigmoidNormalSpec, HierarchicalPositiveNormalSpec),
-        ):
-            # Select horseshoe spec matching the original transform:
-            # ExpNormal (phi, range (0,inf)) vs SigmoidNormal (p, range (0,1))
-            if isinstance(spec, HierarchicalPositiveNormalSpec):
-                HorseshoeSpec = HorseshoeHierarchicalPositiveNormalSpec
-            else:
-                HorseshoeSpec = HorseshoeHierarchicalSigmoidNormalSpec
-            horseshoe_spec = HorseshoeSpec(
-                name=target_name,
+        elif spec.name == desc.target and isinstance(spec, desc.hier_cls):
+            horseshoe_spec = desc.hs_cls(
+                name=desc.target,
                 shape_dims=spec.shape_dims,
                 default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"tau_{prefix}",
-                tau_name=f"tau_{prefix}",
-                lambda_name=f"lambda_{prefix}",
-                c_sq_name=f"c_sq_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Gene-level horseshoe gate
-# ------------------------------------------------------------------------------
-
-
-def _horseshoe_gate(
-    param_specs: List,
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-) -> List:
-    """Upgrade gene-level hierarchical gate to horseshoe.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``build_gate_spec(hierarchical=True)`` has run.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with horseshoe gate.
-    """
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        "gate", tau0, slab_df, slab_scale
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == "logit_gate_scale":
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == "gate" and isinstance(
-            spec, HierarchicalSigmoidNormalSpec
-        ):
-            horseshoe_spec = HorseshoeHierarchicalSigmoidNormalSpec(
-                name="gate",
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name="logit_gate_loc",
-                hyper_scale_name="tau_gate",
-                tau_name="tau_gate",
-                lambda_name="lambda_gate",
-                c_sq_name="c_sq_gate",
-                raw_name="gate_raw",
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level horseshoe mu
-# ------------------------------------------------------------------------------
-
-
-def _horseshoe_dataset_mu(
-    param_specs: List,
-    param_key: str,
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-) -> List:
-    """Upgrade dataset-level hierarchical mu/r to horseshoe.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_mu`` has run.
-    param_key : str
-        Parameterization key.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with horseshoe dataset mu.
-    """
-    if _expression_target_is_mu(param_key):
-        target_name = "mu"
-        scale_name = "log_mu_dataset_scale"
-        loc_name = "log_mu_dataset_loc"
-        prefix = "mu_dataset"
-    else:
-        target_name = "r"
-        scale_name = "log_r_dataset_scale"
-        loc_name = "log_r_dataset_loc"
-        prefix = "r_dataset"
-
-    raw_name = f"{target_name}_raw"
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        prefix, tau0, slab_df, slab_scale
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == target_name and isinstance(
-            spec, DatasetHierarchicalPositiveNormalSpec
-        ):
-            horseshoe_spec = HorseshoeDatasetPositiveNormalSpec(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"tau_{prefix}",
-                tau_name=f"tau_{prefix}",
-                lambda_name=f"lambda_{prefix}",
-                c_sq_name=f"c_sq_{prefix}",
-                raw_name=raw_name,
+                hyper_loc_name=desc.loc,
+                hyper_scale_name=f"tau_{desc.prefix}",
+                tau_name=f"tau_{desc.prefix}",
+                lambda_name=f"lambda_{desc.prefix}",
+                c_sq_name=f"c_sq_{desc.prefix}",
+                raw_name=desc.raw,
                 is_gene_specific=spec.is_gene_specific,
                 is_dataset=spec.is_dataset,
                 is_mixture=spec.is_mixture,
                 guide_family=getattr(spec, "guide_family", None),
                 transform=spec.transform,
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level horseshoe p
-# ------------------------------------------------------------------------------
-
-
-def _horseshoe_dataset_p(
-    param_specs: List,
-    param_key: str,
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-) -> List:
-    """Upgrade dataset-level hierarchical p/phi to horseshoe.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_p`` has run.
-    param_key : str
-        Parameterization key.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with horseshoe dataset p.
-    """
-    if param_key == "mean_odds":
-        target_name = "phi"
-        scale_name = "log_phi_dataset_scale"
-        loc_name = "log_phi_dataset_loc"
-        prefix = "phi_dataset"
-    else:
-        target_name = "p"
-        scale_name = "logit_p_dataset_scale"
-        loc_name = "logit_p_dataset_loc"
-        prefix = "p_dataset"
-
-    raw_name = f"{target_name}_raw_dataset"
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        prefix, tau0, slab_df, slab_scale
-    )
-
-    # Determine the correct horseshoe spec class based on the target transform
-    if param_key == "mean_odds":
-        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
-        HorseshoeClass = HorseshoeDatasetPositiveNormalSpec
-    else:
-        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
-        HorseshoeClass = HorseshoeDatasetSigmoidNormalSpec
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == target_name and isinstance(spec, TargetHierClass):
-            horseshoe_spec = HorseshoeClass(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"tau_{prefix}",
-                tau_name=f"tau_{prefix}",
-                lambda_name=f"lambda_{prefix}",
-                c_sq_name=f"c_sq_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(horseshoe_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level horseshoe gate
-# ------------------------------------------------------------------------------
-
-
-def _horseshoe_dataset_gate(
-    param_specs: List,
-    tau0: float = 1.0,
-    slab_df: int = 4,
-    slab_scale: float = 2.0,
-) -> List:
-    """Upgrade dataset-level hierarchical gate to horseshoe.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_gate`` has run.
-    tau0, slab_df, slab_scale : float
-        Horseshoe hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with horseshoe dataset gate.
-    """
-    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
-        "gate_dataset", tau0, slab_df, slab_scale
-    )
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == "logit_gate_dataset_scale":
-            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
-        elif spec.name == "gate" and isinstance(
-            spec, DatasetHierarchicalSigmoidNormalSpec
-        ):
-            horseshoe_spec = HorseshoeDatasetSigmoidNormalSpec(
-                name="gate",
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name="logit_gate_dataset_loc",
-                hyper_scale_name="tau_gate_dataset",
-                tau_name="tau_gate_dataset",
-                lambda_name="lambda_gate_dataset",
-                c_sq_name="c_sq_gate_dataset",
-                raw_name="gate_raw_dataset",
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
             )
             new_specs.append(horseshoe_spec)
         else:
@@ -3489,334 +2419,62 @@ def _make_neg_hypers(
 
 
 # ------------------------------------------------------------------------------
-# Gene-level NEG p
+# NEG NCP upgrade (generic — Core A; gene- and dataset-level)
 # ------------------------------------------------------------------------------
 
 
-def _neg_p(
+def _neg_ncp(
     param_specs: List,
-    param_key: str,
+    desc,
     u: float = 1.0,
     a: float = 1.0,
     tau: float = 1.0,
 ) -> List:
-    """Upgrade gene-level hierarchical p/phi to NEG.
+    """Upgrade a Gaussian hierarchy (gene- or dataset-level) to NEG.
 
-    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-p) produced
-    by ``_hierarchicalize_p``, replaces hyper_scale (SoftplusNormalSpec) with
-    the NEG pair (zeta, psi), and replaces the
-    ``HierarchicalSigmoidNormalSpec``/``HierarchicalPositiveNormalSpec`` with the
-    corresponding NEG spec.
+    NEG counterpart of :func:`_horseshoe_ncp`. Generalizes the former
+    ``_neg_{mu,p,gate}`` (gene), ``_neg_dataset_{mu,p,gate}`` (dataset) and
+    ``_neg_dataset_regime`` families: replaces the hierarchy scale site
+    (``desc.scale``) with the NEG Gamma-Gamma pair (``zeta``, ``psi``) and the
+    Gaussian hierarchy target spec (``desc.hier_cls``) with the matching NEG
+    spec (``desc.neg_cls``).
 
     Parameters
     ----------
     param_specs : List[ParamSpec]
-        Specs after ``_hierarchicalize_p`` has run.
-    param_key : str
-        Parameterization key.
+        Specs after the corresponding Gaussian hierarchy pass has run.
+    desc : HierParam
+        Resolved descriptor (see :func:`gene_hier_param` /
+        :func:`dataset_hier_param` / :func:`regime_dataset_hier_param`).
     u, a, tau : float
         NEG hyperparameters.
 
     Returns
     -------
     List[ParamSpec]
-        Updated specs with NEG p.
+        Updated specs with the NEG target.
     """
-    if param_key == "mean_odds":
-        target_name = "phi"
-        scale_name = "log_phi_scale"
-        loc_name = "log_phi_loc"
-        prefix = "phi"
-    else:
-        target_name = "p"
-        scale_name = "logit_p_scale"
-        loc_name = "logit_p_loc"
-        prefix = "p"
-
-    raw_name = f"{target_name}_raw"
-    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+    zeta_spec, psi_spec = _make_neg_hypers(desc.prefix, u, a, tau)
 
     new_specs = []
     for spec in param_specs:
-        if spec.name == scale_name:
-            # Replace the SoftplusNormal hyper_scale with NEG pair (zeta, psi)
+        if spec.name == desc.scale:
             new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == target_name and isinstance(
-            spec,
-            (HierarchicalSigmoidNormalSpec, HierarchicalPositiveNormalSpec),
-        ):
-            # Select NEG spec matching the original transform:
-            # ExpNormal (phi, range (0,inf)) vs SigmoidNormal (p, range (0,1))
-            if isinstance(spec, HierarchicalPositiveNormalSpec):
-                NEGSpec = NEGHierarchicalPositiveNormalSpec
-            else:
-                NEGSpec = NEGHierarchicalSigmoidNormalSpec
-            neg_spec = NEGSpec(
-                name=target_name,
+        elif spec.name == desc.target and isinstance(spec, desc.hier_cls):
+            neg_spec = desc.neg_cls(
+                name=desc.target,
                 shape_dims=spec.shape_dims,
                 default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"psi_{prefix}",
-                psi_name=f"psi_{prefix}",
-                zeta_name=f"zeta_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(neg_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Gene-level NEG gate
-# ------------------------------------------------------------------------------
-
-
-def _neg_gate(
-    param_specs: List,
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-) -> List:
-    """Upgrade gene-level hierarchical gate to NEG.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``build_gate_spec(hierarchical=True)`` has run.
-    u, a, tau : float
-        NEG hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with NEG gate.
-    """
-    zeta_spec, psi_spec = _make_neg_hypers("gate", u, a, tau)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == "logit_gate_scale":
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == "gate" and isinstance(
-            spec, HierarchicalSigmoidNormalSpec
-        ):
-            neg_spec = NEGHierarchicalSigmoidNormalSpec(
-                name="gate",
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name="logit_gate_loc",
-                hyper_scale_name="psi_gate",
-                psi_name="psi_gate",
-                zeta_name="zeta_gate",
-                raw_name="gate_raw",
-                is_gene_specific=spec.is_gene_specific,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-            )
-            new_specs.append(neg_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level NEG mu
-# ------------------------------------------------------------------------------
-
-
-def _neg_dataset_mu(
-    param_specs: List,
-    param_key: str,
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-) -> List:
-    """Upgrade dataset-level hierarchical mu/r to NEG.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_mu`` has run.
-    param_key : str
-        Parameterization key.
-    u, a, tau : float
-        NEG hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with NEG dataset mu.
-    """
-    if _expression_target_is_mu(param_key):
-        target_name = "mu"
-        scale_name = "log_mu_dataset_scale"
-        loc_name = "log_mu_dataset_loc"
-        prefix = "mu_dataset"
-    else:
-        target_name = "r"
-        scale_name = "log_r_dataset_scale"
-        loc_name = "log_r_dataset_loc"
-        prefix = "r_dataset"
-
-    raw_name = f"{target_name}_raw"
-    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == target_name and isinstance(
-            spec, DatasetHierarchicalPositiveNormalSpec
-        ):
-            neg_spec = NEGDatasetPositiveNormalSpec(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"psi_{prefix}",
-                psi_name=f"psi_{prefix}",
-                zeta_name=f"zeta_{prefix}",
-                raw_name=raw_name,
+                hyper_loc_name=desc.loc,
+                hyper_scale_name=f"psi_{desc.prefix}",
+                psi_name=f"psi_{desc.prefix}",
+                zeta_name=f"zeta_{desc.prefix}",
+                raw_name=desc.raw,
                 is_gene_specific=spec.is_gene_specific,
                 is_dataset=spec.is_dataset,
                 is_mixture=spec.is_mixture,
                 guide_family=getattr(spec, "guide_family", None),
                 transform=spec.transform,
-            )
-            new_specs.append(neg_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level NEG p
-# ------------------------------------------------------------------------------
-
-
-def _neg_dataset_p(
-    param_specs: List,
-    param_key: str,
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-) -> List:
-    """Upgrade dataset-level hierarchical p/phi to NEG.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_p`` has run.
-    param_key : str
-        Parameterization key.
-    u, a, tau : float
-        NEG hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with NEG dataset p.
-    """
-    if param_key == "mean_odds":
-        target_name = "phi"
-        scale_name = "log_phi_dataset_scale"
-        loc_name = "log_phi_dataset_loc"
-        prefix = "phi_dataset"
-    else:
-        target_name = "p"
-        scale_name = "logit_p_dataset_scale"
-        loc_name = "logit_p_dataset_loc"
-        prefix = "p_dataset"
-
-    raw_name = f"{target_name}_raw_dataset"
-    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
-
-    # Determine the correct NEG spec class based on the target transform
-    if param_key == "mean_odds":
-        TargetHierClass = DatasetHierarchicalPositiveNormalSpec
-        NEGClass = NEGDatasetPositiveNormalSpec
-    else:
-        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
-        NEGClass = NEGDatasetSigmoidNormalSpec
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == scale_name:
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == target_name and isinstance(spec, TargetHierClass):
-            neg_spec = NEGClass(
-                name=target_name,
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name=loc_name,
-                hyper_scale_name=f"psi_{prefix}",
-                psi_name=f"psi_{prefix}",
-                zeta_name=f"zeta_{prefix}",
-                raw_name=raw_name,
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
-                transform=spec.transform,
-            )
-            new_specs.append(neg_spec)
-        else:
-            new_specs.append(spec)
-    return new_specs
-
-
-# ------------------------------------------------------------------------------
-# Dataset-level NEG gate
-# ------------------------------------------------------------------------------
-
-
-def _neg_dataset_gate(
-    param_specs: List,
-    u: float = 1.0,
-    a: float = 1.0,
-    tau: float = 1.0,
-) -> List:
-    """Upgrade dataset-level hierarchical gate to NEG.
-
-    Parameters
-    ----------
-    param_specs : List[ParamSpec]
-        Specs after ``_datasetify_gate`` has run.
-    u, a, tau : float
-        NEG hyperparameters.
-
-    Returns
-    -------
-    List[ParamSpec]
-        Updated specs with NEG dataset gate.
-    """
-    zeta_spec, psi_spec = _make_neg_hypers("gate_dataset", u, a, tau)
-
-    new_specs = []
-    for spec in param_specs:
-        if spec.name == "logit_gate_dataset_scale":
-            new_specs.extend([zeta_spec, psi_spec])
-        elif spec.name == "gate" and isinstance(
-            spec, DatasetHierarchicalSigmoidNormalSpec
-        ):
-            neg_spec = NEGDatasetSigmoidNormalSpec(
-                name="gate",
-                shape_dims=spec.shape_dims,
-                default_params=spec.default_params,
-                hyper_loc_name="logit_gate_dataset_loc",
-                hyper_scale_name="psi_gate_dataset",
-                psi_name="psi_gate_dataset",
-                zeta_name="zeta_gate_dataset",
-                raw_name="gate_raw_dataset",
-                is_gene_specific=spec.is_gene_specific,
-                is_dataset=spec.is_dataset,
-                is_mixture=spec.is_mixture,
-                guide_family=getattr(spec, "guide_family", None),
             )
             new_specs.append(neg_spec)
         else:
