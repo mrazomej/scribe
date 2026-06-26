@@ -25,7 +25,7 @@ from .groups import (
     PriorOverrides,
 )
 from .parameter_mapping import get_active_parameters
-from .grouping import GroupingSpec
+from .grouping import GroupingSpec, PriorFamilySpec
 from ..builders.parameter_specs import ParamSpec
 
 # ==============================================================================
@@ -344,6 +344,16 @@ class ModelConfig(BaseModel):
             "sets, leaf->level maps, per-factor prior families, leaf labels). "
             "The leaf axis coincides with the n_datasets axis; n_leaves must "
             "equal n_datasets. None for single-factor or non-grouped fits."
+        ),
+    )
+    hierarchical_priors: Dict[str, Dict[str, PriorFamilySpec]] = Field(
+        default_factory=dict,
+        description=(
+            "Unified dataset/factor prior hierarchy: internal target name "
+            "(e.g. 'expression', 'dispersion', 'prob') -> {GroupLevel name -> "
+            "PriorFamilySpec}. Produced by normalize_unified_priors from the "
+            "user-facing `priors` dict and consumed by the factory's per-target "
+            "hierarchy dispatch. Empty for non-hierarchical fits."
         ),
     )
     dataset_params: Optional[List[str]] = Field(

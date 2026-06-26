@@ -42,6 +42,12 @@ from pydantic import (
     field_validator,
 )
 
+from .parameter_mapping import (
+    DESCRIPTIVE_NAMES,
+    HIERARCHY_TARGET_BY_SITE,
+    _DESCRIPTIVE_TO_INTERNAL,
+)
+
 # ------------------------------------------------------------------------------
 # Prior targets
 # ------------------------------------------------------------------------------
@@ -378,6 +384,111 @@ def _reduce_leaf_axis_family(spec: "GroupingSpec", target: str) -> str:
         if fam != "none":
             return fam
     return "none"
+
+
+def _resolve_prior_site(name: str) -> str:
+    """Resolve a user ``priors`` key (canonical name or internal site) to a site."""
+    if name in _DESCRIPTIVE_TO_INTERNAL:
+        return _DESCRIPTIVE_TO_INTERNAL[name]
+    if name in DESCRIPTIVE_NAMES:  # already an internal site name
+        return name
+    raise ValueError(
+        f"Unknown prior target {name!r}. Use a canonical parameter name "
+        f"(e.g. 'mean_expression', 'dispersion', 'probability', 'odds_ratio', "
+        f"'zero_inflation', 'overdispersion') or an internal site name."
+    )
+
+
+def normalize_unified_priors(
+    priors: Optional[Dict],
+    level_names: Tuple[str, ...],
+) -> Tuple[
+    Dict[str, object],
+    Dict[str, PriorFamilySpec],
+    Dict[str, Dict[str, PriorFamilySpec]],
+]:
+    """Parse the unified ``priors`` dict per the routing contract.
+
+    Each ``priors[name] = value`` entry is bucketed by value *shape* (the
+    discriminator) after resolving ``name`` to an internal site:
+
+    - ``tuple`` -> **base** prior hyperparameters (``ModelConfig.priors``).
+    - ``{"type": ...}`` on ``loadings`` -> **base** W-strategy spec.
+    - family ``str``, or ``{"type": ...}`` with **no** level keys, on a core
+      param -> **gene-level** family selector (the old ``*_prior`` field).
+    - dict **without** ``"type"`` (a level-mapping; keys are ``GroupLevel``
+      names plus the reserved ``"base"``) -> **dataset/factor** hierarchy;
+      a ``"base"`` key routes to the gene-level selector.
+
+    The reserved keys ``"base"`` and ``"type"`` may not be ``GroupLevel``
+    names (enforced at hierarchy declaration).
+
+    Returns
+    -------
+    (base, gene_level, hierarchical)
+        ``base`` : ``{site -> raw value}`` (tuples / W-strategy dicts).
+        ``gene_level`` : ``{site -> PriorFamilySpec}``.
+        ``hierarchical`` : ``{internal target -> {level -> PriorFamilySpec}}``.
+    """
+    base: Dict[str, object] = {}
+    gene_level: Dict[str, PriorFamilySpec] = {}
+    hierarchical: Dict[str, Dict[str, PriorFamilySpec]] = {}
+    if not priors:
+        return base, gene_level, hierarchical
+
+    for name, value in priors.items():
+        site = _resolve_prior_site(name)
+
+        # Base hyperparameter override (e.g. (loc, scale)).
+        if isinstance(value, tuple):
+            base[site] = value
+            continue
+
+        # A single family-spec (dict carrying the reserved 'type' key, no
+        # per-level structure).
+        if isinstance(value, dict) and "type" in value:
+            if site == "W":
+                base[site] = value  # loadings W-strategy spec
+            else:
+                gene_level[site] = PriorFamilySpec.from_value(value)
+            continue
+
+        # Bare family name -> gene-level selector.
+        if isinstance(value, str):
+            gene_level[site] = PriorFamilySpec.from_value(value)
+            continue
+
+        # Level-mapping -> dataset/factor hierarchy (+ optional 'base').
+        if isinstance(value, dict):
+            target = HIERARCHY_TARGET_BY_SITE.get(site)
+            for level, fam in value.items():
+                if level == "base":
+                    gene_level[site] = PriorFamilySpec.from_value(fam)
+                    continue
+                if level not in level_names:
+                    raise ValueError(
+                        f"priors[{name!r}] references level {level!r}, which is "
+                        f"not a declared grouping level. Declared levels: "
+                        f"{sorted(level_names)} (plus the reserved 'base')."
+                    )
+                if target is None:
+                    raise ValueError(
+                        f"priors[{name!r}] requests a dataset/factor hierarchy, "
+                        f"but {name!r} (site {site!r}) has no hierarchy target."
+                    )
+                hierarchical.setdefault(target, {})[level] = (
+                    PriorFamilySpec.from_value(fam)
+                )
+            continue
+
+        raise ValueError(
+            f"priors[{name!r}] has unsupported value type "
+            f"{type(value).__name__}; expected a tuple (base hyperparameters), "
+            f"a family str/dict (gene-level), or a level-mapping dict "
+            f"(dataset/factor hierarchy)."
+        )
+
+    return base, gene_level, hierarchical
 
 
 # ------------------------------------------------------------------------------
