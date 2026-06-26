@@ -217,6 +217,39 @@ def test_factory_builds_condition_specific_dispersion_r():
     assert {f.name for f in mu.factors} == {"sample"}
 
 
+def test_factory_builds_crossed_dispersion_r():
+    """The dispersion hierarchy mirrors the mean: the SAME crossed (treatment x
+    sample) decomposition on BOTH mu and r (not restricted to one factor)."""
+    obs = pd.DataFrame(
+        {
+            "sample": ["D1", "D2", "D3", "D1", "D2", "D3"],
+            "treatment": ["control", "control", "control", "drug", "drug", "drug"],
+        }
+    )
+    spec, _ = normalize_grouping(
+        dataset_key=None,
+        hierarchy=[GroupLevel(name="treatment"), GroupLevel(name="sample")],
+        interactions=None,
+        obs=obs,
+        dataset_priors={
+            "expression": {"treatment": "gaussian", "sample": "horseshoe"},
+            "dispersion": {"treatment": "gaussian", "sample": "horseshoe"},
+            "prob": "none",
+            "zero_inflation": "none",
+            "overdispersion": "none",
+            "regime": "none",
+        },
+    )
+    config = _build_mean_disp_config(spec)
+    _model, _guide, specs = create_model(config)
+    by_name = {s.name: s for s in specs}
+
+    for name in ("mu", "r"):
+        p = by_name[name]
+        assert isinstance(p, MultiFactorPositiveNormalSpec)
+        assert {f.name for f in p.factors} == {"treatment", "sample"}
+
+
 def test_dispersion_hierarchy_rejected_for_non_mean_disp():
     spec = _dispersion_spec()
     config = _build_mean_disp_config(spec, parameterization="mean_odds")

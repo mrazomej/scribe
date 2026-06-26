@@ -182,14 +182,29 @@ hierarchy. Downstream, the per-condition effect is exactly \(\Delta \log r\),
 so a gene with a small mean shift but a large dispersion shift becomes
 detectable.
 
+The `dispersion` hierarchy reuses the **same** additive machinery as the mean,
+so you can give `r` the *full* crossed decomposition too --- just list the same
+factors. The example below mirrors the mean's donor x condition hierarchy on
+`r` as well:
+
+```python
+priors={
+    "mean_expression": {"perturbation": "gaussian", "sample": "horseshoe"},
+    "dispersion":      {"perturbation": "gaussian", "sample": "horseshoe"},
+}
+```
+
 !!! warning "Scope"
-    Condition-specific dispersion requires `mean_disp` (the only
-    parameterization that samples `r` as a free orthogonal coordinate), exactly
-    **one** base grouping factor carrying the `dispersion` hierarchy, and a
-    `"gaussian"` or `"horseshoe"` family (`"neg"` is not yet supported on this
-    path). It must be a **joint** fit: with `variable_capture=True`, capture
-    efficiency is degenerate with the mean, so the conditions have to share that
-    structure in one inference.
+    A dispersion hierarchy requires `mean_disp` (the only parameterization that
+    samples `r` as a free orthogonal coordinate), one or more **base** grouping
+    factors (interaction factors are not yet supported on this path), and a
+    `"gaussian"` or `"horseshoe"` family (`"neg"` is not yet supported). It must
+    be a **joint** fit: with `variable_capture=True`, capture efficiency is
+    degenerate with the mean, so the conditions have to share that structure in
+    one inference. The additive multi-factor path means `get_dataset`
+    *re-sampling* on a per-leaf view is unreliable (a known limitation), but
+    differential expression --- which slices the stored posterior --- is
+    unaffected.
 
 **Theory:** [Differential Expression](differential-expression.md) and
 [Hierarchical Priors](../theory/hierarchical-priors.md).

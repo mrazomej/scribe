@@ -1177,11 +1177,12 @@ def create_model(
                     positive_transform=_pos_transform_for_name(_p_target),
                 )
 
-        # Condition-specific dispersion r (mean_disp). Always additive
-        # (multi-factor) so a single condition factor yields one r per
-        # condition gathered onto leaves; the exp link makes the per-factor
-        # effects log-additive (interpretable Delta log r). Reads dispersion
-        # families straight off grouping_spec — no separate flag.
+        # Dispersion r hierarchy (mean_disp). Always additive (multi-factor):
+        # each base factor carrying a dispersion family contributes an additive
+        # log-r effect gathered onto the leaves (one factor -> one r per its
+        # levels; several factors -> a crossed decomposition mirroring mu). The
+        # exp link makes the per-factor effects log-additive (interpretable
+        # Delta log r). Reads dispersion families straight off grouping_spec.
         if _grouping_spec is not None and any(
             fac.family("dispersion") != "none"
             for fac in _grouping_spec.factors
@@ -2388,11 +2389,13 @@ def _multifactor_mu(
 
 
 def _validate_dispersion_hierarchy(param_key: str, grouping_spec) -> None:
-    """Guard the condition-specific dispersion (r) hierarchy.
+    """Guard the dispersion (r) hierarchy.
 
-    Only ``mean_disp`` samples r as a free orthogonal coordinate; condition-only
-    semantics require exactly one base factor; NEG is not yet implemented for
-    the multi-factor path.
+    Only ``mean_disp`` samples r as a free orthogonal coordinate. The dispersion
+    hierarchy reuses the same additive multi-factor machinery as the mean, so it
+    accepts one *or more* base grouping factors (e.g. a crossed donor x
+    condition design mirroring the mean's hierarchy). Interaction factors and
+    the NEG family are not yet supported on this path.
     """
     if param_key != "mean_disp":
         raise ValueError(
@@ -2405,13 +2408,6 @@ def _validate_dispersion_hierarchy(param_key: str, grouping_spec) -> None:
     disp_factors = [
         f for f in grouping_spec.factors if f.family("dispersion") != "none"
     ]
-    if len(disp_factors) > 1:
-        raise ValueError(
-            "Condition-specific dispersion currently supports exactly one "
-            f"factor carrying the dispersion hierarchy (got "
-            f"{[f.name for f in disp_factors]}). Full multi-factor dispersion "
-            "is not yet supported."
-        )
     for f in disp_factors:
         if f.kind == "interaction":
             raise ValueError(
