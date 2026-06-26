@@ -105,6 +105,17 @@ configurable positive transform). Dataset-level:
 `raw_name` for the z variable, `psi_name` and `zeta_name` referencing the Gamma
 hierarchy sites.
 
+#### `HierParam` descriptors (`hier_descriptors.py`)
+
+Which of the above spec classes each hierarchical parameter uses — plus the
+exact site names and the Gaussian-construction geometry — is declared once by
+the **`HierParam`** descriptor. `gene_hier_param` / `dataset_hier_param` /
+`regime_dataset_hier_param` resolve a descriptor from `(role, param_key)`, and
+the generic cores in `presets/factory.py` (`_gaussianize`, `_horseshoe_ncp`,
+`_neg_ncp`) read its fields instead of re-deriving names with per-parameter
+conditionals. The module is self-contained (imports only `parameter_specs` and
+`config.enums`) so it sits below `presets` in the dependency graph.
+
 #### Biology-Informed Capture Spec
 
 **`BiologyInformedCaptureSpec`** represents the biology-informed capture

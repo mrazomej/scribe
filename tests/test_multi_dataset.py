@@ -1278,10 +1278,10 @@ class TestMixtureDatasetComposition:
         assert ds0.samples["mixing_weights"].shape == (S, K)
 
     # ------------------------------------------------------------------
-    # Factory: _datasetify_* preserves is_mixture
+    # Factory: dataset-level Gaussian hierarchy preserves is_mixture
     # ------------------------------------------------------------------
 
-    def test_datasetify_mu_preserves_is_mixture(self):
+    def test_dataset_mu_hierarchy_preserves_is_mixture(self):
         """Dataset mu hierarchy keeps is_mixture from the original spec."""
         from scribe.models.presets.factory import _gaussianize
         from scribe.models.builders.hier_descriptors import dataset_hier_param
@@ -1307,7 +1307,7 @@ class TestMixtureDatasetComposition:
         assert r_specs[0].is_dataset is True
         assert r_specs[0].is_mixture is True
 
-    def test_datasetify_p_preserves_is_mixture(self):
+    def test_dataset_p_hierarchy_preserves_is_mixture(self):
         """Dataset p hierarchy keeps is_mixture from the original spec."""
         from scribe.models.presets.factory import _gaussianize
         from scribe.models.builders.hier_descriptors import dataset_hier_param
@@ -1332,7 +1332,7 @@ class TestMixtureDatasetComposition:
         assert p_specs[0].is_dataset is True
         assert p_specs[0].is_mixture is True
 
-    def test_datasetify_mu_non_mixture_stays_non_mixture(self):
+    def test_dataset_mu_hierarchy_non_mixture_stays_non_mixture(self):
         """Dataset mu hierarchy does not add is_mixture when original lacks it."""
         from scribe.models.presets.factory import _gaussianize
         from scribe.models.builders.hier_descriptors import dataset_hier_param
@@ -1356,8 +1356,8 @@ class TestMixtureDatasetComposition:
         assert r_specs[0].is_dataset is True
         assert r_specs[0].is_mixture is False
 
-    def test_datasetify_gate_preserves_is_mixture(self):
-        """_datasetify_gate preserves is_mixture on the gate spec.
+    def test_dataset_gate_hierarchy_preserves_is_mixture(self):
+        """Dataset gate hierarchy preserves is_mixture on the gate spec.
 
         The gate spec itself must keep is_mixture so its shape includes
         the component dimension (K, D, G).  The hyper_loc, however, is
@@ -1397,8 +1397,8 @@ class TestMixtureDatasetComposition:
         assert getattr(hyper_loc_specs[0], "is_gene_specific", True) is False
         assert hyper_loc_specs[0].shape_dims == ()
 
-    def test_datasetify_gate_non_mixture_stays_non_mixture(self):
-        """_datasetify_gate does not add is_mixture when original lacks it."""
+    def test_dataset_gate_hierarchy_non_mixture_stays_non_mixture(self):
+        """Dataset gate hierarchy does not add is_mixture when original lacks it."""
         from scribe.models.presets.factory import _gaussianize
         from scribe.models.builders.hier_descriptors import dataset_hier_param
 
@@ -1430,8 +1430,8 @@ class TestMixtureDatasetComposition:
         assert getattr(hyper_loc_specs[0], "is_gene_specific", True) is False
         assert hyper_loc_specs[0].shape_dims == ()
 
-    def test_datasetify_gate_scalar_loc_default_params(self):
-        """_datasetify_gate creates scalar loc with N(-5, 0.01) defaults."""
+    def test_dataset_gate_hierarchy_scalar_loc_default_params(self):
+        """Dataset gate hierarchy creates scalar loc with N(-5, 0.01) defaults."""
         from scribe.models.presets.factory import _gaussianize
         from scribe.models.builders.hier_descriptors import dataset_hier_param
 
@@ -1459,7 +1459,7 @@ class TestMixtureDatasetComposition:
         assert getattr(hyper_loc, "is_mixture", False) is False
         assert hyper_loc.default_params == (-5.0, 0.01)
 
-    def test_datasetify_gate_neg_upgrade_preserves_scalar_loc(self):
+    def test_dataset_gate_neg_upgrade_preserves_scalar_loc(self):
         """NEG upgrade of dataset gate keeps hyper_loc as scalar."""
         from scribe.models.presets.factory import (
             _gaussianize,
@@ -1497,7 +1497,7 @@ class TestMixtureDatasetComposition:
         assert len(psi_specs) == 1
         assert psi_specs[0].is_gene_specific is True
 
-    def test_datasetify_gate_horseshoe_upgrade_preserves_scalar_loc(self):
+    def test_dataset_gate_horseshoe_upgrade_preserves_scalar_loc(self):
         """Horseshoe upgrade of dataset gate keeps hyper_loc as scalar."""
         from scribe.models.presets.factory import (
             _gaussianize,

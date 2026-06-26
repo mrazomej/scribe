@@ -1941,7 +1941,7 @@ class TestHierarchicalMuConfig:
 
 
 class TestHierarchicalMuFactory:
-    """Test that _hierarchicalize_mu produces the right parameter specs."""
+    """Test the gene-level mu hierarchy produces the right parameter specs."""
 
     def test_mean_prob_triplet(self):
         """mean_prob: produces log_mu_loc, log_mu_scale, mu specs."""

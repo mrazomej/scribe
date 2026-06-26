@@ -436,25 +436,30 @@ the extras exist (unlike `mu`/`p`, handled in Step 4.6). `TWOSTATE_REGIME_COORD`
 and `TWOSTATE_OVERDISPERSION_COORD` (`config.enums`) map each parameterization
 to its coordinates.
 
-- `_datasetify_regime()` replaces the regime coordinate
-  (`k_off`/`switching_ratio`/`concentration`/`inv_concentration`) with a
-  dataset-hierarchical triplet, choosing **sigmoid** specs + `logit_*` hyper
-  names for `inv_concentration` (support `(0, 1)`) and **positive** specs +
-  `log_*` names otherwise. The population `hyper_loc` inherits the flat regime
-  prior so the "default to NB" tilt carries through.
-- `_horseshoe_dataset_regime()` / `_neg_dataset_regime()` upgrade that triplet
-  to horseshoe / NEG, mirroring `_horseshoe_dataset_p` / `_neg_dataset_p` with
-  the same sigmoid-vs-positive selection. Triggered by
-  `regime_dataset_prior == HORSESHOE` / `NEG`.
+The regime coordinate (`k_off`/`switching_ratio`/`concentration`/
+`inv_concentration`) flows through the **same** generic cores as `mu`/`p`/`gate`,
+driven by `regime_dataset_hier_param(parameterization, target_override)`:
+
+- `_gaussianize()` replaces the regime coordinate with a dataset-hierarchical
+  triplet, choosing **sigmoid** specs + `logit_*` hyper names for
+  `inv_concentration` (support `(0, 1)`) and **positive** specs + `log_*` names
+  otherwise (the descriptor's per-coordinate `is_sigmoid`). The population
+  `hyper_loc` inherits the flat regime prior (`inherit_pop_loc_from_flat`) so
+  the "default to NB" tilt carries through.
+- `_horseshoe_ncp()` / `_neg_ncp()` upgrade that triplet to horseshoe / NEG —
+  the identical cores used for `p`/`gate` — via the same regime descriptor.
+  Triggered by `regime_dataset_prior == HORSESHOE` / `NEG`.
 - `_datasetify_overdispersion_independent()` marks the overdispersion
   coordinate (`burst_size`/`excess_fano`) `is_dataset=True` with **no**
   hyperprior — a free per-`(dataset, gene)` value. Applied when
   `overdispersion_dataset_independent=True` (default for multi-dataset
   two-state).
 
-Note: `_datasetify_mu` / `_horseshoe_dataset_mu` / `_neg_dataset_mu` target
-`mu` (not `r`) for two-state parameterizations as well as the NB mean
-parameterizations, via the `_expression_target_is_mu()` helper.
+Note: the **dataset-level** expression hierarchy targets `mu` (not `r`) for
+two-state parameterizations as well as the NB mean parameterizations
+(`dataset_hier_param("expression", ...)` via `expression_target_is_mu()`). The
+**gene-level** expression hierarchy uses a narrower rule that excludes the
+two-state family — see `hier_descriptors.py`.
 
 ## Adding New Models
 
