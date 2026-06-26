@@ -1004,7 +1004,7 @@ class TestSVISmoke:
             annotation_confidence=3.0,
             annotation_min_cells=5,
             unconstrained=True,
-            expression_prior="gaussian",
+            priors={"mean_expression": "gaussian"},
             seed=42,
         )
         assert any(

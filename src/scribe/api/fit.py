@@ -124,34 +124,24 @@ def fit(
     # quadrature accuracy of the log-likelihood integral at additional
     # compute cost.  Ignored by non-two-state models.
     n_quad_nodes: Optional[int] = None,
-    expression_prior: str = "none",
-    prob_prior: str = "none",
-    zero_inflation_prior: str = "none",
-    # Multi-dataset hierarchy options
+    # Multi-dataset hierarchy options. Prior families/hierarchies are declared
+    # via the unified ``priors`` dict (see docs/guide/priors.md); the kwargs
+    # below are the structural options that have no ``priors`` equivalent.
     n_datasets: Optional[int] = None,
     dataset_key: Optional[Union[str, List[str]]] = None,
     hierarchy: Optional[List[GroupLevel]] = None,
     interactions: Optional[List[Tuple[str, ...]]] = None,
     dataset_params: Optional[List[str]] = None,
     dataset_mixing: Optional[bool] = None,
-    expression_dataset_prior: Union[str, Dict[str, str]] = "none",
-    prob_dataset_prior: Union[str, Dict[str, str]] = "none",
     prob_dataset_mode: str = "gene_specific",
-    zero_inflation_dataset_prior: Union[str, Dict[str, str]] = "none",
-    overdispersion_dataset_prior: Union[str, Dict[str, str]] = "none",
-    # Two-state dataset-level regime hierarchy + free overdispersion
-    regime_dataset_prior: Union[str, Dict[str, str]] = "none",
+    # Two-state dataset-level regime hierarchy + free overdispersion. The
+    # regime *family* is declared via ``priors={"regime": {<level>: family}}``
+    # (canonical name ``"regime"``); ``regime_dataset_target`` is the structural
+    # escape hatch that pins which two-state coordinate the regime hierarchy
+    # attaches to (defaults to the parameterization's regime coordinate).
     regime_dataset_target: Optional[str] = None,
     overdispersion_dataset_independent: bool = True,
     auto_downgrade_single_dataset_hierarchy: bool = True,
-    # Horseshoe hyperparameters
-    horseshoe_tau0: float = 1.0,
-    horseshoe_slab_df: int = 4,
-    horseshoe_slab_scale: float = 2.0,
-    # NEG (Normal-Exponential-Gamma) hyperparameters
-    neg_u: float = 1.0,
-    neg_a: float = 1.0,
-    neg_tau: float = 1.0,
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
     capture_scaling_prior: str = "none",
     # Data-informed mean anchoring prior
@@ -159,7 +149,6 @@ def fit(
     expression_anchor_sigma: float = 0.3,
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
-    overdispersion_prior: str = "horseshoe",
     # Diagonal residual noise mode for the latent log-rate
     # decomposition (see ``ModelConfig.d_mode``).  When ``None``,
     # ``api.fit`` resolves a sensible per-model default:
@@ -1127,35 +1116,20 @@ def fit(
             unconstrained=unconstrained,
             positive_transform=positive_transform,
             n_quad_nodes=n_quad_nodes,
-            expression_prior=expression_prior,
-            prob_prior=prob_prior,
-            zero_inflation_prior=zero_inflation_prior,
             n_datasets=n_datasets,
             dataset_key=dataset_key,
             hierarchy=hierarchy,
             interactions=interactions,
             dataset_params=dataset_params,
             dataset_mixing=dataset_mixing,
-            expression_dataset_prior=expression_dataset_prior,
-            prob_dataset_prior=prob_dataset_prior,
             prob_dataset_mode=prob_dataset_mode,
-            zero_inflation_dataset_prior=zero_inflation_dataset_prior,
-            overdispersion_dataset_prior=overdispersion_dataset_prior,
-            regime_dataset_prior=regime_dataset_prior,
             regime_dataset_target=regime_dataset_target,
             overdispersion_dataset_independent=overdispersion_dataset_independent,
             auto_downgrade_single_dataset_hierarchy=auto_downgrade_single_dataset_hierarchy,
-            horseshoe_tau0=horseshoe_tau0,
-            horseshoe_slab_df=horseshoe_slab_df,
-            horseshoe_slab_scale=horseshoe_slab_scale,
-            neg_u=neg_u,
-            neg_a=neg_a,
-            neg_tau=neg_tau,
             capture_scaling_prior=capture_scaling_prior,
             expression_anchor=expression_anchor,
             expression_anchor_sigma=expression_anchor_sigma,
             overdispersion=overdispersion,
-            overdispersion_prior=overdispersion_prior,
             d_mode=d_mode,
             alr_reference_idx=alr_reference_idx,
             correlate_other_column=correlate_other_column,

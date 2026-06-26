@@ -201,7 +201,9 @@ def test_multifactor_get_map_reconstructs_leaf_expression():
             scribe.GroupLevel("condition", effect_type="fixed", fixed_scale=3.0),
             scribe.GroupLevel("donor"),
         ],
-        expression_dataset_prior={"condition": "gaussian", "donor": "gaussian"},
+        priors={
+            "mean_expression": {"condition": "gaussian", "donor": "gaussian"}
+        },
         n_steps=150,
         batch_size=128,
     )

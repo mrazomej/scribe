@@ -538,6 +538,91 @@ def _build_priors_dict(priors_cfg):
     } or None
 
 
+# Legacy flat config keys -> canonical ``priors`` names. ``scribe.fit()`` takes
+# prior families/hierarchies ONLY through the unified ``priors`` dict; these
+# flat keys remain accepted in YAML configs as a backward-compatible surface
+# and are translated here. Gene-level selectors map to a bare-family string;
+# dataset-level selectors map to a ``{factor: family}`` hierarchy keyed by the
+# declared ``dataset_key`` factor(s). The ``regime`` family routes via the
+# abstract ``"regime"`` canonical name (see parameter_mapping.PARAM_REGISTRY).
+_LEGACY_GENE_PRIOR_CFG = {
+    "expression_prior": "mean_expression",
+    "prob_prior": "probability",
+    "zero_inflation_prior": "zero_inflation",
+}
+_LEGACY_DATASET_PRIOR_CFG = {
+    "expression_dataset_prior": "mean_expression",
+    "prob_dataset_prior": "probability",
+    "zero_inflation_dataset_prior": "zero_inflation",
+    "overdispersion_dataset_prior": "overdispersion",
+    "regime_dataset_prior": "regime",
+}
+
+
+def _fold_legacy_prior_cfg(cfg, priors, dataset_key):
+    """Fold legacy flat prior cfg keys into the unified ``priors`` dict.
+
+    An explicit ``priors:`` config block always wins: a canonical key already
+    present in ``priors`` is never overwritten by a legacy flat key. Horseshoe
+    / NEG hyperparameters (``horseshoe_tau0`` etc.) are attached to the
+    relevant family spec; ``"gaussian"`` families fold to a bare string.
+    """
+    priors = dict(priors or {})
+
+    def _spec(family):
+        """Bare family string, or a ``{"type": ...}`` spec when the config
+        carries family-specific hyperparameters."""
+        out = {"type": family}
+        if family == "horseshoe":
+            for ck, sk in (
+                ("horseshoe_tau0", "tau0"),
+                ("horseshoe_slab_df", "slab_df"),
+                ("horseshoe_slab_scale", "slab_scale"),
+            ):
+                v = cfg.get(ck)
+                if v is not None:
+                    out[sk] = v
+        elif family == "neg":
+            for ck, sk in (("neg_u", "u"), ("neg_a", "a"), ("neg_tau", "tau")):
+                v = cfg.get(ck)
+                if v is not None:
+                    out[sk] = v
+        return family if len(out) == 1 else out
+
+    # Gene-level family selectors -> bare family on the canonical name.
+    for ck, canon in _LEGACY_GENE_PRIOR_CFG.items():
+        fam = cfg.get(ck, "none")
+        if fam and fam != "none" and canon not in priors:
+            priors[canon] = _spec(fam)
+    # Gene-level overdispersion prior applies only when overdispersion is on.
+    if (
+        cfg.get("overdispersion", "none") not in (None, "none")
+        and cfg.get("overdispersion_prior", "none") not in (None, "none")
+        and "overdispersion" not in priors
+    ):
+        priors["overdispersion"] = _spec(cfg.get("overdispersion_prior"))
+
+    # Dataset-level selectors -> {factor: family} keyed by dataset_key.
+    if isinstance(dataset_key, (list, tuple)):
+        factors = list(dataset_key)
+    elif dataset_key:
+        factors = [dataset_key]
+    else:
+        factors = []
+    for ck, canon in _LEGACY_DATASET_PRIOR_CFG.items():
+        val = cfg.get(ck, "none")
+        if not val or val == "none" or canon in priors:
+            continue
+        if isinstance(val, dict):
+            priors[canon] = {f: _spec(fam) for f, fam in val.items()}
+        elif factors:
+            priors[canon] = {f: _spec(val) for f in factors}
+        # No declared factors + a bare dataset family: leave it out; the
+        # dataset_key validation guard raises a clear error before fit().
+
+    return priors or None
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -1051,8 +1136,11 @@ def main(cfg: DictConfig) -> None:
             "contains checkpoints created by a previous run."
         )
 
-    # Build priors dict (filtering None values)
+    # Build priors dict (filtering None values), then fold any legacy flat
+    # prior config keys into it so scribe.fit() receives priors ONLY via the
+    # unified ``priors`` dict.
     priors = _build_priors_dict(cfg.get("priors"))
+    priors = _fold_legacy_prior_cfg(cfg, priors, dataset_key)
 
     # Handle deprecated flags (zero_inflated, variable_capture, mixture_model)
     model_type = _resolve_model_type(cfg)
@@ -1150,43 +1238,30 @@ def main(cfg: DictConfig) -> None:
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
         "positive_transform": cfg.get("positive_transform"),
-        "expression_prior": cfg.get("expression_prior", "none"),
-        "prob_prior": cfg.get("prob_prior", "none"),
-        "zero_inflation_prior": cfg.get("zero_inflation_prior", "none"),
-        # Multi-dataset hierarchy
+        # Prior families/hierarchies (gene-level + dataset/factor) flow through
+        # the unified ``priors`` dict below; legacy flat ``*_prior`` /
+        # ``*_dataset_prior`` / horseshoe_*/neg_* config keys are folded into it
+        # by _fold_legacy_prior_cfg.
+        # Multi-dataset hierarchy (structural options only)
         "n_datasets": cfg.get("n_datasets"),
         "dataset_key": dataset_key,
         "dataset_params": cfg.get("dataset_params"),
         "dataset_mixing": cfg.get("dataset_mixing"),
-        "expression_dataset_prior": cfg.get("expression_dataset_prior", "none"),
-        "prob_dataset_prior": cfg.get("prob_dataset_prior", "none"),
         "prob_dataset_mode": cfg.get("prob_dataset_mode", "gene_specific"),
-        "zero_inflation_dataset_prior": cfg.get(
-            "zero_inflation_dataset_prior", "none"
-        ),
-        # Two-state dataset-level regime hierarchy + free overdispersion
-        "regime_dataset_prior": cfg.get("regime_dataset_prior", "none"),
+        # Two-state dataset-level regime hierarchy + free overdispersion. The
+        # regime *family* is declared via priors={"regime": {...}}; only the
+        # structural target/independence options remain as kwargs.
         "regime_dataset_target": cfg.get("regime_dataset_target"),
         "overdispersion_dataset_independent": cfg.get(
             "overdispersion_dataset_independent", True
         ),
-        "overdispersion_dataset_prior": cfg.get(
-            "overdispersion_dataset_prior", "none"
-        ),
-        # Horseshoe / NEG hyperparameters
-        "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
-        "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
-        "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),
-        "neg_u": cfg.get("neg_u", 1.0),
-        "neg_a": cfg.get("neg_a", 1.0),
-        "neg_tau": cfg.get("neg_tau", 1.0),
         "capture_scaling_prior": cfg.get("capture_scaling_prior", "none"),
         # Data-informed mean anchoring prior
         "expression_anchor": cfg.get("expression_anchor", False),
         "expression_anchor_sigma": cfg.get("expression_anchor_sigma", 0.3),
-        # Gene-specific overdispersion (e.g. BNB)
+        # Gene-specific overdispersion (e.g. BNB); its prior family is folded
+        # into ``priors`` under the canonical name ``overdispersion``.
         "overdispersion": cfg.get("overdispersion", "none"),
-        "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
         "latent_dim": cfg.get("latent_dim"),
         "d_mode": cfg.get("d_mode"),
         "alr_reference_idx": cfg.get("alr_reference_idx"),
@@ -1319,15 +1394,17 @@ def main(cfg: DictConfig) -> None:
             f"[dim](sigma={kwargs['expression_anchor_sigma']})[/dim]"
         )
     if kwargs.get("overdispersion", "none") != "none":
+        # The overdispersion prior family now lives in ``priors`` (canonical
+        # name ``overdispersion``); read it back for the status line.
+        _od_prior = cfg.get("overdispersion_prior", "horseshoe")
+        _od_ds_prior = cfg.get("overdispersion_dataset_prior", "none")
         _od_message = (
             f"[dim]Overdispersion:[/dim] [bold]{kwargs['overdispersion']}[/bold] "
-            f"[dim](prior={kwargs['overdispersion_prior']})[/dim]"
+            f"[dim](prior={_od_prior})[/dim]"
         )
-        if kwargs.get("overdispersion_dataset_prior", "none") != "none":
+        if _od_ds_prior not in (None, "none"):
             _od_message += (
-                " "
-                "[dim](dataset_prior="
-                f"{kwargs['overdispersion_dataset_prior']})[/dim]"
+                " " f"[dim](dataset_prior={_od_ds_prior})[/dim]"
             )
         console.print(_od_message)
     if kwargs.get("annotation_key"):

@@ -16,14 +16,19 @@ from scribe.core.factor_effect_view import FactorEffectView, get_factor_effect
 
 
 def _fac(name, levels, effect_type, fixed_scale, family="gaussian"):
-    return SimpleNamespace(
+    priors = {"expression": family}
+    fac = SimpleNamespace(
         name=name,
         levels=tuple(levels),
         n_levels=len(levels),
         effect_type=effect_type,
         fixed_scale=fixed_scale,
-        priors={"expression": family},
+        priors=priors,
     )
+    # Mirror Factor.family(target) -> family string (the spec API replaced the
+    # old Dict[str, str] priors with a method).
+    fac.family = lambda target, _p=priors: _p.get(target, "none")
+    return fac
 
 
 def _results(samples, factors, gene_names=None):
@@ -172,7 +177,9 @@ def test_get_factor_effect_real_fit():
             scribe.GroupLevel("condition", effect_type="fixed", fixed_scale=3.0),
             scribe.GroupLevel("donor"),
         ],
-        expression_dataset_prior={"condition": "gaussian", "donor": "gaussian"},
+        priors={
+            "mean_expression": {"condition": "gaussian", "donor": "gaussian"}
+        },
         n_steps=1500,
         batch_size=128,
     )

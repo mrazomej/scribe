@@ -412,6 +412,9 @@ class TestParamRegistry:
         assert HIERARCHY_TARGET_BY_SITE["mu"] == "expression"
         assert HIERARCHY_TARGET_BY_SITE["r"] == "dispersion"
         assert HIERARCHY_TARGET_BY_SITE["bnb_concentration"] == "overdispersion"
+        # ``regime`` is an abstract hierarchy-only name (no sampled site) that
+        # routes the two-state regime hierarchy; it has a self-named target.
+        assert HIERARCHY_TARGET_BY_SITE["regime"] == "regime"
         assert "p_capture" not in HIERARCHY_TARGET_BY_SITE
         assert "mu_T" not in HIERARCHY_TARGET_BY_SITE
 

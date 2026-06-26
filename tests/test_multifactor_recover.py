@@ -64,7 +64,9 @@ def test_compare_groups_recovers_injected_effect():
             scribe.GroupLevel("condition", effect_type="fixed", fixed_scale=3.0),
             scribe.GroupLevel("donor"),
         ],
-        expression_dataset_prior={"condition": "gaussian", "donor": "gaussian"},
+        priors={
+            "mean_expression": {"condition": "gaussian", "donor": "gaussian"}
+        },
         n_steps=2500,
         batch_size=256,
     )

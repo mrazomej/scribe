@@ -1079,6 +1079,18 @@ PARAM_REGISTRY: Tuple[ParamName, ...] = (
     ParamName("effective_burst_size", "effective_burst_size"),
     ParamName("alpha_floor_active", "alpha_floor_active"),
     ParamName("beta_floor_active", "beta_floor_active"),
+    # --- Two-state regime hierarchy (abstract, hierarchy-only) ---
+    #     ``regime`` is NOT a sampled site: it is the parameterization-
+    #     independent name for the two-state *bursting regime* hierarchy. The
+    #     concrete coordinate it attaches to differs by parameterization
+    #     (``k_off`` / ``switching_ratio`` / ``concentration`` /
+    #     ``inv_concentration`` -- see ``TWOSTATE_REGIME_COORD``), optionally
+    #     pinned via the structural ``regime_dataset_target`` kwarg. Carrying a
+    #     single canonical key keeps ``priors={"regime": {...}}`` stable across
+    #     all two-state parameterizations. It routes (hierarchy target
+    #     ``"regime"``) to the internal ``regime_dataset_prior`` field; it has
+    #     no gene-level or base-prior form.
+    ParamName("regime", "regime", "regime"),
 )
 
 # Forward routing: internal site -> grouping TARGET_NAME (for the unified

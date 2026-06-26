@@ -2575,7 +2575,7 @@ class TestFitApiDatasetHierarchyValidation:
         adata = self._make_adata(include_dataset_column=False)
 
         # Dataset-level priors need dataset_key for per-cell dataset indexing.
-        with pytest.raises(ValueError, match="require dataset_key"):
+        with pytest.raises(ValueError, match="not a declared grouping level"):
             scribe.fit(
                 adata,
                 model="nbdm",
@@ -2583,7 +2583,7 @@ class TestFitApiDatasetHierarchyValidation:
                 batch_size=3,
                 seed=0,
                 unconstrained=True,
-                expression_dataset_prior="gaussian",
+                priors={"mean_expression": {"dataset": "gaussian"}},
             )
 
     def test_single_dataset_allows_gene_level_hierarchy(self):
@@ -2592,7 +2592,7 @@ class TestFitApiDatasetHierarchyValidation:
 
         adata = self._make_adata(include_dataset_column=False)
 
-        # prob_prior is a gene-level option and should still be valid.
+        # A gene-level prior (bare family string) is valid without splitting.
         result = scribe.fit(
             adata,
             model="nbdm",
@@ -2600,7 +2600,7 @@ class TestFitApiDatasetHierarchyValidation:
             batch_size=3,
             seed=0,
             unconstrained=True,
-            prob_prior="gaussian",
+            priors={"probability": "gaussian"},
         )
         assert result.n_cells == adata.n_obs
 
@@ -2620,7 +2620,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
         )
         assert result.n_cells == adata.n_obs
 
@@ -2643,7 +2643,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
         )
         assert any(
             "automatic hierarchy downgrade" in record.message
@@ -2674,7 +2674,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            prob_dataset_prior="gaussian",
+            priors={"probability": {"dataset": "gaussian"}},
             prob_dataset_mode=dataset_p_mode,
         )
         assert any(
@@ -2704,7 +2704,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            prob_dataset_prior="gaussian",
+            priors={"probability": {"dataset": "gaussian"}},
             prob_dataset_mode="scalar",
         )
         assert any(
@@ -2734,7 +2734,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            zero_inflation_dataset_prior="gaussian",
+            priors={"zero_inflation": {"dataset": "gaussian"}},
         )
         assert any(
             "automatic hierarchy downgrade" in record.message
@@ -2762,7 +2762,7 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                expression_dataset_prior="gaussian",
+                priors={"mean_expression": {"dataset": "gaussian"}},
                 auto_downgrade_single_dataset_hierarchy=False,
             )
 
@@ -3609,7 +3609,7 @@ class TestBatchedPosteriorMultiDataset:
             parameterization="mean_odds",
             unconstrained=True,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
             n_steps=2,
             batch_size=3,
             seed=0,
@@ -3633,7 +3633,7 @@ class TestBatchedPosteriorMultiDataset:
             parameterization="mean_odds",
             unconstrained=True,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
             n_steps=2,
             batch_size=3,
             seed=0,
@@ -3664,7 +3664,7 @@ class TestBatchedPosteriorMultiDataset:
             unconstrained=True,
             n_components=2,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
             n_steps=2,
             batch_size=3,
             seed=0,
@@ -3727,7 +3727,7 @@ class TestConvertToNumpy:
             parameterization="canonical",
             unconstrained=True,
             dataset_key="dataset",
-            expression_dataset_prior="gaussian",
+            priors={"mean_expression": {"dataset": "gaussian"}},
             n_steps=2,
             batch_size=3,
             seed=0,
@@ -4953,8 +4953,10 @@ class TestTwoStateMultiDatasetGetMap:
             parameterization=parameterization,
             unconstrained=True,
             dataset_key="condition",
-            expression_dataset_prior="horseshoe",
-            regime_dataset_prior="horseshoe",
+            priors={
+                "mean_expression": {"condition": "horseshoe"},
+                "regime": {"condition": "horseshoe"},
+            },
             inference_method="svi",
             n_steps=n_steps,
             n_samples=5,
