@@ -143,3 +143,50 @@ def test_grouping_requires_anndata():
             kwargs={"dataset_key": ["treatment", "sample"]},
         )
         process_data_and_datasets(ctx)
+
+
+# ------------------------------------------------------------------------------
+# Unified `priors` -> internal plumbing routing
+# ------------------------------------------------------------------------------
+
+
+def test_unified_priors_route_into_flat_plumbing():
+    sample = ["D1", "D1", "D2", "D2"]
+    treatment = ["control", "drug", "control", "drug"]
+    adata = _make_adata(sample, treatment)
+    ctx = FitContext(
+        counts=adata,
+        kwargs=dict(dataset_key=["treatment", "sample"]),
+        priors={
+            # dataset/factor hierarchy on the mean
+            "mean_expression": {"treatment": "gaussian", "sample": "horseshoe"},
+            # gene-level family selector
+            "probability": "horseshoe",
+            # base hyperparameter override (kept on ctx.priors)
+            "dispersion": (2.0, 0.5),
+        },
+    )
+    process_data_and_datasets(ctx)
+
+    # Gene-level selector -> the *_prior field.
+    assert ctx.kwargs["prob_prior"] == "horseshoe"
+    # Dataset/factor hierarchy -> grouping_spec per-factor families.
+    by_name = {f.name: f for f in ctx.grouping_spec.factors}
+    assert by_name["treatment"].family("expression") == "gaussian"
+    assert by_name["sample"].family("expression") == "horseshoe"
+    # Base hyperparameters survive on ctx.priors (original key; with_priors
+    # resolves it downstream).
+    assert ctx.priors == {"dispersion": (2.0, 0.5)}
+
+
+def test_unified_priors_dispersion_hierarchy_not_yet_wired():
+    sample = ["D1", "D1", "D2", "D2"]
+    treatment = ["control", "drug", "control", "drug"]
+    adata = _make_adata(sample, treatment)
+    ctx = FitContext(
+        counts=adata,
+        kwargs=dict(dataset_key=["treatment", "sample"]),
+        priors={"dispersion": {"treatment": "gaussian"}},
+    )
+    with pytest.raises(ValueError, match="not yet wired"):
+        process_data_and_datasets(ctx)

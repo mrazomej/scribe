@@ -86,6 +86,58 @@ def process_data_and_datasets(ctx: FitContext) -> None:
     dataset_indices = None
     grouping_spec = None
 
+    # -- Unified `priors` -> internal hierarchical plumbing -------------------
+    # `priors` is the single user-facing entry point. Split it (by value shape)
+    # into base hyperparameters (stay on ctx.priors for with_priors),
+    # gene-level family selectors (-> the *_prior fields), and the
+    # dataset/factor hierarchy (-> the *_dataset_prior fields). The flat
+    # *_prior / *_dataset_prior kwargs remain accepted during migration.
+    from ...models.config.grouping import normalize_unified_priors
+    from ...models.config.parameter_mapping import HIERARCHY_TARGET_BY_SITE
+
+    _decl_levels = []
+    if hierarchy:
+        _decl_levels.extend(getattr(gl, "name", gl) for gl in hierarchy)
+    if isinstance(dataset_key, (list, tuple)):
+        _decl_levels.extend(dataset_key)
+    elif isinstance(dataset_key, str):
+        _decl_levels.append(dataset_key)
+    _decl_levels = tuple(dict.fromkeys(_decl_levels))
+
+    _base_p, _gene_p, _hier_p = normalize_unified_priors(ctx.priors, _decl_levels)
+    if _gene_p or _hier_p:
+        ctx.priors = _base_p or None
+        _GENE_FIELD = {
+            "expression": "expression_prior",
+            "prob": "prob_prior",
+            "zero_inflation": "zero_inflation_prior",
+            "overdispersion": "overdispersion_prior",
+        }
+        for _site, _spec in _gene_p.items():
+            _tgt = HIERARCHY_TARGET_BY_SITE.get(_site)
+            _field = _GENE_FIELD.get(_tgt)
+            if _field is None:
+                raise ValueError(
+                    f"priors: a gene-level prior on {_site!r} is not supported "
+                    f"(no gene-level field for target {_tgt!r})."
+                )
+            kw[_field] = _spec.type
+        _DATASET_FIELD = {
+            "expression": "expression_dataset_prior",
+            "prob": "prob_dataset_prior",
+            "zero_inflation": "zero_inflation_dataset_prior",
+            "overdispersion": "overdispersion_dataset_prior",
+            "regime": "regime_dataset_prior",
+        }
+        for _tgt, _lvlmap in _hier_p.items():
+            _field = _DATASET_FIELD.get(_tgt)
+            if _field is None:
+                raise ValueError(
+                    f"priors: a dataset/factor hierarchy on target {_tgt!r} is "
+                    f"not yet wired (coming with condition-specific dispersion)."
+                )
+            kw[_field] = {_lvl: _spec.type for _lvl, _spec in _lvlmap.items()}
+
     auto_downgrade = kw.get("auto_downgrade_single_dataset_hierarchy", True)
     expression_dataset_prior = kw.get("expression_dataset_prior", "none")
     prob_dataset_prior = kw.get("prob_dataset_prior", "none")
