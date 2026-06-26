@@ -315,7 +315,7 @@ from scribe.mc import compare_models
 
 # Fit two models on the same data
 results_nbdm = scribe.fit(adata)
-results_hier = scribe.fit(adata, prob_prior="horseshoe")
+results_hier = scribe.fit(adata, priors={"probability": "horseshoe"})
 
 # Compare
 mc = compare_models(

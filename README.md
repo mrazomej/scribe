@@ -617,13 +617,13 @@ matching:
 
 ```python
 # Broad SVI (all 20K genes) with hierarchical-`p` shrinkage.
-# `prob_prior` activates a hierarchical prior on logit(p_g); options
-# are "none" (default; flat shared-p), "gaussian", "horseshoe", or
-# "neg".  All choices require `unconstrained=True`.
+# A family string on `probability` activates a hierarchical prior on
+# logit(p_g); options are "gaussian", "horseshoe", or "neg".  All
+# hierarchical priors require `unconstrained=True`.
 svi_results = scribe.fit(
     adata,
     model="nbdm",
-    prob_prior="gaussian",   # or "horseshoe" / "neg"
+    priors={"probability": "gaussian"},   # or "horseshoe" / "neg"
     unconstrained=True,
     gene_coverage=1.0,
     inference_method="svi",
@@ -811,11 +811,9 @@ Regularized horseshoe priors encourage sparsity in gene-specific deviations:
 results = scribe.fit(
     adata,
     model="nbdm",
-    parameterization="odds_ratio",
+    parameterization="mean_odds",
     unconstrained=True,
-    hierarchical_p=True,
-    horseshoe_p=True,
-    horseshoe_tau0=1.0,
+    priors={"probability": {"type": "horseshoe", "tau0": 1.0}},
     n_steps=100000,
 )
 ```

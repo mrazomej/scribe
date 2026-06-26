@@ -332,11 +332,14 @@ Per-gene local scales plus a global scale and regularization slab:
 \tilde{\lambda}_g = \frac{\color{#81b29a}{c}\,\lambda_g}{\sqrt{\color{#81b29a}{c}^2 + \color{#3d85c6}{\tau}^2 \lambda_g^2}}
 \]
 
-| `scribe.fit()` parameter | Symbol | Default | Role |
-|---------------------------|--------|---------|------|
-| `horseshoe_tau0` | \(\color{#3d85c6}{\tau_0}\) | `1.0` | Scale of Half-Cauchy prior on global \(\tau\). Controls overall sparsity level |
-| `horseshoe_slab_df` | \(\nu\) | `4` | Degrees of freedom for Inv-Gamma slab on \(c^2\). Lower = heavier tails |
-| `horseshoe_slab_scale` | \(s\) | `2.0` | Scale of the slab. Bounds the maximum effective local scale |
+Set these inside a horseshoe **family spec** in `priors`, e.g.
+`priors={"probability": {"type": "horseshoe", "tau0": 0.5}}`:
+
+| `priors` spec key | Symbol | Default | Role |
+|-------------------|--------|---------|------|
+| `tau0` | \(\color{#3d85c6}{\tau_0}\) | `1.0` | Scale of Half-Cauchy prior on global \(\tau\). Controls overall sparsity level |
+| `slab_df` | \(\nu\) | `4` | Degrees of freedom for Inv-Gamma slab on \(c^2\). Lower = heavier tails |
+| `slab_scale` | \(s\) | `2.0` | Scale of the slab. Bounds the maximum effective local scale |
 
 ### Normal-Exponential-Gamma (NEG)
 
@@ -350,11 +353,14 @@ Gamma-Gamma hierarchy with a finite peak at zero (SVI-friendly):
 \theta_g \sim \mathcal{N}(\mu_{\text{pop}},\; \sqrt{\psi_g}).
 \]
 
-| `scribe.fit()` parameter | Symbol | Default | Role |
-|---------------------------|--------|---------|------|
-| `neg_u` | \(\color{#81b29a}{u}\) | `1.0` | Inner Gamma shape. \(u=1\) gives NEG (finite peak); \(u=0.5\) recovers horseshoe (infinite spike) |
-| `neg_a` | \(\color{#f2cc8f}{a}\) | `1.0` | Outer Gamma shape. Controls concentration near zero |
-| `neg_tau` | \(\color{#e07a5f}{\tau}\) | `1.0` | Global rate for the outer Gamma. Higher = stronger global shrinkage |
+Set these inside a NEG **family spec** in `priors`, e.g.
+`priors={"probability": {"type": "neg", "u": 1.0}}`:
+
+| `priors` spec key | Symbol | Default | Role |
+|-------------------|--------|---------|------|
+| `u` | \(\color{#81b29a}{u}\) | `1.0` | Inner Gamma shape. \(u=1\) gives NEG (finite peak); \(u=0.5\) recovers horseshoe (infinite spike) |
+| `a` | \(\color{#f2cc8f}{a}\) | `1.0` | Outer Gamma shape. Controls concentration near zero |
+| `tau` | \(\color{#e07a5f}{\tau}\) | `1.0` | Global rate for the outer Gamma. Higher = stronger global shrinkage |
 
 ### Mean anchoring prior
 

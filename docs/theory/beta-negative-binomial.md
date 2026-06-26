@@ -454,7 +454,7 @@ results = scribe.fit(
     adata,
     parameterization="canonical",
     overdispersion="bnb",
-    overdispersion_prior="horseshoe",   # or "neg"
+    priors={"overdispersion": "horseshoe"},   # or "neg"
 )
 ```
 
@@ -468,9 +468,11 @@ results = scribe.fit(
     parameterization="canonical",
     dataset_key="batch",
     overdispersion="bnb",
-    overdispersion_prior="horseshoe",
-    overdispersion_dataset_prior="neg",
-    priors={"organism": "human"},
+    priors={
+        "organism": "human",
+        # gene-level family ("base") + per-dataset hierarchy on kappa_g
+        "overdispersion": {"base": "horseshoe", "batch": "neg"},
+    },
 )
 ```
 

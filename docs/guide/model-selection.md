@@ -570,8 +570,10 @@ parameters (\(\mu\), \(p\), gate, overdispersion):
 results = scribe.fit(
     adata,
     unconstrained=True,
-    expression_prior="horseshoe",
-    prob_prior="gaussian",
+    priors={
+        "mean_expression": "horseshoe",
+        "probability": "gaussian",
+    },
 )
 ```
 

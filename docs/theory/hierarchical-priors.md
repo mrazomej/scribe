@@ -163,7 +163,8 @@ population mean.
 # Gene-specific p with NEG prior
 results = scribe.fit(
     adata,
-    prob_prior="neg",
+    unconstrained=True,
+    priors={"probability": "neg"},
 )
 ```
 
@@ -195,14 +196,16 @@ results = scribe.fit(
     zero_inflation=True,
     n_components=3,
     unconstrained=True,
-    expression_prior="neg",
-    prob_prior="gaussian",
+    priors={
+        "mean_expression": "neg",
+        "probability": "gaussian",
+    },
 )
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `expression_prior` | Prior family for mu across components: `"gaussian"`, `"horseshoe"`, `"neg"` |
+| `priors` key | Description |
+|--------------|-------------|
+| `mean_expression` | Prior family for mu across components: `"gaussian"`, `"horseshoe"`, `"neg"` |
 | Requires | `n_components >= 2`, `unconstrained=True` |
 
 ### Hierarchical zero-inflation gate
@@ -265,7 +268,8 @@ uses only the \(r_g\) and \(p_g\) parameters.
 results = scribe.fit(
     adata,
     zero_inflation=True,
-    zero_inflation_prior="neg",
+    unconstrained=True,
+    priors={"zero_inflation": "neg"},
 )
 ```
 
@@ -290,7 +294,7 @@ results = scribe.fit(
     adata,
     parameterization="canonical",
     overdispersion="bnb",
-    overdispersion_prior="horseshoe",   # or "neg"
+    priors={"overdispersion": "horseshoe"},   # or "neg"
 )
 ```
 
@@ -484,9 +488,11 @@ results = scribe.fit(
     zero_inflation=True,
     n_components=3,
     unconstrained=True,
-    expression_prior="neg",        # across mixture components
-    prob_prior="gaussian",         # gene-specific p
-    zero_inflation_prior="neg",    # gene-specific ZI gate
+    priors={
+        "mean_expression": "neg",       # across mixture components
+        "probability": "gaussian",      # gene-specific p
+        "zero_inflation": "neg",        # gene-specific ZI gate
+    },
 )
 ```
 
@@ -499,18 +505,21 @@ results = scribe.fit(
     variable_capture=True,
     zero_inflation=True,
     dataset_key="batch",
-    priors={"organism": "human"},
-    expression_dataset_prior="horseshoe",       # dataset-specific mu
-    prob_dataset_prior="gaussian",              # dataset-specific p (gene-specific mode)
-    zero_inflation_dataset_prior="neg",         # dataset-specific gate
+    priors={
+        "organism": "human",
+        "mean_expression": {"batch": "horseshoe"},   # dataset-specific mu
+        "probability": {"batch": "gaussian"},        # dataset-specific p
+        "zero_inflation": {"batch": "neg"},          # dataset-specific gate
+    },
 )
 ```
 
 ### Crossed multi-factor model
 
 Pass a **list** of grouping columns (crossing is implicit) or a structured
-`hierarchy=[GroupLevel(...)]`, and give the `*_dataset_prior` a **dict** to set
-a prior family *per factor*. Mark the contrast of interest as a fixed effect:
+`hierarchy=[GroupLevel(...)]`, and give a canonical name a `{level: family}`
+dict in `priors` to set a prior family *per factor*. Mark the contrast of
+interest as a fixed effect:
 
 ```python
 # Donors crossed with a two-level treatment.
@@ -523,11 +532,13 @@ results = scribe.fit(
         scribe.GroupLevel("perturbation", effect_type="fixed"),  # 2-level contrast
         scribe.GroupLevel("sample"),                             # donors -> random
     ],
-    expression_dataset_prior={
-        "perturbation": "gaussian",   # fixed-scale, weakly-informative contrast
-        "sample": "horseshoe",        # adaptive shrinkage across donors
+    priors={
+        "mean_expression": {
+            "perturbation": "gaussian",   # fixed-scale, weakly-informative contrast
+            "sample": "horseshoe",        # adaptive shrinkage across donors
+        },
+        "probability": {"sample": "gaussian"},  # technical p: leaf-exchangeable
     },
-    prob_dataset_prior="gaussian",    # technical p: leaf-exchangeable
 )
 ```
 
@@ -540,39 +551,52 @@ Python-API feature; the CLI supports a single `dataset_key`.
 
 ### Parameter reference
 
-| Parameter                      | Level                    | Accepted values                              | Requires                                  |
-| ------------------------------ | ------------------------ | -------------------------------------------- | ----------------------------------------- |
-| `expression_prior`             | Gene (across components) | `"gaussian"`, `"horseshoe"`, `"neg"`         | `n_components >= 2`, `unconstrained=True` |
-| `prob_prior`                   | Gene                     | `"gaussian"`, `"horseshoe"`, `"neg"`         | --                                        |
-| `zero_inflation_prior`         | Gene                     | `"gaussian"`, `"horseshoe"`, `"neg"`         | ZI model (zinb/zinbvcp)                   |
-| `expression_dataset_prior`     | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`                             |
-| `prob_dataset_prior`           | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`                             |
-| `prob_dataset_mode`            | --                       | `"scalar"`, `"gene_specific"`, `"two_level"` | `prob_dataset_prior` set                  |
-| `zero_inflation_dataset_prior` | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`, ZI model                   |
-| `overdispersion`               | --                       | `"none"`, `"bnb"`                            | --                                        |
-| `overdispersion_prior`         | Gene                     | `"horseshoe"`, `"neg"`                       | `overdispersion="bnb"`                    |
-| `overdispersion_dataset_prior` | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `overdispersion="bnb"`, `dataset_key`     |
+Prior families/hierarchies are entries in the `priors` dict: a **bare family
+string** is a gene-level prior; a **`{level: family}` dict** is a
+dataset/factor hierarchy (add a `"base"` key for the gene-level prior too).
+
+| `priors` key      | Gene-level (`"family"`) | Dataset/factor (`{level: family}`) | Requires                        |
+| ----------------- | ----------------------- | ---------------------------------- | ------------------------------- |
+| `mean_expression` | mu across components    | mu across factors                  | gene-level: `n_components >= 2` |
+| `probability`     | gene-specific p         | p across factors                   | --                              |
+| `zero_inflation`  | gene-specific gate      | gate across factors                | ZI model (zinb/zinbvcp)         |
+| `overdispersion`  | kappa_g (BNB)           | kappa across factors               | `overdispersion="bnb"`          |
+| `regime`          | --- (hierarchy only)    | regime coord across factors        | TwoState model                  |
+
+Families are `"gaussian"`, `"horseshoe"`, `"neg"` (or a `{"type": ...}` spec).
+All hierarchical priors require `unconstrained=True`; the dataset/factor forms
+also require `dataset_key`/`hierarchy`. The remaining **structural** options
+stay as keyword arguments:
+
+| Keyword argument                     | Values                                       | Requires                    |
+| ------------------------------------ | -------------------------------------------- | --------------------------- |
+| `overdispersion`                     | `"none"`, `"bnb"`                            | --                          |
+| `prob_dataset_mode`                  | `"scalar"`, `"gene_specific"`, `"two_level"` | dataset-level `probability` |
+| `regime_dataset_target`              | a two-state coordinate name                  | TwoState model              |
+| `overdispersion_dataset_independent` | `True` / `False`                             | TwoState model              |
 
 !!! note "Per-factor priors in crossed designs"
-    With more than one grouping factor, every `*_dataset_prior` also accepts a
-    **dict** `{factor_name: family}` to choose the prior family per factor
-    (e.g. `expression_dataset_prior={"perturbation": "gaussian", "sample":
-    "horseshoe"}`). A bare string broadcasts to all factors. Factors marked
-    `effect_type="fixed"` use a fixed-scale Gaussian regardless of family and
-    learn no shrinkage scale.
+    With more than one grouping factor, give the canonical name a
+    `{level: family}` dict to choose the prior family per factor (e.g.
+    `priors={"mean_expression": {"perturbation": "gaussian", "sample":
+    "horseshoe"}}`). Add a `"base"` key to set the gene-level prior at the same
+    time. Factors marked `effect_type="fixed"` use a fixed-scale Gaussian
+    regardless of family and learn no shrinkage scale.
 
 ### Horseshoe and NEG hyperparameters
 
-These are shared across all parameters that use the corresponding prior:
+To tune a family, pass a **family spec** (a dict carrying `"type"`) instead of
+a bare string; the extra keys set the hyperparameters (e.g.
+`priors={"probability": {"type": "horseshoe", "tau0": 0.5}}`):
 
-| Parameter              | Default | Effect                                               |
-| ---------------------- | ------- | ---------------------------------------------------- |
-| `horseshoe_tau0`       | 1.0     | Global shrinkage scale                               |
-| `horseshoe_slab_df`    | 4       | Slab tail weight (degrees of freedom)                |
-| `horseshoe_slab_scale` | 2.0     | Slab location scale                                  |
-| `neg_u`                | 1.0     | Inner Gamma shape (1 = NEG, 0.5 = horseshoe)         |
-| `neg_a`                | 1.0     | Outer Gamma shape (controls concentration near zero) |
-| `neg_tau`              | 1.0     | Global rate for the outer Gamma                      |
+| Spec key     | Default | Effect                                               |
+| ------------ | ------- | ---------------------------------------------------- |
+| `tau0`       | 1.0     | Global shrinkage scale (horseshoe)                   |
+| `slab_df`    | 4       | Slab tail weight / degrees of freedom (horseshoe)    |
+| `slab_scale` | 2.0     | Slab location scale (horseshoe)                      |
+| `u`          | 1.0     | Inner Gamma shape (NEG; 1 = NEG, 0.5 = horseshoe)    |
+| `a`          | 1.0     | Outer Gamma shape (NEG; concentration near zero)     |
+| `tau`        | 1.0     | Global rate for the outer Gamma (NEG)                |
 
 !!! tip "Choosing a prior family"
     - **Start with `"gaussian"`** for well-behaved problems with few
