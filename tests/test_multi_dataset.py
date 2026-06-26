@@ -5075,3 +5075,44 @@ class TestGetDatasetMultiFactorResample:
                 # collapse).
                 want = np.asarray(full[target])[:, leaf]
                 assert np.allclose(got, want, rtol=1e-4)
+
+    def test_get_map_canonical_reconstructs_crossed_r(self):
+        """get_map(canonical=True) must reconstruct the additive multi-factor
+        dispersion r (the analytic get_distributions path), not raise on a
+        missing ``r_loc`` (regression for the diagnostic-plot KeyError)."""
+        import scribe
+
+        adata = self._make_adata()
+        res = scribe.fit(
+            adata,
+            parameterization="mean_disp",
+            variable_capture=True,
+            unconstrained=True,
+            hierarchy=[
+                scribe.GroupLevel(
+                    "condition", effect_type="fixed", fixed_scale=3.0
+                ),
+                scribe.GroupLevel("donor"),
+            ],
+            priors={
+                "mean_expression": {"condition": "gaussian", "donor": "horseshoe"},
+                "dispersion": {"condition": "gaussian", "donor": "horseshoe"},
+            },
+            n_steps=40,
+            batch_size=128,
+            seed=0,
+        )
+        m = res.get_map(
+            targets=["mu", "r", "p"],
+            canonical=True,
+            verbose=False,
+            counts=adata,
+        )
+        n_leaves = res.model_config.n_datasets
+        for target in ("mu", "r", "p"):
+            arr = np.asarray(m[target])
+            # leaf-shaped (n_leaves, n_genes)
+            assert arr.shape == (n_leaves, res.n_genes)
+        # r genuinely varies across leaves (not a collapsed default).
+        r = np.asarray(m["r"])
+        assert not np.allclose(r[0], r[-1])

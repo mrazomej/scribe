@@ -487,6 +487,17 @@ def _build_base_skip_set(
         else:
             skip.add("mu")
 
+    # mean_disp dispersion (r) multi-factor hierarchy: r is reconstructed
+    # additively (Pass 3b, _apply_dataset_hierarchy_target), so the base
+    # mean-field builder must skip the absent ``r_loc``/``r_scale`` site.
+    if parameterization == Parameterization.MEAN_DISP:
+        _gs = getattr(model_config, "grouping_spec", None)
+        if _gs is not None and any(
+            f.family("dispersion") != "none"
+            for f in getattr(_gs, "factors", ())
+        ):
+            skip.add("r")
+
     # TwoState dataset-level regime hierarchy overrides the base regime
     # coordinate.  Under a horseshoe/NEG (NCP) dataset prior the base guide
     # site does not exist (only ``{coord}_raw_dataset`` + hyper sites do), so
@@ -973,15 +984,18 @@ def _resolve_multifactor_factors(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
     target: str,
+    target_kwarg: str = "expression",
 ) -> List[Tuple[Any, str]]:
     """Return ``[(factor, site_prefix), ...]`` for the multi-factor mu/r prior.
 
     The additive multi-factor decomposition (see :func:`_multifactor_hier` in
     the preset factory) applies only when the grouping spec has more than one
-    factor and at least one factor carries a non-"none" expression family.  The
-    per-factor NumPyro site prefix mirrors ``_multifactor_site_prefix`` exactly
+    factor and at least one factor carries a non-"none" family for
+    ``target_kwarg`` (``"expression"`` for the mean ``mu``/``r``, ``"dispersion"``
+    for the ``mean_disp`` dispersion ``r``).  The per-factor NumPyro site prefix
+    mirrors ``_multifactor_site_prefix`` exactly
     (``f"{target}_{name.replace(':', '__')}"``).  Returns an empty list when the
-    fit is not a multi-factor expression model, so callers fall back to the
+    fit is not a multi-factor model for this target, so callers fall back to the
     single-axis dataset-hierarchy path.
     """
     gs = getattr(model_config, "grouping_spec", None)
@@ -990,7 +1004,7 @@ def _resolve_multifactor_factors(
         return []
     resolved: List[Tuple[Any, str]] = []
     for fac in factors:
-        if fac.family("expression") == "none":
+        if fac.family(target_kwarg) == "none":
             continue
         prefix = f"{target}_{fac.name.replace(':', '__')}"
         if f"{prefix}_raw_loc" in params:
@@ -1006,6 +1020,7 @@ def _build_multifactor_leaf_posterior(
     split: bool,
     *,
     transform=None,
+    target_kwarg: str = "expression",
 ) -> Union[dist.Distribution, List[dist.Distribution]]:
     """Reconstruct the leaf-level mu/r posterior for the multi-factor hierarchy.
 
@@ -1039,7 +1054,7 @@ def _build_multifactor_leaf_posterior(
     for fac, prefix in mf_factors:
         raw_loc = params[f"{prefix}_raw_loc"]  # (K?, L_f, G)
         raw_scale = params[f"{prefix}_raw_scale"]  # (K?, L_f, G)
-        family = fac.family("expression")
+        family = fac.family(target_kwarg)
 
         if fac.effect_type == "fixed":
             scale = fac.fixed_scale if fac.fixed_scale is not None else 1.0
@@ -1078,54 +1093,45 @@ def _build_multifactor_leaf_posterior(
     return posterior
 
 
-def _apply_dataset_hierarchy_mu(
+def _apply_dataset_hierarchy_target(
     distributions: Dict[str, Any],
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
-    parameterization: Parameterization,
     is_mixture: bool,
     low_rank: bool,
     split: bool,
     *,
+    target: str,
+    hyper_loc: str,
+    hyper_scale: str,
+    hs_prefix: str,
+    target_kwarg: str = "expression",
+    horseshoe_dataset: bool = False,
+    neg_dataset: bool = False,
+    single_axis_active: bool = False,
     pos_transform=None,
 ) -> None:
-    """Pass 3: override mu/r with a dataset-level hierarchical prior.
+    """Pass 3: override a positive target (``mu``/``r``) with its dataset-level
+    hierarchical prior.
 
-    Active when ``hierarchical_dataset_mu=True``,
-    ``horseshoe_dataset_mu=True``, or ``expression_dataset_prior==NEG``.  Adds
-    dataset-level hyperparameter posteriors and *replaces* the base
-    ``"mu"`` (or ``"r"``) entry.  The resulting MAP has shape
-    ``(K, D, G)`` instead of ``(K, G)``.
+    Target-parametric — the caller selects the target and its site names, so one
+    implementation serves both the expression mean (``mu``, or ``r`` in
+    canonical) and the ``mean_disp`` dispersion ``r``
+    (``target_kwarg="dispersion"``).
+
+    The **additive multi-factor** hierarchy (crossed grouping factors) is handled
+    first and applies to either target whenever the per-factor effect sites are
+    present. The **single-axis** dataset hierarchy (legacy ``dataset_key="batch"``
+    with a gaussian/horseshoe/NEG family) is expression-only and runs only when
+    ``single_axis_active``; it adds dataset-level hyperparameter posteriors and
+    replaces the target with a ``(K, D, G)`` entry.
     """
-    hierarchical_dataset_mu = getattr(
-        model_config, "hierarchical_dataset_mu", False
+    # Multi-factor additive hierarchy: the leaf parameter is the population
+    # intercept plus a sum of per-factor effects (no single ``{hyper_scale}``
+    # site), so reconstruct it directly. Applies to mu OR r.
+    mf_factors = _resolve_multifactor_factors(
+        params, model_config, target, target_kwarg=target_kwarg
     )
-    horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
-    neg_dataset_mu = (
-        model_config.expression_dataset_prior == HierarchicalPriorType.NEG
-    )
-    if not (hierarchical_dataset_mu or horseshoe_dataset_mu or neg_dataset_mu):
-        return
-
-    if parameterization in (
-        Parameterization.CANONICAL,
-        Parameterization.STANDARD,
-    ):
-        hyper_loc = "log_r_dataset_loc"
-        hyper_scale = "log_r_dataset_scale"
-        target = "r"
-        hs_prefix = "r_dataset"
-    else:
-        hyper_loc = "log_mu_dataset_loc"
-        hyper_scale = "log_mu_dataset_scale"
-        target = "mu"
-        hs_prefix = "mu_dataset"
-
-    # Multi-factor additive expression hierarchy: the leaf parameter is the
-    # population intercept plus a sum of per-factor effects (no single
-    # ``{hyper_scale}`` site), so reconstruct it directly rather than via the
-    # single-axis dataset-hierarchy builders below.
-    mf_factors = _resolve_multifactor_factors(params, model_config, target)
     if mf_factors:
         distributions[target] = _build_multifactor_leaf_posterior(
             params,
@@ -1134,10 +1140,15 @@ def _apply_dataset_hierarchy_mu(
             is_mixture,
             split,
             transform=pos_transform,
+            target_kwarg=target_kwarg,
         )
         return
 
-    if horseshoe_dataset_mu:
+    # Single-axis dataset hierarchy (expression-only).
+    if not single_axis_active:
+        return
+
+    if horseshoe_dataset:
         raw_name = f"{target}_raw"
         # When joint_params includes the target, the horseshoe raw z lives
         # inside the joint block under either "{target}_raw" or "{target}".
@@ -1175,7 +1186,7 @@ def _apply_dataset_hierarchy_mu(
             )
         return
 
-    if neg_dataset_mu:
+    if neg_dataset:
         raw_name = f"{target}_raw"
         jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
             params, target
@@ -2196,16 +2207,50 @@ def get_posterior_distributions(
         flow_skip,
         pos_transform=_resolve_pos_transform_for(pos_transform, _mu_target),
     )
-    _apply_dataset_hierarchy_mu(  # Pass 3
+    # Pass 3: dataset hierarchy on the expression mean (mu, or r in canonical).
+    _expr_hyper = f"log_{_mu_target}_dataset"
+    _apply_dataset_hierarchy_target(
         distributions,
         params,
         model_config,
-        parameterization,
         is_mixture,
         low_rank,
         split,
+        target=_mu_target,
+        hyper_loc=f"{_expr_hyper}_loc",
+        hyper_scale=f"{_expr_hyper}_scale",
+        hs_prefix=f"{_mu_target}_dataset",
+        target_kwarg="expression",
+        horseshoe_dataset=getattr(model_config, "horseshoe_dataset_mu", False),
+        neg_dataset=(
+            model_config.expression_dataset_prior == HierarchicalPriorType.NEG
+        ),
+        single_axis_active=(
+            getattr(model_config, "hierarchical_dataset_mu", False)
+            or getattr(model_config, "horseshoe_dataset_mu", False)
+            or model_config.expression_dataset_prior
+            == HierarchicalPriorType.NEG
+        ),
         pos_transform=_resolve_pos_transform_for(pos_transform, _mu_target),
     )
+    # Pass 3b: dataset hierarchy on the dispersion r (mean_disp only; the
+    # additive multi-factor path -- there is no single-axis dispersion family).
+    if parameterization == Parameterization.MEAN_DISP:
+        _apply_dataset_hierarchy_target(
+            distributions,
+            params,
+            model_config,
+            is_mixture,
+            low_rank,
+            split,
+            target="r",
+            hyper_loc="log_r_dataset_loc",
+            hyper_scale="log_r_dataset_scale",
+            hs_prefix="r_dataset",
+            target_kwarg="dispersion",
+            single_axis_active=False,
+            pos_transform=_resolve_pos_transform_for(pos_transform, "r"),
+        )
     _apply_dataset_hierarchy_p(  # Pass 4
         distributions,
         params,
