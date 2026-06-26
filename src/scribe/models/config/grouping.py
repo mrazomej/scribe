@@ -426,7 +426,8 @@ def normalize_unified_priors(
     Returns
     -------
     (base, gene_level, hierarchical)
-        ``base`` : ``{site -> raw value}`` (tuples / W-strategy dicts).
+        ``base`` : ``{original key -> raw value}`` (tuples / W-strategy dicts
+        / unrecognized pass-through values; resolved later by with_priors).
         ``gene_level`` : ``{site -> PriorFamilySpec}``.
         ``hierarchical`` : ``{internal target -> {level -> PriorFamilySpec}}``.
     """
@@ -437,29 +438,33 @@ def normalize_unified_priors(
         return base, gene_level, hierarchical
 
     for name, value in priors.items():
-        site = _resolve_prior_site(name)
-
-        # Base hyperparameter override (e.g. (loc, scale)).
+        # Base hyperparameter overrides (tuples) and any other unrecognized
+        # value pass through to ``base`` with their ORIGINAL key; downstream
+        # ``with_priors`` / ``normalize_prior_keys`` resolves them. This
+        # preserves raw hyperprior-override keys (e.g. ``logit_p_loc``).
         if isinstance(value, tuple):
-            base[site] = value
+            base[name] = value
             continue
 
         # A single family-spec (dict carrying the reserved 'type' key, no
         # per-level structure).
         if isinstance(value, dict) and "type" in value:
+            site = _resolve_prior_site(name)
             if site == "W":
-                base[site] = value  # loadings W-strategy spec
+                base[name] = value  # loadings W-strategy spec (raw)
             else:
                 gene_level[site] = PriorFamilySpec.from_value(value)
             continue
 
         # Bare family name -> gene-level selector.
         if isinstance(value, str):
+            site = _resolve_prior_site(name)
             gene_level[site] = PriorFamilySpec.from_value(value)
             continue
 
         # Level-mapping -> dataset/factor hierarchy (+ optional 'base').
         if isinstance(value, dict):
+            site = _resolve_prior_site(name)
             target = HIERARCHY_TARGET_BY_SITE.get(site)
             for level, fam in value.items():
                 if level == "base":
@@ -481,12 +486,9 @@ def normalize_unified_priors(
                 )
             continue
 
-        raise ValueError(
-            f"priors[{name!r}] has unsupported value type "
-            f"{type(value).__name__}; expected a tuple (base hyperparameters), "
-            f"a family str/dict (gene-level), or a level-mapping dict "
-            f"(dataset/factor hierarchy)."
-        )
+        # Anything else (arrays, custom base specs) -> base pass-through;
+        # validated downstream by with_priors.
+        base[name] = value
 
     return base, gene_level, hierarchical
 

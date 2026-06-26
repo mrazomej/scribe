@@ -30,7 +30,8 @@ def test_tuple_is_base_hyperparameter_override():
     base, gene, hier = normalize_unified_priors(
         {"dispersion": (1.0, 1.0)}, LEVELS
     )
-    assert base == {"r": (1.0, 1.0)}
+    # Base entries keep their ORIGINAL key; with_priors resolves them later.
+    assert base == {"dispersion": (1.0, 1.0)}
     assert gene == {} and hier == {}
 
 
@@ -39,7 +40,17 @@ def test_loadings_strategy_dict_is_base():
     base, gene, hier = normalize_unified_priors({"loadings": spec}, LEVELS)
     # W-strategy specs are stored raw (their 'type' vocabulary differs from the
     # hierarchical family vocabulary) and never coerced to PriorFamilySpec.
-    assert base == {"W": spec}
+    assert base == {"loadings": spec}
+    assert gene == {} and hier == {}
+
+
+def test_unknown_base_key_passes_through():
+    # Raw hyperprior-override keys / unrecognized base specs pass through to
+    # base unchanged (validated downstream by with_priors), NOT rejected.
+    base, gene, hier = normalize_unified_priors(
+        {"logit_p_loc": (0.0, 1.0)}, LEVELS
+    )
+    assert base == {"logit_p_loc": (0.0, 1.0)}
     assert gene == {} and hier == {}
 
 
@@ -130,9 +141,12 @@ def test_unknown_level_rejected():
         normalize_unified_priors({"dispersion": {"nonsense": "gaussian"}}, LEVELS)
 
 
-def test_unsupported_value_type_rejected():
-    with pytest.raises(ValueError, match="unsupported value type"):
-        normalize_unified_priors({"dispersion": 5}, LEVELS)
+def test_non_family_value_passes_through_to_base():
+    # A non-tuple/str/dict value is not a family or hierarchy; it passes
+    # through to base with its original key (downstream validates it).
+    base, gene, hier = normalize_unified_priors({"dispersion": 5}, LEVELS)
+    assert base == {"dispersion": 5}
+    assert gene == {} and hier == {}
 
 
 def test_invalid_family_rejected():
