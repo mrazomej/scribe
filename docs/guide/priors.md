@@ -201,10 +201,9 @@ priors={
     `"gaussian"` or `"horseshoe"` family (`"neg"` is not yet supported). It must
     be a **joint** fit: with `variable_capture=True`, capture efficiency is
     degenerate with the mean, so the conditions have to share that structure in
-    one inference. The additive multi-factor path means `get_dataset`
-    *re-sampling* on a per-leaf view is unreliable (a known limitation), but
-    differential expression --- which slices the stored posterior --- is
-    unaffected.
+    one inference. `get_dataset(i)` correctly re-samples a single leaf of an
+    additive multi-factor fit (it restricts the grouping to that leaf), so
+    per-dataset posterior sampling and differential expression both work.
 
 **Theory:** [Differential Expression](differential-expression.md) and
 [Hierarchical Priors](../theory/hierarchical-priors.md).

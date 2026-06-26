@@ -4993,3 +4993,85 @@ class TestTwoStateMultiDatasetGetMap:
             arr = np.asarray(ps[name])
             # (n_samples, n_datasets, n_genes)
             assert arr.ndim == 3 and arr.shape[1] == 2
+
+
+# ==============================================================================
+# get_dataset re-sampling on an additive multi-factor fit
+# ==============================================================================
+
+
+class TestGetDatasetMultiFactorResample:
+    """A single-leaf view of a multi-factor fit must *re-sample* the selected
+    leaf correctly (not just slice the stored posterior).
+
+    get_dataset restricts the grouping to one leaf so the additive hierarchy
+    reconstructs exactly that leaf; the size-1 dataset axis is squeezed so the
+    view stays single-dataset ``(S, G)``.
+    """
+
+    @staticmethod
+    def _make_adata():
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(0)
+        donors, conds, G, cpl = ["d0", "d1"], ["ctrl", "drug"], 5, 60
+        rows, od, oc = [], [], []
+        base = rng.normal(2.0, 0.5, G)
+        for di, d in enumerate(donors):
+            for c in conds:
+                lm = base + (0.4 if di else -0.4)
+                if c == "drug":
+                    lm = lm.copy()
+                    lm[:2] += 1.5
+                mu = np.exp(lm)
+                for _ in range(cpl):
+                    rows.append(rng.poisson(mu * rng.uniform(0.8, 1.2) * 6.0))
+                    od.append(d)
+                    oc.append(c)
+        return anndata.AnnData(
+            X=np.asarray(rows, dtype=float),
+            obs=pd.DataFrame({"donor": od, "condition": oc}),
+        )
+
+    def test_get_dataset_resamples_leaf_exactly(self):
+        import scribe
+
+        adata = self._make_adata()
+        res = scribe.fit(
+            adata,
+            parameterization="mean_disp",
+            variable_capture=True,
+            unconstrained=True,
+            hierarchy=[
+                scribe.GroupLevel(
+                    "condition", effect_type="fixed", fixed_scale=3.0
+                ),
+                scribe.GroupLevel("donor"),
+            ],
+            priors={
+                "mean_expression": {"condition": "gaussian", "donor": "horseshoe"},
+                "dispersion": {"condition": "gaussian", "donor": "horseshoe"},
+            },
+            n_steps=40,
+            batch_size=128,
+            seed=0,
+        )
+        key = random.PRNGKey(5)
+        full = res.get_posterior_samples(n_samples=40, rng_key=key)
+        n_leaves = res.model_config.n_datasets
+        assert n_leaves == 4
+        for leaf in range(n_leaves):
+            child = res.get_dataset(leaf)
+            re = child.get_posterior_samples(
+                n_samples=40, store_samples=False, rng_key=key
+            )
+            for target in ("mu", "r"):
+                got = np.asarray(re[target])
+                # Re-sampled view is single-dataset (S, G) (axis squeezed).
+                assert got.shape == (40, res.n_genes)
+                # ...and reconstructs the SAME leaf the full model does, under
+                # the same RNG (the additive gather is identical, not a default
+                # collapse).
+                want = np.asarray(full[target])[:, leaf]
+                assert np.allclose(got, want, rtol=1e-4)

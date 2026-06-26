@@ -213,9 +213,42 @@ class DatasetMixin:
                 self.posterior_samples, dataset_index, n_datasets
             )
 
-        new_model_config = self.model_config.model_copy(
-            update={"n_datasets": None}
+        # The additive multi-factor hierarchy reconstructs a leaf as
+        # ``pop + sum_f effect_f[level_f(leaf)]`` at sample time. A stripped
+        # single-dataset view (n_datasets=None) loses the leaf identity, so
+        # re-sampling would collapse to a default. Instead, restrict the
+        # grouping to the SELECTED leaf (n_leaves=1; each factor's leaf->level
+        # pinned to this leaf) and keep the per-factor effect params intact, so
+        # the model reconstructs exactly this leaf. The resulting size-1 dataset
+        # axis is squeezed at the sampling boundary (get_posterior_samples) so
+        # the view still presents single-dataset ``(S, G)`` arrays. (Stored
+        # posterior samples were already sliced to the leaf above; this only
+        # repairs re-sampling.)
+        _gs = getattr(self.model_config, "grouping_spec", None)
+        _is_multifactor = (
+            _gs is not None and len(getattr(_gs, "factors", ())) > 1
         )
+        if _is_multifactor:
+            _leaf_factors = tuple(
+                f.model_copy(
+                    update={"leaf_to_level": (f.leaf_to_level[dataset_index],)}
+                )
+                for f in _gs.factors
+            )
+            _single_leaf_gs = _gs.model_copy(
+                update={
+                    "factors": _leaf_factors,
+                    "leaf_labels": (_gs.leaf_labels[dataset_index],),
+                    "n_leaves": 1,
+                }
+            )
+            new_model_config = self.model_config.model_copy(
+                update={"n_datasets": 1, "grouping_spec": _single_leaf_gs}
+            )
+        else:
+            new_model_config = self.model_config.model_copy(
+                update={"n_datasets": None}
+            )
 
         # Snapshot parent layouts before modification so we can compute
         # adjusted gene-axis indices below.
@@ -251,6 +284,14 @@ class DatasetMixin:
             int(per_ds[dataset_index]) if per_ds is not None else self.n_cells
         )
 
+        # Single-leaf multi-factor view: every retained cell maps to the one
+        # retained leaf (index 0), so re-sampling reconstructs that leaf.
+        child_dataset_indices = (
+            jnp.zeros((ds_n_cells,), dtype=jnp.int32)
+            if _is_multifactor
+            else None
+        )
+
         return type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -280,6 +321,7 @@ class DatasetMixin:
             _excluded_gene_names=getattr(self, "_excluded_gene_names", None),
             _original_n_genes=getattr(self, "_original_n_genes", None),
             _total_count_max=getattr(self, "_total_count_max", None),
+            _dataset_indices=child_dataset_indices,
         )
 
     # ------------------------------------------------------------------

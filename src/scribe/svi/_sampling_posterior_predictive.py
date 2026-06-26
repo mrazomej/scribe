@@ -318,6 +318,12 @@ class PosteriorPredictiveSamplingMixin:
                 counts=counts,
             )
 
+        # Single-leaf multi-factor view (from get_dataset on a multi-factor
+        # fit): the model reconstructs a size-1 dataset axis; squeeze it so the
+        # view presents single-dataset (S, G) arrays consistent with its stored
+        # (sliced) posterior.
+        posterior_samples = self._squeeze_collapsed_leaf_axis(posterior_samples)
+
         # Convert independently from storage behavior. This enables callers
         # to request NumPy return values while keeping results object state
         # unchanged (store_samples=False).
@@ -330,6 +336,59 @@ class PosteriorPredictiveSamplingMixin:
         from ..models.config.parameter_mapping import rename_dict_keys
 
         return rename_dict_keys(posterior_samples, descriptive_names)
+
+    def _squeeze_collapsed_leaf_axis(self, samples: Optional[Dict]) -> Optional[Dict]:
+        """Squeeze the singleton dataset axis from a single-leaf view.
+
+        ``get_dataset`` on a multi-factor fit restricts the model to one leaf
+        (``n_datasets == 1`` with a 1-leaf ``grouping_spec``) so re-sampling
+        reconstructs that leaf via the additive hierarchy. The reconstruction
+        carries a size-1 dataset axis, which is removed here so the view's
+        re-sampled arrays match its stored, leaf-sliced single-dataset ``(S, G)``
+        shape. No-op for ordinary results.
+        """
+        if samples is None:
+            return samples
+        mc = self.model_config
+        gs = getattr(mc, "grouping_spec", None)
+        if not (
+            getattr(mc, "n_datasets", None) == 1
+            and gs is not None
+            and getattr(gs, "n_leaves", None) == 1
+        ):
+            return samples
+
+        from ..core.axis_layout import (
+            build_sample_layouts,
+            derive_axis_membership,
+        )
+
+        _mp, _dp = derive_axis_membership(mc, samples=samples, has_sample_dim=True)
+        layouts = build_sample_layouts(
+            list(mc.param_specs or []),
+            samples,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=getattr(mc, "n_components", None),
+            n_datasets=1,
+            mixture_params=_mp,
+            dataset_params=_dp,
+            has_sample_dim=True,
+        )
+        out: Dict = {}
+        for key, value in samples.items():
+            lay = layouts.get(key)
+            ax = lay.dataset_axis if lay is not None else None
+            if (
+                ax is not None
+                and hasattr(value, "ndim")
+                and value.ndim > ax
+                and value.shape[ax] == 1
+            ):
+                out[key] = jnp.squeeze(value, axis=ax)
+            else:
+                out[key] = value
+        return out
 
     def get_posterior_matrix(
         self,
