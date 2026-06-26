@@ -14,6 +14,16 @@ model through downstream analysis.
 
     [The `scribe.fit()` Interface](fit.md)
 
+-   :material-tune-variant:{ .lg .middle } **Defining Priors**
+
+    ---
+
+    The single `priors` dict: base hyperparameters, gene-level adaptive
+    shrinkage, dataset/condition hierarchies, and condition-specific dispersion
+    --- with the role of each entry set by its value shape
+
+    [Defining Priors](priors.md)
+
 -   :material-view-grid:{ .lg .middle } **Model Selection**
 
     ---
