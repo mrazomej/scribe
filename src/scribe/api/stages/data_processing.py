@@ -130,13 +130,20 @@ def process_data_and_datasets(ctx: FitContext) -> None:
             "regime": "regime_dataset_prior",
         }
         for _tgt, _lvlmap in _hier_p.items():
+            _lvl_families = {_lvl: _spec.type for _lvl, _spec in _lvlmap.items()}
             _field = _DATASET_FIELD.get(_tgt)
-            if _field is None:
+            if _field is not None:
+                kw[_field] = _lvl_families
+            elif _tgt == "dispersion":
+                # No flat kwarg for dispersion; carried internally into the
+                # grouping's dataset_priors and consumed by the factory's
+                # condition-specific-r dispatch.
+                kw["_dispersion_dataset_prior"] = _lvl_families
+            else:
                 raise ValueError(
                     f"priors: a dataset/factor hierarchy on target {_tgt!r} is "
-                    f"not yet wired (coming with condition-specific dispersion)."
+                    f"not supported."
                 )
-            kw[_field] = {_lvl: _spec.type for _lvl, _spec in _lvlmap.items()}
 
     auto_downgrade = kw.get("auto_downgrade_single_dataset_hierarchy", True)
     expression_dataset_prior = kw.get("expression_dataset_prior", "none")
@@ -145,6 +152,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
     zi_dataset_prior = kw.get("zero_inflation_dataset_prior", "none")
     od_dataset_prior = kw.get("overdispersion_dataset_prior", "none")
     regime_dataset_prior = kw.get("regime_dataset_prior", "none")
+    dispersion_dataset_prior = kw.get("_dispersion_dataset_prior", "none")
     dataset_mixing = kw.get("dataset_mixing")
     prob_prior = kw.get("prob_prior", "none")
     zi_prior = kw.get("zero_inflation_prior", "none")
@@ -166,6 +174,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
         or interactions is not None
         or isinstance(dataset_key, (list, tuple))
         or _priors_have_dict
+        or isinstance(dispersion_dataset_prior, dict)
     )
     _grouping_requested = dataset_key is not None or hierarchy is not None
 
@@ -183,6 +192,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
             obs=adata.obs if adata is not None else None,
             dataset_priors={
                 "expression": expression_dataset_prior,
+                "dispersion": dispersion_dataset_prior,
                 "prob": prob_dataset_prior,
                 "zero_inflation": zi_dataset_prior,
                 "overdispersion": od_dataset_prior,

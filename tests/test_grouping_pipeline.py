@@ -179,7 +179,7 @@ def test_unified_priors_route_into_flat_plumbing():
     assert ctx.priors == {"dispersion": (2.0, 0.5)}
 
 
-def test_unified_priors_dispersion_hierarchy_not_yet_wired():
+def test_unified_priors_dispersion_routes_into_grouping():
     sample = ["D1", "D1", "D2", "D2"]
     treatment = ["control", "drug", "control", "drug"]
     adata = _make_adata(sample, treatment)
@@ -188,5 +188,8 @@ def test_unified_priors_dispersion_hierarchy_not_yet_wired():
         kwargs=dict(dataset_key=["treatment", "sample"]),
         priors={"dispersion": {"treatment": "gaussian"}},
     )
-    with pytest.raises(ValueError, match="not yet wired"):
-        process_data_and_datasets(ctx)
+    process_data_and_datasets(ctx)
+    by_name = {f.name: f for f in ctx.grouping_spec.factors}
+    # Condition factor carries the dispersion family; others do not.
+    assert by_name["treatment"].family("dispersion") == "gaussian"
+    assert by_name["sample"].family("dispersion") == "none"

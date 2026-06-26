@@ -1177,6 +1177,28 @@ def create_model(
                     positive_transform=_pos_transform_for_name(_p_target),
                 )
 
+        # Condition-specific dispersion r (mean_disp). Always additive
+        # (multi-factor) so a single condition factor yields one r per
+        # condition gathered onto leaves; the exp link makes the per-factor
+        # effects log-additive (interpretable Delta log r). Reads dispersion
+        # families straight off grouping_spec — no separate flag.
+        if _grouping_spec is not None and any(
+            fac.family("dispersion") != "none"
+            for fac in _grouping_spec.factors
+        ):
+            _validate_dispersion_hierarchy(param_key, _grouping_spec)
+            param_specs = _multifactor_mu(
+                param_specs=param_specs,
+                param_key=param_key,
+                guide_families=guide_families,
+                grouping_spec=_grouping_spec,
+                shared_component_indices=_sci,
+                positive_transform=_pos_transform_for_name("r"),
+                horseshoe_kwargs=_horseshoe_kwargs_from_config(model_config),
+                target="r",
+                target_kwarg="dispersion",
+            )
+
     # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
@@ -2323,9 +2345,20 @@ def _multifactor_mu(
     shared_component_indices: Optional[Tuple[int, ...]] = None,
     positive_transform=None,
     horseshoe_kwargs: Optional[dict] = None,
+    *,
+    target: Optional[str] = None,
+    target_kwarg: str = "expression",
 ) -> List:
-    """Additive multi-factor hierarchy for mean expression (mu) or dispersion (r)."""
-    if _expression_target_is_mu(param_key):
+    """Additive multi-factor hierarchy for mean expression (mu) or dispersion (r).
+
+    When ``target`` is given it is used directly (the per-target generalization,
+    e.g. ``target="r"`` with ``target_kwarg="dispersion"``); otherwise the
+    expression-mean target is resolved by role (``mu`` for the mean/two-state
+    parameterizations, ``r`` for canonical).
+    """
+    if target is not None:
+        target_name, hyper_loc_name = target, f"log_{target}_dataset_loc"
+    elif _expression_target_is_mu(param_key):
         target_name, hyper_loc_name = "mu", "log_mu_dataset_loc"
     else:
         target_name, hyper_loc_name = "r", "log_r_dataset_loc"
@@ -2335,7 +2368,7 @@ def _multifactor_mu(
         hyper_loc_name=hyper_loc_name,
         shape_dims=("n_genes",),
         is_gene_specific=True,
-        target_kwarg="expression",
+        target_kwarg=target_kwarg,
         grouping_spec=grouping_spec,
         guide_families=guide_families,
         spec_cls=MultiFactorPositiveNormalSpec,
@@ -2343,6 +2376,44 @@ def _multifactor_mu(
         shared_component_indices=shared_component_indices,
         horseshoe_kwargs=horseshoe_kwargs,
     )
+
+
+def _validate_dispersion_hierarchy(param_key: str, grouping_spec) -> None:
+    """Guard the condition-specific dispersion (r) hierarchy.
+
+    Only ``mean_disp`` samples r as a free orthogonal coordinate; condition-only
+    semantics require exactly one base factor; NEG is not yet implemented for
+    the multi-factor path.
+    """
+    if param_key != "mean_disp":
+        raise ValueError(
+            "A dispersion (r) hierarchy (priors={'dispersion': {...}}) is only "
+            f"supported for the 'mean_disp' parameterization (got {param_key!r}). "
+            "Elsewhere r is derived or already the mean coordinate; put the "
+            "hierarchy on the sampled coordinate instead "
+            "(e.g. priors={'mean_expression': {...}})."
+        )
+    disp_factors = [
+        f for f in grouping_spec.factors if f.family("dispersion") != "none"
+    ]
+    if len(disp_factors) > 1:
+        raise ValueError(
+            "Condition-specific dispersion currently supports exactly one "
+            f"factor carrying the dispersion hierarchy (got "
+            f"{[f.name for f in disp_factors]}). Full multi-factor dispersion "
+            "is not yet supported."
+        )
+    for f in disp_factors:
+        if f.kind == "interaction":
+            raise ValueError(
+                f"The dispersion hierarchy factor {f.name!r} must be a base "
+                "grouping level, not an interaction factor."
+            )
+        if f.family("dispersion") == "neg":
+            raise ValueError(
+                "NEG dispersion hierarchy is not yet supported for the "
+                "multi-factor path; use 'gaussian' or 'horseshoe'."
+            )
 
 
 # NOTE: In the multi-factor setting only the expression target (mu/r) receives

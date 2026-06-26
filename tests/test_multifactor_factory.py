@@ -153,3 +153,88 @@ def test_guide_traces_param_shapes():
     # Guide registers per-factor NCP z params at (L_f, n_genes).
     assert tr[f"{facs['sample'].raw_name}_loc"]["value"].shape == (3, n_genes)
     assert tr[f"{facs['treatment'].raw_name}_loc"]["value"].shape == (2, n_genes)
+
+
+# ------------------------------------------------------------------------------
+# Condition-specific dispersion r (mean_disp) — v2
+# ------------------------------------------------------------------------------
+
+
+def _dispersion_spec():
+    # donor x condition; dispersion hierarchy on the condition factor only.
+    obs = pd.DataFrame(
+        {
+            "sample": ["D1", "D2", "D3", "D1", "D2", "D3"],
+            "treatment": ["control", "control", "control", "drug", "drug", "drug"],
+        }
+    )
+    spec, _ = normalize_grouping(
+        dataset_key=None,
+        hierarchy=[GroupLevel(name="treatment"), GroupLevel(name="sample")],
+        interactions=None,
+        obs=obs,
+        dataset_priors={
+            "expression": {"sample": "horseshoe"},   # mean varies by donor
+            "dispersion": {"treatment": "gaussian"},  # r varies by condition
+            "prob": "none",
+            "zero_inflation": "none",
+            "overdispersion": "none",
+            "regime": "none",
+        },
+    )
+    return spec
+
+
+def _build_mean_disp_config(spec, parameterization="mean_disp"):
+    b = (
+        ModelConfigBuilder()
+        .for_model("nbvcp")
+        .with_parameterization(parameterization)
+        .unconstrained()
+    )
+    b._n_datasets = spec.n_leaves
+    b._grouping_spec = spec
+    b._expression_dataset_prior = "horseshoe"  # reduced leaf-axis family for mu
+    return b.build()
+
+
+def test_factory_builds_condition_specific_dispersion_r():
+    spec = _dispersion_spec()
+    config = _build_mean_disp_config(spec)
+    model, guide, specs = create_model(config)
+    by_name = {s.name: s for s in specs}
+
+    # r becomes an additive multi-factor parameter carrying ONLY the condition
+    # (treatment) effect -> one r per condition, shared across donors.
+    r = by_name["r"]
+    assert isinstance(r, MultiFactorPositiveNormalSpec)
+    assert {f.name for f in r.factors} == {"treatment"}
+    assert "log_r_dataset_loc" in by_name
+
+    # mu independently carries its own donor (sample) hierarchy.
+    mu = by_name["mu"]
+    assert isinstance(mu, MultiFactorPositiveNormalSpec)
+    assert {f.name for f in mu.factors} == {"sample"}
+
+
+def test_dispersion_hierarchy_rejected_for_non_mean_disp():
+    spec = _dispersion_spec()
+    config = _build_mean_disp_config(spec, parameterization="mean_odds")
+    with pytest.raises(ValueError, match="mean_disp"):
+        create_model(config)
+
+
+def test_dispersion_hierarchy_forces_exp_link():
+    from scribe.api.stages.model_config_build import (
+        _force_exp_for_expression_hierarchy,
+    )
+
+    spec = _dispersion_spec()
+    config = _build_mean_disp_config(spec)
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config2 = _force_exp_for_expression_hierarchy(config)
+    # Δ log r interpretability requires the exp link on r.
+    assert config2.resolve_positive_transform("r") == "exp"

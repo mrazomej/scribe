@@ -52,10 +52,13 @@ from .parameter_mapping import (
 # Prior targets
 # ------------------------------------------------------------------------------
 
-# Canonical target keys for the five ``*_dataset_prior`` keyword arguments.
-# These are the short names used inside :class:`Factor.priors`.
+# Canonical target keys used inside :class:`Factor.priors`. ``expression`` and
+# the four technical targets back the legacy ``*_dataset_prior`` kwargs;
+# ``dispersion`` (NB size ``r``) has no flat kwarg and is reached only via the
+# unified ``priors`` dict, feeding the factory's condition-specific-r path.
 TARGET_NAMES: Tuple[str, ...] = (
     "expression",
+    "dispersion",
     "prob",
     "zero_inflation",
     "overdispersion",

@@ -24,13 +24,17 @@ from scribe.models.builders.posterior import (
 
 
 def _factor(name, *, family, effect_type, fixed_scale, leaf_to_level):
-    return SimpleNamespace(
+    _priors = {"expression": family}
+    ns = SimpleNamespace(
         name=name,
-        priors={"expression": family},
+        priors=_priors,
         effect_type=effect_type,
         fixed_scale=fixed_scale,
         leaf_to_level=leaf_to_level,
     )
+    # Mirror Factor.family: family type string, "none" when absent.
+    ns.family = lambda target, _p=_priors: _p.get(target, "none")
+    return ns
 
 
 # ------------------------------------------------------------------------------

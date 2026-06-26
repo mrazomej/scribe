@@ -237,25 +237,25 @@ def _post_process(ctx, kw, model_config):
 
 
 def _force_exp_for_expression_hierarchy(model_config):
-    """Force the exp link on the expression mean when its hierarchy is additive.
+    """Force the exp link on additive hierarchical targets (mean and dispersion).
 
-    The cross-dataset / multi-factor expression hierarchy decomposes the
-    *unconstrained* accumulator additively
-    (``logmu^pop + sum_f alpha_f[level]``) and maps it to a positive mean via
-    ``positive_transform``. Only ``exp`` makes that accumulator log-mean, so the
-    per-factor effects are interpretable **log-fold-changes** (and downstream:
-    ``bio_lfc`` equals the effect contrast, ``estimand="effect"`` is valid, and
-    the theory's ``log mu = baseline + treatment + ...`` holds). ``softplus``
-    would place the effects in softplus-inverse space — a different, unstated
-    model. So when the expression hierarchy is active we force the expression
-    target(s) to ``exp``, warning if the resolved transform was something else.
+    A cross-dataset / multi-factor hierarchy decomposes the *unconstrained*
+    accumulator additively (``log_x^pop + sum_f alpha_f[level]``) and maps it to
+    a positive value via ``positive_transform``. Only ``exp`` makes that
+    accumulator log-scale, so the per-factor effects are interpretable
+    **log-fold-changes** for the mean (``log mu = baseline + treatment + ...``)
+    and **log-dispersion-ratios** for r (``log r``; the per-condition effects
+    are exactly Delta log r). ``softplus`` would place the effects in
+    softplus-inverse space — a different, unstated model. So when an additive
+    hierarchy is active we force its target(s) to ``exp``, warning if the
+    resolved transform was something else.
     """
     import warnings
     from ...models.config.enums import HierarchicalPriorType, Parameterization
 
     _NONE = HierarchicalPriorType.NONE
 
-    def _active() -> bool:
+    def _expression_active() -> bool:
         edp = getattr(model_config, "expression_dataset_prior", None)
         if isinstance(edp, dict):
             if any(v not in (_NONE, "none") for v in edp.values()):
@@ -268,32 +268,48 @@ def _force_exp_for_expression_hierarchy(model_config):
                 return True
         return False
 
-    if not _active() or not hasattr(model_config, "resolve_positive_transform"):
+    def _dispersion_active() -> bool:
+        gs = getattr(model_config, "grouping_spec", None)
+        for f in getattr(gs, "factors", ()) or ():
+            if f.family("dispersion") != "none":
+                return True
+        return False
+
+    if not hasattr(model_config, "resolve_positive_transform"):
         return model_config
 
-    # The expression mean is ``r`` under canonical/standard, ``mu`` otherwise;
-    # only that target carries the additive hierarchy (the other is derived).
-    param = getattr(model_config, "parameterization", None)
-    target = (
-        "r"
-        if param in (Parameterization.CANONICAL, Parameterization.STANDARD)
-        else "mu"
-    )
-    if model_config.resolve_positive_transform(target) == "exp":
+    targets = set()
+    if _expression_active():
+        # The expression mean is ``r`` under canonical/standard, ``mu``
+        # otherwise; only that target carries the additive hierarchy.
+        param = getattr(model_config, "parameterization", None)
+        targets.add(
+            "r"
+            if param in (Parameterization.CANONICAL, Parameterization.STANDARD)
+            else "mu"
+        )
+    if _dispersion_active():
+        targets.add("r")
+
+    targets = {
+        t for t in targets if model_config.resolve_positive_transform(t) != "exp"
+    }
+    if not targets:
         return model_config
 
-    warnings.warn(
-        "An additive expression hierarchy (expression_dataset_prior / "
-        "hierarchy=) is active, which is log-additive in the mean: forcing "
-        f"positive_transform[{target!r}]='exp' so the per-factor effects are "
-        "interpretable log-fold-changes. (softplus would place them in "
-        "softplus-inverse space — a different model. Pass "
-        "positive_transform={'mean_expression': 'exp'} to silence this.)",
-        stacklevel=2,
-    )
+    for target in sorted(targets):
+        warnings.warn(
+            f"An additive hierarchy on {target!r} is active (log-additive): "
+            f"forcing positive_transform[{target!r}]='exp' so the per-factor "
+            "effects are interpretable log-fold-changes / log-dispersion-ratios "
+            "(softplus would place them in softplus-inverse space — a different "
+            "model). Pass positive_transform={...: 'exp'} to silence this.",
+            stacklevel=2,
+        )
     pt = model_config.positive_transform
     new_pt = dict(pt) if isinstance(pt, dict) else {}
-    new_pt[target] = "exp"
+    for target in targets:
+        new_pt[target] = "exp"
     return model_config.model_copy(update={"positive_transform": new_pt})
 
 
