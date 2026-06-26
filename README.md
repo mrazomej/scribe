@@ -86,8 +86,12 @@ shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
   amortized variational guides
 - **Mixture Models**: K-component mixtures for cell type discovery with
   annotation-guided priors
-- **Hierarchical Priors**: Gene-specific and dataset-level hierarchical
-  structures with optional horseshoe sparsity
+- **Unified Prior API**: One `priors` dict expresses base hyperparameters,
+  gene-level adaptive shrinkage, and dataset/condition hierarchies -- including
+  **condition-specific dispersion** for `mean_disp` (testing whether a mechanism
+  changes noise at fixed mean, i.e. Δlog _r_) -- with the role of each entry set
+  by its value shape (horseshoe / NEG sparsity optional). See the
+  [Defining Priors guide](docs/guide/priors.md)
 - **Bayesian Differential Expression**: Parametric, empirical (Monte Carlo), and
   shrinkage (empirical Bayes) methods in CLR/ILR coordinates
 - **Compositional PPC Diagnostics**: 1D and corner-grid posterior predictive
