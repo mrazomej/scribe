@@ -259,7 +259,7 @@ def test_dispersion_hierarchy_rejected_for_non_mean_disp():
 
 def test_dispersion_hierarchy_forces_exp_link():
     from scribe.api.stages.model_config_build import (
-        _force_exp_for_expression_hierarchy,
+        _force_exp_for_additive_hierarchy,
     )
 
     spec = _dispersion_spec()
@@ -268,7 +268,7 @@ def test_dispersion_hierarchy_forces_exp_link():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        config2 = _force_exp_for_expression_hierarchy(config)
+        config2 = _force_exp_for_additive_hierarchy(config)
     # Δ log r interpretability requires the exp link on r.
     assert config2.resolve_positive_transform("r") == "exp"
 

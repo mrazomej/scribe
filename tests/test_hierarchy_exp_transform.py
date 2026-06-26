@@ -4,7 +4,7 @@ A cross-dataset / multi-factor expression hierarchy decomposes the unconstrained
 mean accumulator additively and maps it to a positive mean via
 ``positive_transform``. Only ``exp`` makes that additive structure log-mean (so
 the per-factor effects are log-fold-changes); softplus would silently place the
-effects in softplus-inverse space. ``_force_exp_for_expression_hierarchy``
+effects in softplus-inverse space. ``_force_exp_for_additive_hierarchy``
 enforces exp (warning on override) — these tests pin that behaviour.
 """
 
@@ -13,7 +13,7 @@ import warnings
 import pytest
 
 from scribe.api.stages.model_config_build import (
-    _force_exp_for_expression_hierarchy,
+    _force_exp_for_additive_hierarchy,
 )
 from scribe.inference.preset_builder import build_config_from_preset
 
@@ -33,7 +33,7 @@ def test_expression_hierarchy_forces_exp_and_warns():
     )
     assert mc.resolve_positive_transform("mu") == "softplus"  # default
     with pytest.warns(UserWarning, match="log-additive"):
-        forced = _force_exp_for_expression_hierarchy(mc)
+        forced = _force_exp_for_additive_hierarchy(mc)
     assert forced.resolve_positive_transform("mu") == "exp"
 
 
@@ -46,7 +46,7 @@ def test_explicit_exp_not_warned():
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        forced = _force_exp_for_expression_hierarchy(mc)
+        forced = _force_exp_for_additive_hierarchy(mc)
     assert forced.resolve_positive_transform("mu") == "exp"
     assert not any("log-additive" in str(w.message) for w in caught)
 
@@ -56,7 +56,7 @@ def test_no_expression_hierarchy_leaves_softplus():
     mc = _cfg(positive_transform="softplus", prob_prior="gaussian")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        forced = _force_exp_for_expression_hierarchy(mc)
+        forced = _force_exp_for_additive_hierarchy(mc)
     assert forced.resolve_positive_transform("mu") == "softplus"
     assert not any("log-additive" in str(w.message) for w in caught)
 
@@ -71,5 +71,5 @@ def test_canonical_targets_r():
         prob_dataset_prior="gaussian",
     )
     with pytest.warns(UserWarning, match="log-additive"):
-        forced = _force_exp_for_expression_hierarchy(mc)
+        forced = _force_exp_for_additive_hierarchy(mc)
     assert forced.resolve_positive_transform("r") == "exp"

@@ -228,15 +228,16 @@ def _post_process(ctx, kw, model_config):
     if _base in ("twostate", "twostatevcp"):
         model_config = _inject_twostate_data_init(ctx, model_config)
 
-    # A cross-dataset / multi-factor expression hierarchy is additive in the
-    # transform-inverse space, so only the exp link yields the documented
-    # log-additive (log-fold-change) semantics. Force it (warn on override).
-    model_config = _force_exp_for_expression_hierarchy(model_config)
+    # A cross-dataset / multi-factor additive hierarchy (on the mean and/or the
+    # dispersion) is additive in the transform-inverse space, so only the exp
+    # link yields the documented log-additive (log-fold-change) semantics. Force
+    # it (warn on override).
+    model_config = _force_exp_for_additive_hierarchy(model_config)
 
     return model_config
 
 
-def _force_exp_for_expression_hierarchy(model_config):
+def _force_exp_for_additive_hierarchy(model_config):
     """Force the exp link on additive hierarchical targets (mean and dispersion).
 
     A cross-dataset / multi-factor hierarchy decomposes the *unconstrained*
