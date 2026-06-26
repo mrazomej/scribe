@@ -98,7 +98,9 @@ def test_multifactor_prior_dict_reduction():
     sample_factor = next(
         f for f in ctx.grouping_spec.factors if f.name == "sample"
     )
-    assert sample_factor.priors == {"expression": "horseshoe"}
+    assert {t: s.type for t, s in sample_factor.priors.items()} == {
+        "expression": "horseshoe"
+    }
 
 
 def test_multifactor_hierarchy_and_interaction():

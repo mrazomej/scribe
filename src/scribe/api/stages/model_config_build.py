@@ -264,7 +264,7 @@ def _force_exp_for_expression_hierarchy(model_config):
             return True
         gs = getattr(model_config, "grouping_spec", None)
         for f in getattr(gs, "factors", ()) or ():
-            if f.priors.get("expression", "none") not in ("none", _NONE):
+            if f.family("expression") not in ("none", _NONE):
                 return True
         return False
 

@@ -2213,7 +2213,7 @@ def _multifactor_hier(
     hyper_specs: List = []
     factor_specs: List = []
     for fac in grouping_spec.factors:
-        family = fac.priors.get(target_kwarg, "none")
+        family = fac.family(target_kwarg)
         if family == "none":
             continue
         prefix = _multifactor_site_prefix(target_name, fac.name)

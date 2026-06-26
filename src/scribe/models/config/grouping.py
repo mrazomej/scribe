@@ -60,6 +60,73 @@ TARGET_NAMES: Tuple[str, ...] = (
 _VALID_FAMILIES = frozenset({"none", "gaussian", "horseshoe", "neg"})
 
 
+class PriorFamilySpec(BaseModel):
+    """Normalized hierarchical-prior family + its hyperparameters.
+
+    The single internal value model for a (target, level) prior. A bare family
+    name (``"gaussian"``) carries no hyperparameters; the dict form
+    (``{"type": "horseshoe", "tau0": 1.0, ...}``) carries per-spec
+    hyperparameters that supersede any global defaults. Stored inside
+    :attr:`Factor.priors` (``{target -> PriorFamilySpec}``).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str = "none"
+    # Regularized-horseshoe hyperparameters.
+    tau0: Optional[float] = None
+    slab_df: Optional[int] = None
+    slab_scale: Optional[float] = None
+    # NEG hyperparameters.
+    u: Optional[float] = None
+    a: Optional[float] = None
+    tau: Optional[float] = None
+    # Probability-hierarchy structure (``"scalar"``/``"gene_specific"``/
+    # ``"two_level"``); only meaningful on the probability target.
+    mode: Optional[str] = None
+
+    @field_validator("type")
+    @classmethod
+    def _check_type(cls, v: str) -> str:
+        v = str(v).lower()
+        if v not in _VALID_FAMILIES:
+            raise ValueError(
+                f"Unknown prior family {v!r}. "
+                f"Valid families: {sorted(_VALID_FAMILIES)}."
+            )
+        return v
+
+    @classmethod
+    def from_value(
+        cls, value: "Union[str, Dict, 'PriorFamilySpec']"
+    ) -> "PriorFamilySpec":
+        """Coerce a string / dict-spec / spec into a :class:`PriorFamilySpec`."""
+        if isinstance(value, PriorFamilySpec):
+            return value
+        if isinstance(value, str):
+            return cls(type=value)
+        if isinstance(value, dict):
+            if "type" not in value:
+                raise ValueError(
+                    "dict-form prior family must contain a 'type' key, "
+                    f"got keys {sorted(value)}."
+                )
+            return cls(**value)
+        raise ValueError(
+            "prior family must be a str, a dict with a 'type' key, or a "
+            f"PriorFamilySpec; got {type(value).__name__}."
+        )
+
+    @property
+    def is_none(self) -> bool:
+        """True when this is the no-hierarchy sentinel family."""
+        return self.type == "none"
+
+
+# Shared no-hierarchy sentinel.
+NONE_FAMILY = PriorFamilySpec(type="none")
+
+
 # ------------------------------------------------------------------------------
 # User-facing declaration object
 # ------------------------------------------------------------------------------
@@ -164,12 +231,29 @@ class Factor(BaseModel):
     fixed_scale: Optional[float] = None
     levels: Tuple[str, ...]
     leaf_to_level: Tuple[int, ...]
-    priors: Dict[str, str] = Field(default_factory=dict)
+    priors: Dict[str, PriorFamilySpec] = Field(default_factory=dict)
+
+    @field_validator("priors", mode="before")
+    @classmethod
+    def _coerce_priors(cls, v):
+        # Accept legacy ``{target -> str}`` (old pickles / direct construction)
+        # and dict-form family specs; normalize every value to a
+        # PriorFamilySpec so the field invariant holds locally.
+        if isinstance(v, dict):
+            return {
+                key: PriorFamilySpec.from_value(val) for key, val in v.items()
+            }
+        return v
 
     @property
     def n_levels(self) -> int:
         """Number of levels (``L_f``)."""
         return len(self.levels)
+
+    def family(self, target: str) -> str:
+        """Family *type* for ``target`` (``"none"`` when not hierarchicalized)."""
+        spec = self.priors.get(target)
+        return spec.type if spec is not None else "none"
 
 
 class GroupingSpec(BaseModel):
@@ -231,9 +315,9 @@ class GroupingSpec(BaseModel):
 
 
 def resolve_dataset_prior_dict(
-    value: Union[str, Dict[str, str]],
+    value: Union[str, Dict],
     factor_names: Tuple[str, ...],
-) -> Dict[str, str]:
+) -> Dict[str, PriorFamilySpec]:
     """Resolve a ``*_dataset_prior`` value into a per-factor family map.
 
     Parameters
@@ -259,29 +343,20 @@ def resolve_dataset_prior_dict(
         declared factor name.
     """
     if isinstance(value, str):
-        family = value.lower()
-        if family not in _VALID_FAMILIES:
-            raise ValueError(
-                f"Unknown dataset-prior family {value!r}. "
-                f"Valid families: {sorted(_VALID_FAMILIES)}."
-            )
-        return {name: family for name in factor_names}
+        spec = PriorFamilySpec.from_value(value)
+        return {name: spec for name in factor_names}
 
     if isinstance(value, dict):
-        resolved: Dict[str, str] = {name: "none" for name in factor_names}
+        resolved: Dict[str, PriorFamilySpec] = {
+            name: NONE_FAMILY for name in factor_names
+        }
         for key, fam in value.items():
             if key not in resolved:
                 raise ValueError(
                     f"dataset-prior dict key {key!r} is not a declared factor. "
                     f"Declared factors: {list(factor_names)}."
                 )
-            fam_l = str(fam).lower()
-            if fam_l not in _VALID_FAMILIES:
-                raise ValueError(
-                    f"Unknown dataset-prior family {fam!r} for factor {key!r}. "
-                    f"Valid families: {sorted(_VALID_FAMILIES)}."
-                )
-            resolved[key] = fam_l
+            resolved[key] = PriorFamilySpec.from_value(fam)
         return resolved
 
     raise ValueError(
@@ -299,7 +374,7 @@ def _reduce_leaf_axis_family(spec: "GroupingSpec", target: str) -> str:
     factor order. (Milestone 2 consumes the full per-factor families directly.)
     """
     for factor in spec.factors:
-        fam = factor.priors.get(target, "none")
+        fam = factor.family(target)
         if fam != "none":
             return fam
     return "none"
@@ -521,17 +596,17 @@ def normalize_grouping(
 
     # Resolve per-factor prior families (need all factor names first).
     factor_names = tuple(d.name for d in decls)
-    resolved_priors: Dict[str, Dict[str, str]] = {}
+    resolved_priors: Dict[str, Dict[str, PriorFamilySpec]] = {}
     for target in TARGET_NAMES:
         value = dataset_priors.get(target, "none")
         resolved_priors[target] = resolve_dataset_prior_dict(value, factor_names)
 
-    def _priors_for(name: str) -> Dict[str, str]:
-        out = {}
+    def _priors_for(name: str) -> Dict[str, PriorFamilySpec]:
+        out: Dict[str, PriorFamilySpec] = {}
         for target in TARGET_NAMES:
-            fam = resolved_priors[target].get(name, "none")
-            if fam != "none":
-                out[target] = fam
+            spec = resolved_priors[target].get(name, NONE_FAMILY)
+            if not spec.is_none:
+                out[target] = spec
         return out
 
     factors: List[Factor] = []

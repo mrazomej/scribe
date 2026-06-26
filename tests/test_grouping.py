@@ -87,12 +87,18 @@ def test_grouplevel_positional_and_keyword_name():
 
 def test_resolve_prior_broadcast():
     out = resolve_dataset_prior_dict("gaussian", ("a", "b"))
-    assert out == {"a": "gaussian", "b": "gaussian"}
+    assert {k: v.type for k, v in out.items()} == {
+        "a": "gaussian",
+        "b": "gaussian",
+    }
 
 
 def test_resolve_prior_dict_partial_defaults_none():
     out = resolve_dataset_prior_dict({"a": "horseshoe"}, ("a", "b"))
-    assert out == {"a": "horseshoe", "b": "none"}
+    assert {k: v.type for k, v in out.items()} == {
+        "a": "horseshoe",
+        "b": "none",
+    }
 
 
 def test_resolve_prior_unknown_key():
@@ -101,9 +107,9 @@ def test_resolve_prior_unknown_key():
 
 
 def test_resolve_prior_unknown_family():
-    with pytest.raises(ValueError, match="Unknown dataset-prior family"):
+    with pytest.raises(ValueError, match="Unknown prior family"):
         resolve_dataset_prior_dict("banana", ("a",))
-    with pytest.raises(ValueError, match="Unknown dataset-prior family"):
+    with pytest.raises(ValueError, match="Unknown prior family"):
         resolve_dataset_prior_dict({"a": "banana"}, ("a",))
 
 
@@ -321,10 +327,11 @@ def test_per_factor_priors_and_reduction(obs_crossed):
         dataset_priors=priors,
     )
     treatment, sample, inter = spec.factors
-    assert treatment.priors == {"expression": "gaussian", "prob": "gaussian"}
-    assert sample.priors == {"expression": "horseshoe", "prob": "gaussian"}
+    _types = lambda fac: {t: s.type for t, s in fac.priors.items()}
+    assert _types(treatment) == {"expression": "gaussian", "prob": "gaussian"}
+    assert _types(sample) == {"expression": "horseshoe", "prob": "gaussian"}
     # Interaction absent from the expression dict -> none there, but prob broadcasts.
-    assert inter.priors == {"prob": "gaussian"}
+    assert _types(inter) == {"prob": "gaussian"}
 
     # Leaf-axis reduction: first non-none family in factor order.
     assert _reduce_leaf_axis_family(spec, "expression") == "gaussian"

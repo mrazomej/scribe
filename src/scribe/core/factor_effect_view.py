@@ -178,7 +178,7 @@ def get_factor_effect(results, factor_name: str) -> FactorEffectView:
     target = "mu" if effect_key.startswith("mu_") else "r"
     prefix = f"{target}_{safe}"
 
-    family = fac.priors.get("expression", "none")
+    family = fac.family("expression")
     if fac.effect_type == "fixed":
         scale = fac.fixed_scale if fac.fixed_scale is not None else 1.0
     elif family == "gaussian" and f"{prefix}_scale" in samples:

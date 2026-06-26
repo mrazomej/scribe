@@ -990,7 +990,7 @@ def _resolve_multifactor_mu_factors(
         return []
     resolved: List[Tuple[Any, str]] = []
     for fac in factors:
-        if fac.priors.get("expression", "none") == "none":
+        if fac.family("expression") == "none":
             continue
         prefix = f"{target}_{fac.name.replace(':', '__')}"
         if f"{prefix}_raw_loc" in params:
@@ -1039,7 +1039,7 @@ def _build_multifactor_leaf_posterior(
     for fac, prefix in mf_factors:
         raw_loc = params[f"{prefix}_raw_loc"]  # (K?, L_f, G)
         raw_scale = params[f"{prefix}_raw_scale"]  # (K?, L_f, G)
-        family = fac.priors.get("expression", "none")
+        family = fac.family("expression")
 
         if fac.effect_type == "fixed":
             scale = fac.fixed_scale if fac.fixed_scale is not None else 1.0
