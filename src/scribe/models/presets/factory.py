@@ -1141,7 +1141,7 @@ def create_model(
         if model_config.expression_dataset_prior != _NONE:
             _mu_target = "mu" if _expression_target_is_mu(param_key) else "r"
             if _multifactor:
-                param_specs = _multifactor_mu(
+                param_specs = _multifactor_target(
                     param_specs=param_specs,
                     param_key=param_key,
                     guide_families=guide_families,
@@ -1188,7 +1188,7 @@ def create_model(
             for fac in _grouping_spec.factors
         ):
             _validate_dispersion_hierarchy(param_key, _grouping_spec)
-            param_specs = _multifactor_mu(
+            param_specs = _multifactor_target(
                 param_specs=param_specs,
                 param_key=param_key,
                 guide_families=guide_families,
@@ -2347,7 +2347,7 @@ def _multifactor_hier(
     return new_specs
 
 
-def _multifactor_mu(
+def _multifactor_target(
     param_specs: List,
     param_key: str,
     guide_families,

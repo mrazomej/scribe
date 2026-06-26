@@ -969,7 +969,7 @@ def _apply_gene_level_mu_hierarchy(
         )
 
 
-def _resolve_multifactor_mu_factors(
+def _resolve_multifactor_factors(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
     target: str,
@@ -1125,7 +1125,7 @@ def _apply_dataset_hierarchy_mu(
     # population intercept plus a sum of per-factor effects (no single
     # ``{hyper_scale}`` site), so reconstruct it directly rather than via the
     # single-axis dataset-hierarchy builders below.
-    mf_factors = _resolve_multifactor_mu_factors(params, model_config, target)
+    mf_factors = _resolve_multifactor_factors(params, model_config, target)
     if mf_factors:
         distributions[target] = _build_multifactor_leaf_posterior(
             params,

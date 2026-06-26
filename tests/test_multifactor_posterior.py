@@ -19,7 +19,7 @@ import pytest
 
 from scribe.models.builders.posterior import (
     _build_multifactor_leaf_posterior,
-    _resolve_multifactor_mu_factors,
+    _resolve_multifactor_factors,
 )
 
 
@@ -38,11 +38,11 @@ def _factor(name, *, family, effect_type, fixed_scale, leaf_to_level):
 
 
 # ------------------------------------------------------------------------------
-# _resolve_multifactor_mu_factors
+# _resolve_multifactor_factors
 # ------------------------------------------------------------------------------
 
 
-def test_resolve_multifactor_mu_factors_selects_present():
+def test_resolve_multifactor_factors_selects_present():
     """Only >1-factor specs with present, non-'none' expression sites resolve."""
     cond = _factor(
         "condition", family="gaussian", effect_type="fixed",
@@ -56,20 +56,20 @@ def test_resolve_multifactor_mu_factors_selects_present():
     mc = SimpleNamespace(grouping_spec=gs)
     params = {"mu_condition_raw_loc": jnp.zeros((2, 3))}
 
-    out = _resolve_multifactor_mu_factors(params, mc, "mu")
+    out = _resolve_multifactor_factors(params, mc, "mu")
     assert [prefix for _, prefix in out] == ["mu_condition"]
 
 
-def test_resolve_multifactor_mu_factors_empty_for_legacy():
+def test_resolve_multifactor_factors_empty_for_legacy():
     """No spec or a single factor -> empty (single-axis path used instead)."""
     cond = _factor(
         "condition", family="gaussian", effect_type="random",
         fixed_scale=1.0, leaf_to_level=(0, 1),
     )
-    assert _resolve_multifactor_mu_factors(
+    assert _resolve_multifactor_factors(
         {}, SimpleNamespace(grouping_spec=None), "mu"
     ) == []
-    assert _resolve_multifactor_mu_factors(
+    assert _resolve_multifactor_factors(
         {}, SimpleNamespace(grouping_spec=SimpleNamespace(factors=(cond,))), "mu"
     ) == []
 
