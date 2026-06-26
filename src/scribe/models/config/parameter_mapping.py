@@ -9,7 +9,7 @@ names and user-friendly descriptive names, used by the ``priors`` dict alias
 system and the ``descriptive_names`` option on results objects.
 """
 
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 from dataclasses import dataclass
 from .enums import Parameterization
 
@@ -1008,97 +1008,121 @@ def get_parameterization_summary() -> Dict[str, Dict[str, any]]:
 
 
 # ==============================================================================
-# Descriptive Name Mapping (internal <-> user-friendly)
+# Single Source-of-Truth Parameter Name Registry
+# ==============================================================================
+#
+# ONE place mapping each internal sample-site name to its single, canonical,
+# parameterization-INDEPENDENT user-facing name. EVERY other name map in this
+# module is DERIVED from this registry at import time -- there is no second
+# hand-maintained table to drift out of sync.
+#
+# Rules:
+#   * ``site`` <-> ``canonical`` is a strict bijection (enforced by tests).
+#   * ``canonical`` is the ONLY user-facing name; there are NO deprecated
+#     aliases. (The internal grouping ``TARGET_NAMES`` such as ``"expression"``
+#     are a separate, internal routing layer -- not user vocabulary.)
+#   * ``hierarchy_target`` records which grouping ``TARGET_NAME`` a site's
+#     dataset/factor hierarchy routes to (consumed by the unified ``priors``
+#     normalizer); ``None`` for sites that carry no dataset-level hierarchy.
+
+
+@dataclass(frozen=True)
+class ParamName:
+    """One entry in the canonical parameter-name registry."""
+
+    site: str
+    canonical: str
+    hierarchy_target: Optional[str] = None
+
+
+PARAM_REGISTRY: Tuple[ParamName, ...] = (
+    # --- NB-family core parameters ---
+    ParamName("mu", "mean_expression", "expression"),
+    ParamName("r", "dispersion", "dispersion"),
+    ParamName("p", "probability", "prob"),
+    ParamName("phi", "odds_ratio", "prob"),
+    ParamName("gate", "zero_inflation", "zero_inflation"),
+    # --- Totals submodel (LNM family) ---
+    ParamName("r_T", "total_dispersion"),
+    ParamName("mu_T", "total_mean"),
+    ParamName("phi_T", "total_odds_ratio"),
+    # --- Capture parameters ---
+    ParamName("p_capture", "capture_probability"),
+    ParamName("eta_capture", "capture_efficiency"),
+    ParamName("phi_capture", "capture_odds_ratio"),
+    ParamName("mu_eta", "capture_scaling"),
+    # --- BNB overdispersion (concentration kappa); BNB-only, never NB r ---
+    ParamName("bnb_concentration", "overdispersion", "overdispersion"),
+    # --- Low-rank loadings matrix W (PLN/NBLN/LNM-family) ---
+    ParamName("W", "loadings"),
+    # --- LNM compositional parameters ---
+    ParamName("y_alr", "alr_coordinates"),
+    ParamName("d_lnm", "alr_residual_scale"),
+    ParamName("z", "latent_embedding"),
+    # --- PLN log-rate parameters ---
+    ParamName("y_log_rate", "log_expression_rate"),
+    ParamName("d_pln", "expression_residual_scale"),
+    # --- Mixture weights ---
+    ParamName("mixing_weights", "mixing_weights"),
+    # --- Two-state promoter (Poisson-Beta) sampled + derived sites.
+    #     Already domain-standard names; canonical == site (identity). ---
+    ParamName("burst_size", "burst_size"),
+    ParamName("k_off", "k_off"),
+    ParamName("k_on", "k_on"),
+    ParamName("switching_ratio", "switching_ratio"),
+    ParamName("excess_fano", "excess_fano"),
+    ParamName("concentration", "concentration"),
+    ParamName("inv_concentration", "inv_concentration"),
+    ParamName("alpha", "alpha"),
+    ParamName("beta", "beta"),
+    ParamName("r_hat", "r_hat"),
+    ParamName("effective_burst_size", "effective_burst_size"),
+    ParamName("alpha_floor_active", "alpha_floor_active"),
+    ParamName("beta_floor_active", "beta_floor_active"),
+)
+
+# Forward routing: internal site -> grouping TARGET_NAME (for the unified
+# ``priors`` normalizer). Only sites that carry a dataset-level hierarchy.
+HIERARCHY_TARGET_BY_SITE: Dict[str, str] = {
+    e.site: e.hierarchy_target
+    for e in PARAM_REGISTRY
+    if e.hierarchy_target is not None
+}
+
+# ==============================================================================
+# Derived name maps (ALL generated from PARAM_REGISTRY -- do not hand-edit)
 # ==============================================================================
 
-# Maps internal (short/math) parameter names to user-friendly descriptive names.
-# Used by:
-#   - results.get_map(descriptive_names=True)
-#   - results.get_distributions(descriptive_names=True)
-#   - results.get_posterior_samples(descriptive_names=True)
-#
-# Hierarchical hyperprior keys (logit_p_loc, log_phi_scale, etc.) are NOT
-# included -- they pass through unchanged because the _loc/_scale suffixes
-# are correct Normal parameter names in unconstrained space.
+# internal site -> canonical user-facing name. Used by
+# results.get_map / get_distributions / get_posterior_samples
+# (descriptive_names=True). Hierarchical hyperprior keys (logit_p_loc, ...)
+# are not listed; they pass through unchanged (the _loc/_scale suffixes are
+# correct Normal parameter names in unconstrained space).
 DESCRIPTIVE_NAMES: Dict[str, str] = {
-    # Core NB parameters
-    "r": "dispersion",
-    "r_T": "total_dispersion",
-    "mu_T": "total_mean",
-    "phi_T": "total_odds_ratio",
-    "p": "prob",
-    "mu": "mean_expression",
-    "phi": "odds_ratio",
-    "gate": "zero_inflation",
-    # Capture parameters
-    "p_capture": "capture_prob",
-    "phi_capture": "capture_odds_ratio",
-    "eta_capture": "capture_efficiency",
-    # Low-rank loadings matrix W (PLN/NBLN/LNM-family).
-    # Descriptive name carries the factor-analysis meaning ("loadings")
-    # to match how users think about cross-gene structure, and to anchor
-    # the ``priors`` dict spec form
-    # ``priors={"loadings": {"type": "horseshoe_columnwise", ...}}``.
-    "W": "loadings",
-    # LNM compositional parameters
-    "y_alr": "alr_coordinates",
-    "d_lnm": "alr_residual_scale",
-    # PLN log-rate parameters
-    "y_log_rate": "log_expression_rate",
-    "d_pln": "expression_residual_scale",
-    # Already descriptive (identity)
-    "bnb_concentration": "bnb_concentration",
-    "mixing_weights": "mixing_weights",
-    "z": "latent_embedding",
+    e.site: e.canonical for e in PARAM_REGISTRY
 }
 
-# Inverse mapping: descriptive name -> internal name
+# Inverse mapping: canonical descriptive name -> internal site.
 _DESCRIPTIVE_TO_INTERNAL: Dict[str, str] = {
-    v: k for k, v in DESCRIPTIVE_NAMES.items()
+    e.canonical: e.site for e in PARAM_REGISTRY
 }
 
 
 # ==============================================================================
-# Prior Key Aliases (descriptive -> internal)
+# Prior Key Resolution (canonical -> internal)
 # ==============================================================================
 
-# Maps user-friendly prior dict keys to the internal keys expected by the
-# model/builder system. Both the internal key and its descriptive alias are
-# accepted in the ``priors`` dict; the normalizer resolves aliases early.
-#
-# Only core parameter priors and capture-specific keys are aliased.
-# Hierarchical hyperprior override keys (logit_p_loc, log_phi_scale, etc.)
-# are left as-is -- users who touch those already know the transform space.
-PRIOR_KEY_ALIASES: Dict[str, str] = {
-    # Core parameter priors (descriptive -> internal)
-    "prob": "p",
-    "dispersion": "r",
-    "total_dispersion": "r_T",
-    "total_mean": "mu_T",
-    "total_odds_ratio": "phi_T",
-    "expression": "mu",
-    "odds": "phi",
-    "zero_inflation": "gate",
-    "capture_prob": "p_capture",
-    "capture_odds": "phi_capture",
-    # PLN parameter priors
-    "log_expression_rate": "y_log_rate",
-    "expression_residual_scale": "d_pln",
-    # Capture-specific priors
-    "capture_efficiency": "eta_capture",
-    "capture_scaling": "mu_eta",
-    # Low-rank loadings shrinkage prior (PLN/NBLN Laplace).
-    # Value is a dict-shaped strategy spec, not a tuple:
-    # ``priors={"loadings": {"type": "horseshoe_columnwise", ...}}``.
-    # The fit() entry point routes this to the W-prior strategy
-    # plumbing before the priors dict reaches downstream stages.
-    "loadings": "W",
-}
+# Resolution table for the ``priors`` dict. STRICT: only the canonical names
+# from PARAM_REGISTRY are accepted as descriptive keys (internal site names
+# also pass through unchanged in ``normalize_prior_keys``). There are NO
+# deprecated aliases. The ``loadings`` -> ``W`` entry carries a dict-shaped
+# strategy spec (not a tuple); the fit() entry point routes it to the W-prior
+# plumbing before the priors dict reaches downstream stages. Hierarchical
+# hyperprior override keys (logit_p_loc, ...) are left as-is.
+PRIOR_KEY_ALIASES: Dict[str, str] = dict(_DESCRIPTIVE_TO_INTERNAL)
 
-# Inverse: internal -> descriptive alias (for documentation / YAML comments)
-_INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = {
-    v: k for k, v in PRIOR_KEY_ALIASES.items()
-}
+# Inverse: internal -> canonical (for documentation / YAML comments).
+_INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = dict(DESCRIPTIVE_NAMES)
 
 
 # ==============================================================================
@@ -1123,7 +1147,6 @@ _INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = {
 # before the tuple is passed to the obs model.
 FREEZE_KEY_ALIASES: Dict[str, str] = {
     "dispersion": "r",
-    "expression": "mu",
     "mean_expression": "mu",
     "capture_efficiency": "eta",
 }
@@ -1318,8 +1341,8 @@ def resolve_param_shorthand(
     Accepts the semantic shorthands ``"all"``, ``"biological"``, ``"mean"``,
     ``"prob"``, and ``"gate"`` and expands them using the parameterization
     strategy's ``core_parameters`` and ``gene_param_name``.  Explicit
-    ``List[str]`` values pass through with descriptive-name aliases resolved
-    (e.g. ``"expression"`` -> ``"mu"``).
+    ``List[str]`` values pass through with canonical descriptive names
+    resolved (e.g. ``"mean_expression"`` -> ``"mu"``).
 
     Parameters
     ----------
@@ -1355,7 +1378,7 @@ def resolve_param_shorthand(
     ['mu']
     >>> resolve_param_shorthand("all", strat, "zinb")
     ['phi', 'mu', 'gate']
-    >>> resolve_param_shorthand(["expression", "odds"], strat, "zinb")
+    >>> resolve_param_shorthand(["mean_expression", "odds_ratio"], strat, "zinb")
     ['mu', 'phi']
     """
     if value is None:
@@ -1405,11 +1428,9 @@ def resolve_param_shorthand(
             f"You can also pass an explicit list of parameter names."
         )
 
-    # --- Explicit list: resolve descriptive aliases ---
-    # Accept both the formal descriptive names (``mean_expression``,
-    # ``odds_ratio``) and the shorter ``priors``-dict aliases (``expression``,
-    # ``odds``); overlapping keys map to the same internal name, so the two
-    # tables compose unambiguously.
+    # --- Explicit list: resolve canonical descriptive names ---
+    # Accept the canonical descriptive names (``mean_expression``,
+    # ``odds_ratio``, ...) and pass internal site names through unchanged.
     resolved: "List[str]" = []
     for name in value:
         internal = _DESCRIPTIVE_TO_INTERNAL.get(name)

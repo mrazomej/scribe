@@ -93,7 +93,7 @@ def fit(
     #     other positive parameter keeps the softplus default.  Keys
     #     may be either internal names (``"mu"``, ``"burst_size"``,
     #     ``"k_off"``, ``"p_capture"``, ...) or descriptive aliases
-    #     (``"mean_expression"``, ``"capture_prob"``, ``"capture_efficiency"``,
+    #     (``"mean_expression"``, ``"capture_probability"``, ``"capture_efficiency"``,
     #     ``"dispersion"``, ...).
     #
     # ``"exp"`` gives a multiplicative-step optimizer geometry on the

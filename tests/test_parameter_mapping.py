@@ -11,6 +11,11 @@ from src.scribe.models.config.parameter_mapping import (
     PARAMETERIZATION_MAPPINGS,
     PARAM_SHORTHANDS,
     ParameterizationMapping,
+    PARAM_REGISTRY,
+    DESCRIPTIVE_NAMES,
+    _DESCRIPTIVE_TO_INTERNAL,
+    PRIOR_KEY_ALIASES,
+    HIERARCHY_TARGET_BY_SITE,
 )
 from src.scribe.models.config.enums import Parameterization
 from src.scribe.models.parameterizations import PARAMETERIZATIONS
@@ -351,6 +356,66 @@ class TestParameterMappingRegistry:
             assert all_params == core_params | optional_params
 
 
+class TestParamRegistry:
+    """The single source-of-truth parameter-name registry (Part 1)."""
+
+    def test_registry_is_a_bijection(self):
+        sites = [e.site for e in PARAM_REGISTRY]
+        canon = [e.canonical for e in PARAM_REGISTRY]
+        assert len(sites) == len(set(sites)), "duplicate internal site"
+        assert len(canon) == len(set(canon)), "duplicate canonical name"
+
+    def test_derived_maps_are_generated_from_registry(self):
+        assert DESCRIPTIVE_NAMES == {
+            e.site: e.canonical for e in PARAM_REGISTRY
+        }
+        assert _DESCRIPTIVE_TO_INTERNAL == {
+            e.canonical: e.site for e in PARAM_REGISTRY
+        }
+        # No second hand-maintained table: the prior-key map IS the
+        # canonical->site map derived from the same registry.
+        assert PRIOR_KEY_ALIASES == _DESCRIPTIVE_TO_INTERNAL
+        for e in PARAM_REGISTRY:
+            assert _DESCRIPTIVE_TO_INTERNAL[DESCRIPTIVE_NAMES[e.site]] == e.site
+
+    def test_canonical_vocabulary(self):
+        assert _DESCRIPTIVE_TO_INTERNAL["mean_expression"] == "mu"
+        assert _DESCRIPTIVE_TO_INTERNAL["dispersion"] == "r"
+        assert _DESCRIPTIVE_TO_INTERNAL["probability"] == "p"
+        assert _DESCRIPTIVE_TO_INTERNAL["odds_ratio"] == "phi"
+        # ``overdispersion`` is the BNB concentration, never NB ``r``.
+        assert _DESCRIPTIVE_TO_INTERNAL["overdispersion"] == "bnb_concentration"
+        assert _DESCRIPTIVE_TO_INTERNAL["capture_probability"] == "p_capture"
+
+    def test_no_deprecated_aliases(self):
+        # The clean cut removes the old short aliases as user inputs.
+        for dead in (
+            "prob",
+            "odds",
+            "expression",
+            "capture_prob",
+            "capture_odds",
+        ):
+            assert dead not in PRIOR_KEY_ALIASES
+
+    def test_registry_covers_every_parameterization_site(self):
+        missing = set()
+        for mp in PARAMETERIZATION_MAPPINGS.values():
+            for site in mp.core_parameters | mp.optional_parameters:
+                if site not in DESCRIPTIVE_NAMES:
+                    missing.add(site)
+        assert not missing, f"sites missing from PARAM_REGISTRY: {sorted(missing)}"
+
+    def test_hierarchy_target_routing(self):
+        # Sites that carry a dataset/factor hierarchy route to a grouping
+        # TARGET_NAME; capture / totals / derived sites do not.
+        assert HIERARCHY_TARGET_BY_SITE["mu"] == "expression"
+        assert HIERARCHY_TARGET_BY_SITE["r"] == "dispersion"
+        assert HIERARCHY_TARGET_BY_SITE["bnb_concentration"] == "overdispersion"
+        assert "p_capture" not in HIERARCHY_TARGET_BY_SITE
+        assert "mu_T" not in HIERARCHY_TARGET_BY_SITE
+
+
 class TestParameterMappingEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -578,17 +643,19 @@ class TestResolveParamShorthand:
         assert result == ["phi", "mu"]
 
     def test_descriptive_aliases_resolved_in_list(self):
-        """Descriptive names in a list are resolved to internal names."""
+        """Canonical descriptive names in a list resolve to internal names."""
         strat = PARAMETERIZATIONS["mean_odds"]
         result = resolve_param_shorthand(
-            ["expression", "odds"], strat, "zinb"
+            ["mean_expression", "odds_ratio"], strat, "zinb"
         )
         assert result == ["mu", "phi"]
 
     def test_mixed_internal_and_descriptive_in_list(self):
-        """Lists can mix internal and descriptive names."""
+        """Lists can mix internal and canonical descriptive names."""
         strat = PARAMETERIZATIONS["mean_prob"]
-        result = resolve_param_shorthand(["p", "expression"], strat, "zinb")
+        result = resolve_param_shorthand(
+            ["p", "mean_expression"], strat, "zinb"
+        )
         assert result == ["p", "mu"]
 
     def test_gate_alias_in_list(self):

@@ -490,7 +490,7 @@ class ModelConfig(BaseModel):
             "'p_capture', 'burst_size', 'k_off', 'excess_fano', "
             "'inv_concentration', ...) or descriptive aliases registered "
             "in parameter_mapping.py ('mean_expression', 'dispersion', "
-            "'capture_prob', 'capture_efficiency', ...). "
+            "'capture_probability', 'capture_efficiency', ...). "
             "'softplus' prevents float32 overflow via log(1+exp(z)); "
             "'exp' gives an exact log-Normal prior — preferable for "
             "parameters that span multiple orders of magnitude (e.g. "

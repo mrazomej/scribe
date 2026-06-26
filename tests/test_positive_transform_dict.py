@@ -11,7 +11,7 @@ The ``ModelConfig.positive_transform`` field accepts two forms:
 Dict keys may be either *internal* names (``"mu"``, ``"burst_size"``,
 ``"k_off"``, ``"p_capture"``, ...) or the *descriptive aliases*
 registered in ``parameter_mapping.py`` (``"mean_expression"``,
-``"capture_prob"``, ``"capture_efficiency"``, ...).  The validator
+``"capture_probability"``, ``"capture_efficiency"``, ...).  The validator
 normalizes descriptive aliases to internal names so factory code that
 queries ``resolve_positive_transform("mu")`` finds entries originally
 keyed as ``"mean_expression"``.
@@ -125,14 +125,14 @@ class TestDictFormDescriptiveAliases:
         assert "mean_expression" not in cfg.positive_transform
         assert "mu" in cfg.positive_transform
 
-    def test_capture_prob_alias_normalizes_to_p_capture(self):
+    def test_capture_probability_alias_normalizes_to_p_capture(self):
         cfg = ModelConfig(
             base_model="nbvcp",
-            positive_transform={"capture_prob": "exp"},
+            positive_transform={"capture_probability": "exp"},
         )
         assert cfg.resolve_positive_transform("p_capture") == "exp"
         assert "p_capture" in cfg.positive_transform
-        assert "capture_prob" not in cfg.positive_transform
+        assert "capture_probability" not in cfg.positive_transform
 
     def test_dispersion_alias_normalizes_to_r(self):
         cfg = ModelConfig(
