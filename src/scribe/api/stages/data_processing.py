@@ -149,6 +149,26 @@ def process_data_and_datasets(ctx: FitContext) -> None:
                     f"not supported."
                 )
 
+        # Route any family-spec hyperparameters into the global fields read by
+        # the gene-level / single-axis horseshoe & NEG builders. (The
+        # multi-factor path additionally honors per-spec values directly.)
+        _HYPER_FIELD = {
+            "tau0": "horseshoe_tau0",
+            "slab_df": "horseshoe_slab_df",
+            "slab_scale": "horseshoe_slab_scale",
+            "u": "neg_u",
+            "a": "neg_a",
+            "tau": "neg_tau",
+        }
+        _all_specs = list(_gene_p.values()) + [
+            _s for _lv in _hier_p.values() for _s in _lv.values()
+        ]
+        for _s in _all_specs:
+            for _attr, _kwname in _HYPER_FIELD.items():
+                _v = getattr(_s, _attr, None)
+                if _v is not None:
+                    kw[_kwname] = _v
+
     auto_downgrade = kw.get("auto_downgrade_single_dataset_hierarchy", True)
     expression_dataset_prior = kw.get("expression_dataset_prior", "none")
     prob_dataset_prior = kw.get("prob_dataset_prior", "none")
