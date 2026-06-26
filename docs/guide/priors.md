@@ -42,6 +42,7 @@ symbol.
 | `odds_ratio` | \(\phi\) | NB odds ratio (`mean_odds`) |
 | `zero_inflation` | gate | dropout / zero-inflation gate (ZINB) |
 | `overdispersion` | \(\kappa\) | BNB concentration (`overdispersion="bnb"`) |
+| `regime` | --- | two-state bursting-regime hierarchy (`twostate`) |
 | `capture_probability` | \(p_{\text{cap}}\) | per-cell capture probability (VCP) |
 | `capture_efficiency` | \(\eta\) | capture efficiency (NBLN) |
 | `loadings` | \(W\) | low-rank loadings (PLN/NBLN) |
@@ -192,6 +193,36 @@ detectable.
 
 **Theory:** [Differential Expression](differential-expression.md) and
 [Hierarchical Priors](../theory/hierarchical-priors.md).
+
+---
+
+## 5. Two-state regime hierarchy
+
+Two-state (`twostate` / `twostatevcp`) models carry a *bursting regime*
+coordinate whose concrete name depends on the parameterization (`k_off`,
+`switching_ratio`, `concentration`, `inv_concentration`). The single canonical
+key `regime` lets you put a dataset/condition hierarchy on it without knowing
+which coordinate the active parameterization uses:
+
+```python
+scribe.fit(
+    adata,
+    model="twostate",
+    parameterization="two_state_natural",
+    unconstrained=True,
+    dataset_key="condition",
+    priors={
+        "mean_expression": {"condition": "horseshoe"},
+        "regime":          {"condition": "horseshoe"},   # regime varies by condition
+    },
+)
+```
+
+The `regime` key is **hierarchy-only**: it has no gene-level (bare-string) or
+base (tuple) form. To pin the regime hierarchy to a *specific* coordinate (the
+regime coordinate vs. the overdispersion coordinate), pass the structural
+`regime_dataset_target` kwarg --- it is the only escape hatch and defaults to
+the parameterization's regime coordinate.
 
 ---
 

@@ -22,11 +22,12 @@ results = scribe.fit(adata, guide_rank=64)
     progressively more advanced features that you can explore as needed.
 
 !!! info "Naming convention"
-    Parameters use descriptive names (`expression_prior`, `prob_prior`,
-    `zero_inflation_prior`, etc.) rather than single-letter math notation.
-    Legacy shorthand (`mu_prior`, `p_prior`, `gate_prior`, ...) is still
-    accepted for backward compatibility but the descriptive forms are
-    recommended.
+    Priors use **canonical, parameterization-independent parameter names**
+    (`mean_expression`, `dispersion`, `probability`, `odds_ratio`,
+    `zero_inflation`, ...) rather than single-letter math notation, and are all
+    declared through the single `priors` dict --- there are no separate
+    `*_prior` keyword arguments. See [Defining Priors](priors.md) for the full
+    name table and routing grammar.
 
 **Variable capture is on by default.** The default model is `"nbvcp"`, which
 includes cell-specific capture probability. Use **`variable_capture=False`**
@@ -184,8 +185,8 @@ results = scribe.fit(adata, model="nbdm", unconstrained=True)
 
 !!! info "When to use `unconstrained=True`"
     You **must** set `unconstrained=True` when using any of the following:
-    hierarchical priors (`expression_prior`, `prob_prior`,
-    `zero_inflation_prior`), mean anchoring (`expression_anchor`), BNB
+    hierarchical priors (`priors={"mean_expression": ...}`, `"probability"`,
+    `"zero_inflation"`), mean anchoring (`expression_anchor`), BNB
     overdispersion (`overdispersion="bnb"`), or dataset-level priors. SCRIBE
     will raise a `ValueError` if you forget. TwoState parameterizations
     also require `unconstrained=True`.
@@ -434,18 +435,20 @@ results = scribe.fit(
 ## 7. Hierarchical priors (gene-level)
 
 Hierarchical priors provide **adaptive shrinkage** across mixture components
-(for `expression_prior`) or across genes (for `prob_prior`,
-`zero_inflation_prior`). They share statistical strength so that most parameters
-stay close to a population center while allowing true outliers to deviate. All
-require `unconstrained=True`.
+(for the mean) or across genes (for the probability / zero-inflation gate). They
+share statistical strength so that most parameters stay close to a population
+center while allowing true outliers to deviate. All require `unconstrained=True`
+and are declared through the unified `priors` dict (see
+[Defining Priors](priors.md)) by attaching a **family string** to a canonical
+parameter name:
 
-| Parameter              | Default  | Description                                                                                          |
-| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
-| `expression_prior`     | `"none"` | Hierarchical prior on \(\mu\) (or \(r\)) **across mixture components**. Requires `n_components >= 2` |
-| `prob_prior`           | `"none"` | Hierarchical prior on \(p\) (or \(\phi\)) **across genes**                                           |
-| `zero_inflation_prior` | `"none"` | Hierarchical prior on zero-inflation gate **across genes**. Only for ZI models                       |
+| `priors` key      | Shrinks ...                                       | Notes                        |
+| ----------------- | ------------------------------------------------- | ---------------------------- |
+| `mean_expression` | \(\mu\) (or \(r\)) **across mixture components**  | Requires `n_components >= 2` |
+| `probability`     | \(p\) (or \(\phi\)) **across genes**              |                              |
+| `zero_inflation`  | the zero-inflation gate **across genes**          | Only for ZI models           |
 
-All three accept: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
+Each accepts a family string: `"gaussian"`, `"horseshoe"`, or `"neg"`.
 
 - **Gaussian** --- simple Normal shrinkage. Lightest; suitable when most
   parameters are expected to differ moderately.
@@ -461,7 +464,7 @@ results = scribe.fit(
     variable_capture=True,
     unconstrained=True,
     n_components=5,
-    expression_prior="horseshoe",
+    priors={"mean_expression": "horseshoe"},
 )
 
 # Gaussian prior on gene-specific p
@@ -469,7 +472,7 @@ results = scribe.fit(
     adata,
     model="nbdm",
     unconstrained=True,
-    prob_prior="gaussian",
+    priors={"probability": "gaussian"},
 )
 
 # NEG prior on zero-inflation gate
@@ -477,22 +480,24 @@ results = scribe.fit(
     adata,
     zero_inflation=True,
     unconstrained=True,
-    zero_inflation_prior="neg",
+    priors={"zero_inflation": "neg"},
 )
 ```
 
 ### Hyperparameters
 
-Fine-tune the behavior of Horseshoe and NEG priors:
+To fine-tune a Horseshoe or NEG family, pass a **family spec** (a dict carrying
+the reserved `"type"` key) instead of a bare string. The extra keys set the
+family's hyperparameters:
 
-| Parameter | Default | Prior | Description |
-|-----------|---------|-------|-------------|
-| `horseshoe_tau0` | `1.0` | Horseshoe | Global shrinkage scale. Smaller = stronger shrinkage |
-| `horseshoe_slab_df` | `4` | Horseshoe | Degrees of freedom of the regularizing slab |
-| `horseshoe_slab_scale` | `2.0` | Horseshoe | Scale of the regularizing slab |
-| `neg_u` | `1.0` | NEG | Shape parameter \(u\) |
-| `neg_a` | `1.0` | NEG | Shape parameter \(a\) |
-| `neg_tau` | `1.0` | NEG | Scale parameter \(\tau\) |
+| Spec key | Default | Family | Description |
+|----------|---------|--------|-------------|
+| `tau0` | `1.0` | horseshoe | Global shrinkage scale. Smaller = stronger shrinkage |
+| `slab_df` | `4` | horseshoe | Degrees of freedom of the regularizing slab |
+| `slab_scale` | `2.0` | horseshoe | Scale of the regularizing slab |
+| `u` | `1.0` | neg | Shape parameter \(u\) |
+| `a` | `1.0` | neg | Shape parameter \(a\) |
+| `tau` | `1.0` | neg | Scale parameter \(\tau\) |
 
 ```python
 # Horseshoe with tighter global shrinkage
@@ -501,9 +506,13 @@ results = scribe.fit(
     variable_capture=True,
     unconstrained=True,
     n_components=4,
-    expression_prior="horseshoe",
-    horseshoe_tau0=0.5,
-    horseshoe_slab_scale=1.0,
+    priors={
+        "mean_expression": {
+            "type": "horseshoe",
+            "tau0": 0.5,
+            "slab_scale": 1.0,
+        }
+    },
 )
 ```
 
@@ -563,7 +572,10 @@ can be combined with any model.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `overdispersion` | `"none"` | `"none"` (standard NB) or `"bnb"` (Beta Negative Binomial) |
-| `overdispersion_prior` | `"horseshoe"` | Hierarchical prior on \(\kappa_g\): `"horseshoe"` or `"neg"` |
+
+The hierarchical prior on \(\kappa_g\) is declared through `priors` under the
+canonical name `overdispersion` (a family string `"horseshoe"` or `"neg"`);
+it defaults to `"horseshoe"` when `overdispersion="bnb"` and no prior is given.
 
 ```python
 results = scribe.fit(
@@ -572,6 +584,7 @@ results = scribe.fit(
     overdispersion="bnb",
     unconstrained=True,
     amortize_capture=True,
+    priors={"overdispersion": "neg"},   # override the default horseshoe
 )
 ```
 
@@ -696,19 +709,29 @@ dataset-level hierarchical priors on gene-specific parameters.
 
 ### Dataset-level priors
 
-Each parameter that varies across genes can also vary across datasets, with a
-hierarchical prior controlling how much dataset-to-dataset variation is
-allowed.
+Each parameter that varies across genes can also vary across datasets. Declare
+this through the unified `priors` dict by attaching a **`{level: family}` dict**
+to a canonical parameter name --- the level keys are your grouping factors (a
+bare `dataset_key="batch"` is a single factor named `"batch"`). The family
+controls how much dataset-to-dataset variation is allowed. See
+[Defining Priors](priors.md) for the full grammar.
+
+| `priors` key      | Dataset/level hierarchy on ...                                                          |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `mean_expression` | \(\mu\) (the additive log-mean decomposition over factors)                              |
+| `probability`     | \(p\)                                                                                   |
+| `zero_inflation`  | the zero-inflation gate                                                                 |
+| `overdispersion`  | BNB \(\kappa\) (requires `overdispersion="bnb"`)                                        |
+| `regime`          | **TwoState only.** the bursting-regime coordinate (`k_off` / `switching_ratio` / ...)   |
+
+Each family is `"gaussian"`, `"horseshoe"`, or `"neg"` (or a `{"type": ...}`
+spec with hyperparameters). A few **structural** options stay as keyword
+arguments --- they shape *how* the hierarchy is built, not its prior family:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `expression_dataset_prior` | `"none"` | Prior on \(\mu\) across datasets: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
-| `prob_dataset_prior` | `"none"` | Prior on \(p\) across datasets |
 | `prob_dataset_mode` | `"gene_specific"` | How \(p\) varies: `"scalar"`, `"gene_specific"`, or `"two_level"` |
-| `zero_inflation_dataset_prior` | `"none"` | Prior on zero-inflation gate across datasets |
-| `overdispersion_dataset_prior` | `"none"` | Prior on BNB \(\kappa\) across datasets. Requires `overdispersion="bnb"` |
-| `regime_dataset_prior` | `"none"` | **TwoState only.** Prior on the regime coordinate (`k_off` / `switching_ratio` / `concentration` / `inv_concentration`) across datasets |
-| `regime_dataset_target` | `None` | **TwoState only.** Override the regime coordinate; defaults to the parameterization's regime coordinate |
+| `regime_dataset_target` | `None` | **TwoState only.** Pin the regime coordinate; defaults to the parameterization's regime coordinate |
 | `overdispersion_dataset_independent` | `True` | **TwoState only.** Leave the overdispersion coordinate (`burst_size` / `excess_fano`) free per dataset (no cross-dataset hierarchy) |
 | `capture_scaling_prior` | `"none"` | Prior on per-dataset capture scaling \(\eta_d\). For VCP models |
 
@@ -719,8 +742,10 @@ results = scribe.fit(
     variable_capture=True,
     unconstrained=True,
     dataset_key="batch",
-    expression_dataset_prior="horseshoe",
-    prob_dataset_prior="gaussian",
+    priors={
+        "mean_expression": {"batch": "horseshoe"},
+        "probability":     {"batch": "gaussian"},
+    },
     amortize_capture=True,
 )
 
@@ -732,8 +757,10 @@ results = scribe.fit(
     parameterization="moment_delta",
     unconstrained=True,
     dataset_key="condition",
-    expression_dataset_prior="horseshoe",
-    regime_dataset_prior="horseshoe",
+    priors={
+        "mean_expression": {"condition": "horseshoe"},
+        "regime":          {"condition": "horseshoe"},
+    },
 )
 ```
 
@@ -756,8 +783,8 @@ deviation is modelled separately (see
 
 For finer control, use a structured `hierarchy=[GroupLevel(...)]` and mark the
 **contrast of interest** as a fixed effect (no learned shrinkage, so the
-contrast is not pulled toward zero), and give each `*_dataset_prior` a **dict**
-to set a prior family per factor:
+contrast is not pulled toward zero). Set a prior family **per factor** by giving
+the canonical name a `{level: family}` dict in `priors`:
 
 ```python
 results = scribe.fit(
@@ -769,20 +796,22 @@ results = scribe.fit(
         scribe.GroupLevel("perturbation", effect_type="fixed"),  # 2-level contrast
         scribe.GroupLevel("sample"),                             # 7 donors -> random
     ],
-    expression_dataset_prior={
-        "perturbation": "gaussian",   # fixed-scale, weakly-informative
-        "sample": "horseshoe",        # adaptive shrinkage across donors
+    priors={
+        "mean_expression": {
+            "perturbation": "gaussian",   # fixed-scale, weakly-informative
+            "sample": "horseshoe",        # adaptive shrinkage across donors
+        },
+        "probability": {"sample": "gaussian"},  # technical p stays leaf-exchangeable
     },
-    prob_dataset_prior="gaussian",    # technical p stays leaf-exchangeable
 )
 ```
 
 | Argument | Form | Notes |
 |----------|------|-------|
-| `dataset_key=["treatment", "sample"]` | list of columns | crossed factors, all random, prior broadcast to each |
+| `dataset_key=["treatment", "sample"]` | list of columns | crossed factors, all random |
 | `hierarchy=[GroupLevel(...), ...]` | structured | per-factor `effect_type` (`"random"` \| `"fixed"`), `nested_in`, `fixed_scale` |
 | `interactions=[("treatment", "sample")]` | list of tuples | add an interaction (random) effect between factors |
-| `expression_dataset_prior={...}` | str \| dict | per-factor prior family; a string broadcasts to all factors |
+| `priors={"mean_expression": {factor: family}}` | `{level: family}` dict | per-factor prior family; add a `"base"` key for the gene-level prior |
 
 `GroupLevel(name, nested_in=None, effect_type="random", fixed_scale=None)`. Only
 the expression target (\(\mu\)/\(r\)) gets the additive decomposition; `p`, gate
@@ -958,8 +987,10 @@ results = scribe.fit(
     variable_capture=True,
     unconstrained=True,
     dataset_key="batch",
-    expression_dataset_prior="horseshoe",
-    prob_dataset_prior="gaussian",
+    priors={
+        "mean_expression": {"batch": "horseshoe"},
+        "probability":     {"batch": "gaussian"},
+    },
     amortize_capture=True,
     n_steps=200_000,
 )
@@ -1012,9 +1043,11 @@ results = scribe.fit(
     unconstrained=True,
     expression_anchor=True,
     expression_anchor_sigma=0.3,
-    priors={"organism": "human"},
     overdispersion="bnb",
-    prob_prior="gaussian",
+    priors={
+        "organism": "human",        # capture info for anchoring
+        "probability": "gaussian",  # gene-level hierarchical prior on p
+    },
     amortize_capture=True,
     n_steps=300_000,
     batch_size=512,
@@ -1067,24 +1100,13 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `parameterization` | `"canonical"` | `str` |
     | `unconstrained` | `False` | `bool` |
 
-    **Hierarchical priors (gene-level)**
+    **Priors** --- every prior family and hierarchy (gene-level shrinkage,
+    dataset/factor hierarchies, base hyperparameters, and family-spec
+    hyperparameters) is declared through one argument.
 
     | Parameter | Default | Type |
     |-----------|---------|------|
-    | `expression_prior` | `"none"` | `str` |
-    | `prob_prior` | `"none"` | `str` |
-    | `zero_inflation_prior` | `"none"` | `str` |
-
-    **Prior hyperparameters**
-
-    | Parameter | Default | Type |
-    |-----------|---------|------|
-    | `horseshoe_tau0` | `1.0` | `float` |
-    | `horseshoe_slab_df` | `4` | `int` |
-    | `horseshoe_slab_scale` | `2.0` | `float` |
-    | `neg_u` | `1.0` | `float` |
-    | `neg_a` | `1.0` | `float` |
-    | `neg_tau` | `1.0` | `float` |
+    | `priors` | `None` | `dict` --- see [Defining Priors](priors.md) |
 
     **Mean anchoring**
 
@@ -1098,7 +1120,6 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | Parameter | Default | Type |
     |-----------|---------|------|
     | `overdispersion` | `"none"` | `str` |
-    | `overdispersion_prior` | `"horseshoe"` | `str` |
 
     **Mixture**
 
@@ -1126,13 +1147,14 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `n_datasets` | `None` | `int` |
     | `dataset_params` | `None` | `list[str]` |
     | `dataset_mixing` | `None` | `bool` |
-    | `expression_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
-    | `prob_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
     | `prob_dataset_mode` | `"gene_specific"` | `str` |
-    | `zero_inflation_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
-    | `overdispersion_dataset_prior` | `"none"` | `str` or `dict[str, str]` |
+    | `regime_dataset_target` | `None` | `str` (TwoState) |
+    | `overdispersion_dataset_independent` | `True` | `bool` (TwoState) |
     | `capture_scaling_prior` | `"none"` | `str` |
     | `auto_downgrade_single_dataset_hierarchy` | `True` | `bool` |
+
+    Dataset/factor prior families themselves go in `priors` as `{level: family}`
+    dicts (see [Defining Priors](priors.md)).
 
     **Guide (Gaussian)**
 
