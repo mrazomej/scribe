@@ -21,6 +21,9 @@ _ECDF_DEFAULT_N_GENES = 25
     suffix="example_ecdf",
     save_label="ECDF plot",
     save_kwargs={"bbox_inches": "tight"},
+    # First positional arg is ``counts``, not a results object, so this
+    # plotter is excluded from the ``results.viz`` accessor.
+    accessor=False,
 )
 def plot_ecdf(
     counts,

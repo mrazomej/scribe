@@ -28,6 +28,10 @@ ppc_samples = results.get_ppc_samples(n_samples=100)
 
 # Visualize results
 scribe.viz.plot_parameter_posteriors(results)
+
+# Every results object also carries an object-oriented `.viz` accessor that
+# binds itself as the first argument, e.g. `results.viz.plot_ppc(adata)`.
+# See the Results guide's Visualization section for the full list.
 ```
 
 !!! tip "Choosing an inference method"

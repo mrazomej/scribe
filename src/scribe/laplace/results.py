@@ -22,10 +22,12 @@ from ._gene_subsetting import GeneSubsettingResultsMixin
 from ._likelihood import LikelihoodResultsMixin
 from ._sampling import SamplingResultsMixin
 from ._serialization import SerializationResultsMixin
+from ..viz.registry import VizAccessorMixin
 
 
 @dataclass(repr=False)
 class ScribeLaplaceResults(
+    VizAccessorMixin,
     CoreResultsMixin,
     DispatchResultsMixin,
     SamplingResultsMixin,

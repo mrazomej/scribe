@@ -1159,7 +1159,11 @@ _INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = dict(DESCRIPTIVE_NAMES)
 # before the tuple is passed to the obs model.
 FREEZE_KEY_ALIASES: Dict[str, str] = {
     "dispersion": "r",
+    # Both "mean_expression" and "expression" are accepted aliases for the
+    # log-rate prior mean ``mu`` -- mirroring the ParamName for ``mu`` used by
+    # PRIOR_KEY_ALIASES (``ParamName("mu", "mean_expression", "expression")``).
     "mean_expression": "mu",
+    "expression": "mu",
     "capture_efficiency": "eta",
 }
 

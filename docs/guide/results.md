@@ -377,6 +377,68 @@ entropies = results.compute_component_entropy(
 )
 ```
 
+## Visualization
+
+Every results object exposes its plots through a `.viz` accessor, an
+object-oriented counterpart to the functional `scribe.viz` API. The two paths
+are equivalent — the accessor simply binds the results object as the first
+argument for you:
+
+```python
+# Object-oriented: `results` is bound automatically
+results.viz.plot_ppc(counts, n_genes=20)
+
+# Functional: pass `results` explicitly (unchanged, still fully supported)
+scribe.viz.plot_ppc(results, counts, n_genes=20)
+```
+
+Both calls return the same object and accept the same keyword arguments
+(`figsize`, `viz_cfg`, `save`, `show`, ...). Use whichever reads better in
+context: the accessor is convenient in notebooks and exploratory work, while the
+functional form is handy when the plotting function is selected dynamically.
+
+### Discovering available plots
+
+The accessor is **type-aware** — it exposes only the plots that apply to the
+results object at hand. List them with `dir()` (or tab-completion in a REPL or
+notebook):
+
+```python
+dir(results.viz)
+# ['plot_bio_ppc', 'plot_loss', 'plot_ppc', 'plot_umap', ...]
+
+results.viz  # the repr lists the same set
+# <VizAccessor for ScribeSVIResults: plot_bio_ppc, plot_loss, plot_ppc, ...>
+```
+
+Inference results (`ScribeSVIResults`, `ScribeVAEResults`, `ScribeMCMCResults`,
+`ScribeLaplaceResults`) expose the posterior-predictive, loss, UMAP, and related
+plots. Differential-expression results expose the DE plots instead:
+
+```python
+de = scribe.compare(results_A, results_B)
+de.viz.plot_de_volcano()
+de.viz.plot_de_ma()
+```
+
+Requesting a plot that does not apply to a given results type raises a clear
+`AttributeError` instead of failing deep inside the plotting code:
+
+```python
+results.viz.plot_de_volcano
+# AttributeError: 'plot_de_volcano' is not available for ScribeSVIResults ...
+```
+
+!!! note "Extending the accessor"
+
+    The accessor is registry-driven: any plotting function decorated with
+    `@scribe.viz.plot_function` whose first argument is a results object is
+    registered automatically and appears on `.viz` — no extra wiring. A plot
+    can scope itself to a results family via the decorator's `supports=`
+    argument (e.g. `supports="de"`); the default makes it available to all
+    inference results. Functions whose first argument is *not* a results object
+    (such as `plot_ecdf`) opt out with `accessor=False`.
+
 ## Model-Specific Parameters
 
 The `ScribeResults` class works with all model types supported by SCRIBE. Each

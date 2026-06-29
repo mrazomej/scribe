@@ -384,6 +384,7 @@ def _build_mask_for_threshold_plot(
     suffix="de_mean_expression",
     save_label="DE mean-expression plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
+    supports="de",
 )
 def plot_de_mean_expression(
     de_results,
@@ -535,6 +536,7 @@ def plot_de_mean_expression(
     suffix="de_volcano",
     save_label="DE volcano plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
+    supports="de",
 )
 def plot_de_volcano(
     de_results,
@@ -703,6 +705,7 @@ def plot_de_volcano(
     suffix="de_evidence",
     save_label="DE evidence plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
+    supports="de",
 )
 def plot_de_evidence(
     de_results,
@@ -863,6 +866,7 @@ def plot_de_evidence(
     suffix="de_ma",
     save_label="DE MA plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
+    supports="de",
 )
 def plot_de_ma(
     de_results,
@@ -1024,6 +1028,7 @@ def plot_de_ma(
     suffix="de_mask_threshold",
     save_label="DE mask-threshold diagnostic plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
+    supports="de",
 )
 def plot_de_mask_threshold(
     de_results,

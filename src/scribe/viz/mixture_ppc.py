@@ -27,6 +27,7 @@ from ._interactive import (
     _resolve_ppc_grid,
     plot_function,
 )
+from .registry import register_plot
 from .config import _get_config_values
 from .dispatch import (
     _get_layouts_for_plot,
@@ -1049,6 +1050,7 @@ def _resolve_mixture_ppc_plot_selection(plots, *, n_components, save):
     }
 
 
+@register_plot
 def plot_mixture_ppc(
     results,
     counts,
@@ -1401,6 +1403,7 @@ def plot_mixture_ppc(
     return None
 
 
+@register_plot
 def plot_mixture_ppc_overview(*args, **kwargs):
     """Render only the mixture overview PPC figure.
 
@@ -1421,6 +1424,7 @@ def plot_mixture_ppc_overview(*args, **kwargs):
     return plot_mixture_ppc(*args, **kwargs)
 
 
+@register_plot
 def plot_mixture_ppc_components(*args, component_indices=None, **kwargs):
     """Render one or more component-specific mixture PPC figures.
 
@@ -1451,6 +1455,7 @@ def plot_mixture_ppc_components(*args, component_indices=None, **kwargs):
     return plot_mixture_ppc(*args, **kwargs)
 
 
+@register_plot
 def plot_mixture_ppc_comparison(*args, **kwargs):
     """Render only the combined mixture/component comparison PPC figure.
 

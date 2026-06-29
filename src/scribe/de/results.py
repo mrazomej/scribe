@@ -16,10 +16,11 @@ from ._results_empirical_mixin import EmpiricalResultsMixin
 from ._results_factory import compare, compare_datasets
 from ._results_parametric_mixin import ParametricResultsMixin
 from ._results_shrinkage_mixin import ShrinkageResultsMixin
+from ..viz.registry import VizAccessorMixin
 
 
 @dataclass
-class ScribeDEResults(BaseResultsMixin):
+class ScribeDEResults(VizAccessorMixin, BaseResultsMixin):
     """Abstract base class for Bayesian differential-expression results.
 
     Parameters
