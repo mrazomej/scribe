@@ -16,7 +16,7 @@ def _(mo):
     mo.md(r"""
     # Which model should we trust? *Bayesian model comparison* for a crossed hierarchical fit
 
-    In the companion differential-expression tutorial we fit **one** crossed *donor × condition* model to the Zhao et al. (2021) panobinostat data and read the treatment effect off its posterior. But that tutorial quietly made a **modeling choice**: it put the additive hierarchy only on the gene **mean** $\mu_g$, leaving the gene **dispersion** $r_g$ as a single per-gene value shared across all leaves.
+    In the [companion differential-expression tutorial](https://mrazomej.github.io/scribe/tutorials/zhao_2021_hierarchical/) we fit **one** crossed *donor × condition* model to the Zhao et al. (2021) panobinostat data and read the treatment effect off its posterior. But that tutorial quietly made a **modeling choice**: it put the additive hierarchy only on the gene **mean** $\mu_g$, leaving the gene **dispersion** $r_g$ as a single per-gene value shared across all leaves.
 
     That is not the only option. Because `scribe`'s `mean_disp` parameterization samples $(\mu_g, r_g)$ as *independent* coordinates, we can just as well give **both** of them the donor × condition hierarchy — letting each gene's *over-dispersion* shift with treatment and vary across donors, not just its mean. So we now have **two competing models** of the same data:
 
@@ -78,7 +78,7 @@ def _():
 
     # Set our plotting style (totally optional)
     scribe.viz.matplotlib_style()
-    return Path, json, np, pd, pertpy, pickle, plt, sc, scribe
+    return Path, json, pd, pertpy, pickle, plt, sc, scribe
 
 
 @app.cell(hide_code=True)
@@ -247,13 +247,7 @@ def _(mo):
     - **WAIC** — an analytical approximation: $\widehat{\mathrm{elpd}} = \mathrm{lppd} - p_{\mathrm{WAIC}}$, where the in-sample log pointwise predictive density `lppd` is penalized by $p_{\mathrm{WAIC}}$, the posterior **variance** of the per-observation log-likelihood (the "effective number of parameters"). Fully vectorized, computed from the posterior draws we already have.
     - **PSIS-LOO** — Pareto-smoothed importance-sampling LOO: more reliable, and it carries a **per-observation diagnostic $\hat{k}$** (the fitted Pareto-tail shape) that tells us *when the estimate itself is trustworthy* — $\hat{k} < 0.7$ good, $\hat{k} \ge 0.7$ unreliable.
 
-    The subtle question — *at what unit do we score predictions?* — is the
-    subject of the next section. For these variable-capture models the answer is
-    the **gene**, and `compare_models` detects that automatically: one call
-    computes the per-gene log-likelihoods for both models and reports cell-level
-    leave-one-out as unsupported. (The likelihood of a crossed-hierarchical fit
-    gathers each cell's leaf parameters internally and `compare_models` evaluates
-    it as a single batched pass, so this is fast even at 75k cells × 17.5k genes.)
+    The subtle question — *at what unit do we score predictions?* — is the subject of the next section. For these variable-capture models the answer is the **gene**, and `compare_models` detects that automatically: one call computes the per-gene log-likelihoods for both models and reports cell-level leave-one-out as unsupported. (The likelihood of a crossed-hierarchical fit gathers each cell's leaf parameters internally and `compare_models` evaluates it as a single batched pass, so this is fast even at 75k cells × 17.5k genes.)
     """)
     return
 
@@ -291,14 +285,17 @@ def _(adata_joint, results_mu_only, results_mu_plus_r, scribe):
         counts=counts_model,
         model_names=["mu_only", "mu_plus_r"],
         gene_names=gene_names,
-        n_samples=200,
+        n_samples=500,
         posterior_sample_chunk_size=2,
         compute_gene_liks=True,
         ignore_nans=True,
         rng_key=jax.random.PRNGKey(0),
     )
     mc
-    return (mc,)
+    # Export `counts_model`/`gene_names` too: a later cell reuses the exact
+    # fit-time count matrix (already aligned to the model's gene axis) to
+    # compute per-gene mean UMI and over-dispersion without rebuilding it.
+    return counts_model, gene_names, mc
 
 
 @app.cell(hide_code=True)
@@ -306,16 +303,9 @@ def _(mo):
     mo.md(r"""
     ## Why the comparison is at the *gene* level, not the cell
 
-    Notice what `compare_models` printed: it computed **gene-level**
-    log-likelihoods and declared cell-level leave-one-out *unsupported*. That is
-    deliberate, and it is the subtle part of comparing single-cell models —
-    worth understanding before reading the result.
+    Notice what `compare_models` printed: it computed **gene-level** log-likelihoods and declared cell-level leave-one-out *unsupported*. That is deliberate, and it is the subtle part of comparing single-cell models — worth understanding before reading the result.
 
-    The instinctive thing is to score each model by leave-one-**cell**-out
-    (cell-level WAIC / PSIS-LOO). But this model gives every cell its **own**
-    capture probability $\nu_c$ (`p_capture`) — a latent informed by *that cell
-    alone*. An honest held-out-cell prediction must integrate $\nu_c$ over its
-    **prior**, because the other cells say nothing about it:
+    The instinctive thing is to score each model by leave-one-**cell**-out (cell-level WAIC / PSIS-LOO). But this model gives every cell its **own** capture probability $\nu_c$ (`p_capture`) — a latent informed by *that cell alone*. An honest held-out-cell prediction must integrate $\nu_c$ over its **prior**, because the other cells say nothing about it:
 
     $$
     p(\tilde u_c \mid U_{-c}) =
@@ -323,27 +313,9 @@ def _(mo):
     p(\theta \mid U_{-c})\, d\nu\, d\theta .
     $$
 
-    The pointwise log-likelihood, however, conditions on the $\nu_c$ that was
-    fit *to $u_c$ itself*. To turn that into a leave-one-out estimate, PSIS-LOO
-    would have to reweight a **posterior-to-prior collapse** of $\nu_c$ — which
-    it cannot — so the Pareto diagnostic gives $\hat{k} \ge 0.7$ for
-    *essentially every cell*, and the WAIC variance penalty explodes
-    ($p_{\mathrm{eff}}$ in the tens of millions). This is the textbook failure
-    of leave-one-out under **per-observation latent variables**; it is a
-    property of the design, not a defect of either model. (Full derivation:
-    `paper/_model_comparison.qmd`, *Leave-one-cell-out with cell-specific
-    latents*.)
+    The pointwise log-likelihood, however, conditions on the $\nu_c$ that was fit *to $u_c$ itself*. To turn that into a leave-one-out estimate, PSIS-LOO would have to reweight a **posterior-to-prior collapse** of $\nu_c$ — which it cannot — so the Pareto diagnostic gives $\hat{k} \ge 0.7$ for *essentially every cell*, and the WAIC variance penalty explodes ($p_{\mathrm{eff}}$ in the tens of millions). This is the textbook failure of leave-one-out under **per-observation latent variables**; it is a property of the design, not a defect of either model. (Full derivation in supplementary materials *Leave-one-cell-out with cell-specific latents* section.)
 
-    The resolution is to change the **unit of observation** to the gene.
-    Dropping one gene barely moves any parameter — the gene-level $\mu_g, r_g$
-    are pinned by ~75k cells, and every $\nu_c$ is still informed by the
-    thousands of *retained* genes in its cell — so leave-one-gene-out is
-    well-posed and stable. Because **every realistic single-cell model needs
-    variable capture**, the gene is the right unit for `scribe` model
-    comparison, and `compare_models` switches to it automatically whenever a
-    cell-specific latent is present (hence the message above, and why
-    `mc.rank()` / `mc.psis_loo()` deliberately refuse here and point you to the
-    gene-level comparison).
+    The resolution is to change the **unit of observation** to the gene.  Dropping one gene barely moves any parameter — the gene-level $\mu_g, r_g$ are pinned by ~75k cells, and every $\nu_c$ is still informed by the thousands of *retained* genes in its cell — so leave-one-gene-out is well-posed and stable. Because **every realistic single-cell model needs variable capture**, the gene is the right unit for `scribe` model comparison, and `compare_models` switches to it automatically whenever a cell-specific latent is present (hence the message above, and why `mc.rank()` / `mc.psis_loo()` deliberately refuse here and point you to the gene-level comparison).
     """)
     return
 
@@ -353,11 +325,7 @@ def _(mo):
     mo.md(r"""
     ## The right lens: gene-level comparison
 
-    `mc.gene_level_comparison(A, B)` works with the **per-gene** log-likelihoods
-    (each gene summed over all cells). For every gene it reports the elpd
-    difference between the two models, its standard error, and a z-score — so we
-    can see exactly **which genes** the dispersion hierarchy helps, and by how
-    much. A positive `elpd_diff` favours `mu_plus_r`.
+    `mc.gene_level_comparison(A, B)` works with the **per-gene** log-likelihoods (each gene summed over all cells). For every gene it reports the elpd difference between the two models, its standard error, and a z-score — so we can see exactly **which genes** the dispersion hierarchy helps, and by how much. A positive `elpd_diff` favours `mu_plus_r`.
     """)
     return
 
@@ -375,7 +343,7 @@ def _(mc):
 
 @app.cell
 def _(gene_cmp, plt):
-    # Per-gene elpd difference vs significance. Positive => favours mu_plus_r.
+    # Per-gene elpd difference vs significance. Positive => favours $\mu + r$.
     _d = gene_cmp["elpd_diff"].to_numpy()
     _z = gene_cmp["z_score"].to_numpy()
     _fig, _ax = plt.subplots(figsize=(6, 4))
@@ -383,11 +351,14 @@ def _(gene_cmp, plt):
     _ax.axhline(0, c="k", lw=0.5)
     _ax.axvline(0, c="k", lw=0.5)
     _ax.set_xscale("symlog")
-    _ax.set_xlabel("per-gene elpd difference  (mu_plus_r − mu_only)")
-    _ax.set_ylabel("z-score of the difference")
+    _ax.set_xlabel(r"per-gene elpd difference  ($\mu + r$ − $\mu$ only)")
+    _ax.set_ylabel(r"z-score of the difference")
     _ax.set_title(
-        f"{int((_z > 2).sum()):,} genes favour mu+r at z>2  vs  "
-        f"{int((_z < -2).sum()):,} favouring mu-only"
+        r"$%s$ genes favour $\mu{+}r$ at $z > 2$"
+        "  vs  "
+        r"$%s$ favouring $\mu$ only" % (
+            int((_z > 2).sum()),
+            int((_z < -2).sum()))
     )
     _fig
     return
@@ -398,15 +369,14 @@ def _(mo):
     mo.md(r"""
     ## What does the dispersion hierarchy actually buy?
 
-    The verdict is **decisive and one-sided**: a large block of genes is fit much
-    better by `mu_plus_r` (high positive elpd differences, z-scores in the tens),
-    and almost nothing prefers `mu_only`. And the **identity** of the winning genes
-    is the real result. The top of the list is dominated by:
+    The verdict is **concentrated, not uniform** — and at the level of raw gene counts it is lopsided the *opposite* way from what "more flexible model" might suggest. The large majority of genes (look at the scatter title: ~15k of ~17.5k) significantly favour the **simpler** `mu_only` at $z < -2$, while only a few hundred favour `mu_plus_r`. This is WAIC doing its job: for a gene whose over-dispersion does *not* vary across leaves, the dispersion hierarchy only adds posterior **variance** (a larger $p_{\mathrm{WAIC}}$ penalty) without improving the fit, so leave-one-out predictive accuracy goes *down*. Model B nests Model A, but the nesting is paid for everywhere and recouped only where it is used.
+
+    What makes `mu_plus_r` worth having, then, is not breadth but the **identity and magnitude** of its wins. The top of the elpd-gain list is dominated by:
 
     - **Immunoglobulin genes** — `IGHM`, `IGHA2`, `IGHG1`–`IGHG4`, `IGKV*`, `JCHAIN`. These are the textbook *over-dispersed* transcripts of single-cell data: a few plasma/B cells express them at enormous, wildly variable levels while most cells sit near zero. A single shared $r_g$ cannot describe both regimes; a per-leaf dispersion can.
     - **Mitochondrially-encoded transcripts** — `MT-ND1`, `MT-ND5`, `MT-CO1`, `MT-CYB`, `MT-ATP6`, …, whose cell-to-cell variability differs sharply between the control and panobinostat arms.
 
-    In other words, **the extra flexibility is spent exactly where over-dispersion genuinely varies across conditions and donors** — not smeared across the transcriptome. That is the signature of a model improvement that is *real* rather than overfit: it concentrates on a biologically coherent, mechanistically expected set of genes.
+    In other words, **the extra flexibility is spent exactly where over-dispersion genuinely varies across conditions and donors** — not smeared across the transcriptome. That is the signature of a model improvement that is *real* rather than overfit: it concentrates on a biologically coherent, mechanistically expected set of genes, and the simpler model is preferred everywhere else.
     """)
     return
 
@@ -414,60 +384,91 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## The connection back to differential expression
+    ## Where in expression space does the gain live — and should we trust it?
 
-    This is where model comparison and differential expression turn out to be two
-    views of **one** phenomenon. In the DE tutorial, fitting the dispersion
-    hierarchy unlocked a second axis of differential expression — the **log
-    variance ratio** (`bio_lvr`), "did this gene's *variability* change with
-    treatment?" — distinct from the usual log-fold-change in the mean. The genes
-    that lit up there were the mitochondrial transcripts and the
-    induced/suppressed programs whose *shape*, not just *level*, shifted.
+    A concentrated, biologically-coherent win is reassuring, but it raises a sharper question we should always ask of a flexibility-driven improvement: **at what expression level do the gains sit?** If the dispersion hierarchy mostly "helps" genes that are barely sampled — a handful of nonzero counts spread across 75k cells — then the apparent improvement may just be the flexible model drawing a slightly better curve through points that are too noisy to pin down *any* shape. We would not want to trust a per-leaf over-dispersion estimate for a gene that fires in five cells.
 
-    Those are the **same genes** that model comparison just identified as the ones
-    `mu_plus_r` fits better. The logic closes neatly:
+    So we plot the per-gene elpd difference against the gene's **mean UMI per cell** (its raw sampling depth), and colour each point by its **variance-to-mean ratio** — the empirical over-dispersion index ($\mathrm{VMR}=1$ is Poisson; $\mathrm{VMR}\gg 1$ is strongly over-dispersed). The trend need not be linear; we just want to *see* it. The colour is the crucial second axis: it separates two very different reasons a low-UMI gene might appear to favour `mu_plus_r` —
 
-    - **Model comparison** asks *"is the dispersion hierarchy worth it?"* and answers *"yes — on the over-dispersed, differentially-variable genes."*
-    - **Differential expression** asks *"what did the dispersion hierarchy reveal?"* and answers *"a differential-variance signal on those very genes."*
-
-    A gene only earns a large `bio_lvr` if its dispersion really moved between
-    arms; and a gene only earns a large gene-level `elpd_diff` if modeling that
-    movement improved prediction. They are the same condition seen from two sides.
-    The model comparison is the *license* to read the `bio_lvr` axis at all — it is
-    the out-of-sample evidence that the dispersion structure is signal, not noise.
+    - **low mean UMI *with* high VMR** → a genuinely *bimodal* gene (zero in almost every cell, enormous in a few): the over-dispersion is real and a single $r_g$ truly cannot fit it, so the win is trustworthy even though the mean is tiny;
+    - **low mean UMI *with* VMR near 1** → a gene that is simply under-sampled and near-Poisson: any "improvement" here rides on a few counts and should be treated with suspicion.
     """)
+    return
+
+
+@app.cell
+def _(counts_model, gene_cmp, gene_names, pd, plt):
+    from matplotlib.colors import LogNorm
+    import numpy as _np
+
+    # Per-gene empirical statistics, computed once from the exact fit-time count
+    # matrix so they line up with the model's gene axis (kept genes + `_other`).
+    #   mean_umi : mean counts per cell  -> sampling depth / sparsity
+    #   vmr      : variance-to-mean ratio -> empirical over-dispersion index
+    #              (1 = Poisson; >> 1 = strongly over-dispersed / bimodal)
+    _mean_umi = counts_model.mean(axis=0)
+    _var_umi = counts_model.var(axis=0)
+    _vmr = _np.where(
+        _mean_umi > 0, _var_umi / _np.maximum(_mean_umi, 1e-12), 1.0
+    )
+    gene_stats = pd.DataFrame(
+        {"gene": gene_names, "mean_umi": _mean_umi, "vmr": _vmr}
+    )
+
+    # Join the empirical stats onto the per-gene comparison and drop the pooled
+    # `_other` column (an aggregate, not a real gene).
+    _df = gene_cmp.merge(gene_stats, on="gene", how="left")
+    _df = _df[_df["gene"] != "_other"].copy()
+
+    # Scatter: x = mean UMI (log), y = elpd difference (symlog, since it spans
+    # +1.5e4 down to ~-6e5), colour = over-dispersion (log). Draw the most
+    # over-dispersed genes last so the trustworthy winners sit on top.
+    _order = _df["vmr"].to_numpy().argsort()
+    _d = _df.iloc[_order]
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+    _scat = _ax.scatter(
+        _d["mean_umi"].clip(lower=1e-3),
+        _d["elpd_diff"],
+        c=_d["vmr"].clip(lower=1.0),
+        s=7,
+        alpha=0.6,
+        norm=LogNorm(vmin=1.0, vmax=1e3),
+        cmap="viridis",
+    )
+    _ax.set_xscale("log")
+    _ax.set_yscale("symlog", linthresh=10)
+    _ax.axhline(0, c="k", lw=0.6)
+    _ax.set_xlabel(r"mean UMI per gene (counts / cell)")
+    _ax.set_ylabel(r"per-gene elpd difference  ($\mu + r$ − $\mu$ only)")
+    _cb = _fig.colorbar(_scat)
+    _cb.set_label("variance-to-mean ratio (over-dispersion)")
+    # Label a few archetypes: ultra-sparse over-dispersed IGs vs moderate-UMI MT.
+    for _g in ["IGHM", "IGHG2", "MT-ND1", "MT-CO1", "VGF"]:
+        _r = _df[_df["gene"] == _g]
+        if len(_r):
+            _ax.annotate(
+                _g,
+                (_r["mean_umi"].clip(lower=1e-3).iloc[0], _r["elpd_diff"].iloc[0]),
+                fontsize=7,
+                ha="left",
+            )
+    _ax.set_title("elpd gain concentrates at low mean UMI — but tracks over-dispersion")
+    _fig
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Recap
+    ## Reading the trend
 
-    We took the modeling choice that the DE tutorial made implicitly — hierarchy on
-    the mean only — and tested it head-to-head against the richer model that also
-    puts the hierarchy on the dispersion, using `scribe.mc`.
+    Two things jump out, and together they answer the question.
 
-    Three things to carry forward:
+    **The bulk of the transcriptome sits *below* zero, and sinks as sampling depth grows.** Every well-expressed gene reliably favours `mu_only`, and the deficit *grows* with mean UMI — the most-sampled genes (top decile) carry by far the largest negative elpd differences. That is partly mechanical (a gene with more counts contributes more total log-likelihood, so any per-cell penalty is amplified), but the *sign* is the message: where a gene is sampled deeply enough to estimate its dispersion precisely, the data say a single $r_g$ already suffices, and the hierarchy's extra variance is pure cost.
 
-    1. **The machinery works on genuinely complex fits.** `compare_models` runs
-       WAIC, PSIS-LOO, and gene-level comparison directly on crossed-hierarchical,
-       variable-capture `mean_disp` models — the per-cell likelihood gathers each
-       cell's leaf parameters internally, and PSIS-LOO is GPU-vectorized, so the
-       whole comparison is fast at single-cell scale.
+    **The positive cloud lives at low-to-moderate mean UMI — and it is bright.** Exactly as you might worry, the genes the dispersion hierarchy *helps* are the sparsely-sampled ones (the immunoglobulins sit near $10^{-2}$ UMI/cell). But the colour rescues the interpretation: those low-UMI winners are the **brightest points on the plot** (VMR in the hundreds to >1000). They are not noise — they are *bimodal*: silent in ~99.5% of cells and explosive in a few plasma/B cells. No single $r_g$ can be both, so the per-leaf dispersion earns its keep despite the tiny mean. The median winner has $\mathrm{VMR}\approx 4$ against $\approx 1.3$ for the transcriptome as a whole — the gains are concentrated on genuine over-dispersion, not on sampling depth.
 
-    2. **Choose the unit of observation deliberately.** Cell-level WAIC/PSIS-LOO is
-       degenerate for high-dimensional count data — $p_{\mathrm{eff}}$ in the
-       millions and $\hat{k} \ge 0.7$ everywhere. The $\hat{k}$ diagnostic is what
-       *tells you* to stop trusting it and move to the gene level, where the
-       comparison is stable and interpretable.
-
-    3. **A real improvement is concentrated and explicable.** The dispersion
-       hierarchy earns its keep on the immunoglobulin and mitochondrial genes — the
-       famously over-dispersed transcripts whose variability shifts across
-       conditions and donors — which are exactly the genes the differential-variance
-       (`bio_lvr`) axis flagged in the DE analysis. Model selection and differential
-       expression converge on the same biology.
+    **The caveat you should still carry.** A minority of the low-UMI "winners" are *dark* — low mean UMI **and** VMR near 1. For those genes the favourable elpd rests on a few scattered counts and should be treated as suggestive at best, not as evidence the dispersion hierarchy is needed. The honest reading of the whole figure is therefore: **trust the win where it is backed by over-dispersion you can see (bright points), discount it where it is not (dark points at the far-left edge).** This is also why a sane default is to keep the simpler `mu_only` for routine differential-expression and reach for `mu_plus_r` deliberately — precisely on the over-dispersed gene families (immunoglobulins, mitochondrial transcripts) where the comparison says the flexibility is real.
     """)
     return
 

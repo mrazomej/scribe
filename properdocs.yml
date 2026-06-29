@@ -179,5 +179,6 @@ nav:
     - Gene–gene correlations with NBLN: tutorials/jurkat_cells_nbln.md
     - Bursty genes & the two-state promoter: tutorials/k562_cells_twostate.md
     - Crossed hierarchies & multi-donor DE: tutorials/zhao_2021_hierarchical.md
+    - "Model comparison: μ-only vs μ+r": tutorials/zhao_2021_model_comparison.md
   - API Reference: reference/
   - Contributing: contributing.md
