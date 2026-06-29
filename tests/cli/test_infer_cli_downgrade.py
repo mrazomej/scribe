@@ -211,7 +211,8 @@ def test_infer_main_forwards_laplace_and_cascade_kwargs(
 
     # Return a deterministic in-memory counts matrix to avoid I/O concerns.
     def _fake_load_and_preprocess(*_args, **_kwargs):
-        return np.ones((11, 5), dtype=np.float32)
+        # The runner reads counts.X, so return an AnnData (not a bare array).
+        return anndata.AnnData(X=np.ones((11, 5), dtype=np.float32))
 
     monkeypatch.setattr("scribe.fit", _fake_fit)
     monkeypatch.setattr(infer, "_load_svi_init", _fake_load_svi_init)
@@ -384,7 +385,8 @@ def test_informative_priors_dataset_index_calls_get_dataset(
         return fake_multi
 
     def _fake_load_and_preprocess(*_args, **_kwargs):
-        return np.ones((11, 5), dtype=np.float32)
+        # The runner reads counts.X, so return an AnnData (not a bare array).
+        return anndata.AnnData(X=np.ones((11, 5), dtype=np.float32))
 
     monkeypatch.setattr("scribe.fit", _fake_fit)
     monkeypatch.setattr(infer, "_load_svi_init", _fake_load_svi_init)

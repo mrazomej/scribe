@@ -21,6 +21,17 @@ from omegaconf import OmegaConf  # noqa: E402
 import scribe.cli.infer_runner as infer  # noqa: E402
 
 
+class _DummyResults:
+    """Picklable stand-in for infer-runner result serialization.
+
+    Defined at module level (not inside a test) so the runner's pickle-based
+    result save can resolve the class — a function-local class cannot be
+    pickled.
+    """
+
+    n_components = None
+
+
 def _build_cfg(
     *,
     min_cells_per_dataset: int | None,
@@ -205,11 +216,6 @@ def test_min_cells_guard_disabled_preserves_existing_behavior(
         "load_and_preprocess_anndata",
         lambda *_args, **_kwargs: adata.copy(),
     )
-
-    class _DummyResults:
-        """Pickle-friendly stand-in for infer runner result serialization."""
-
-        n_components = None
 
     fit_called = {"value": False}
 
