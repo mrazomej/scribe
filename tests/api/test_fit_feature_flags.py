@@ -4,58 +4,41 @@ These tests are unit-level and verify model-string resolution behavior without
 running real inference.
 """
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 import scribe.api as api
 
 
 def _capture_model_kwarg(**kwargs):
-    """Call ``fit`` with mocked internals and return the resolved ``model`` value.
+    """Resolve the model string from feature flags, exactly as ``fit`` does.
+
+    The ``fit`` pipeline resolves the model string in the ``model_flags``
+    stage (:func:`scribe.api.stages.model_flags.resolve_model_flags`), which
+    mutates a :class:`~scribe.api.context.FitContext` in place.  This helper
+    drives that stage directly on a minimal context, so the resolution logic
+    is exercised without running any inference.
 
     Parameters
     ----------
     **kwargs : dict
-        Keyword arguments forwarded to ``scribe.api.fit``.
+        ``model`` (default ``"nbvcp"``, matching ``fit``'s default) and/or
+        ``priors``, plus the boolean feature flags (``variable_capture``,
+        ``zero_inflation``).
 
     Returns
     -------
-    str or None
-        The resolved ``model`` string passed to ``build_config_from_preset``, or
-        ``None`` when that builder is not called.
+    str
+        The resolved model string.  Conflicting model/flag combinations raise
+        ``ValueError`` here, mirroring ``fit``.
     """
-    # Patch internals to isolate resolution logic and avoid real inference.
-    with (
-        patch.object(api, "build_config_from_preset") as mock_preset,
-        patch.object(api, "process_counts_data") as mock_data,
-        patch.object(api, "_run_inference") as mock_run,
-    ):
-        # Return a concrete numeric matrix so fit() preprocessing paths that
-        # compute count-derived metadata can execute without type errors.
-        import jax.numpy as jnp
+    from scribe.api.context import FitContext
+    from scribe.api.stages.model_flags import resolve_model_flags
 
-        mock_data.return_value = (
-            jnp.zeros((10, 5), dtype=jnp.int32),
-            None,
-            10,
-            5,
-        )
-        mock_preset.return_value = MagicMock()
-        mock_run.return_value = MagicMock()
-
-        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
-        try:
-            api.fit(dummy, n_steps=1, **kwargs)
-        except Exception:
-            # Resolution tests only need the preset builder call arguments.
-            pass
-
-        if mock_preset.called:
-            return mock_preset.call_args.kwargs.get(
-                "model", mock_preset.call_args[1].get("model")
-            )
-    return None
+    model = kwargs.pop("model", "nbvcp")
+    priors = kwargs.pop("priors", None)
+    ctx = FitContext(model=model, priors=priors, kwargs=dict(kwargs))
+    resolve_model_flags(ctx)
+    return ctx.model
 
 
 class TestFeatureFlagResolution:

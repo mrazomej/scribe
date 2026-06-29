@@ -27,6 +27,7 @@ from scribe.models.components.likelihoods import NegativeBinomialLikelihood
 nbdm_log_likelihood = NegativeBinomialLikelihood().log_prob
 from scribe.mcmc._likelihood import _compute_log_likelihood
 from scribe.svi._likelihood import LikelihoodMixin
+from scribe.sampling._helpers import _build_canonical_layouts
 
 
 # --------------------------------------------------------------------------
@@ -653,9 +654,15 @@ def test_svi_likelihood_chunking_matches_full_vmap():
     """Chunked SVI likelihood should match unchunked evaluation."""
 
     class _DummySVI(LikelihoodMixin):
-        def __init__(self, posterior_samples):
+        def __init__(self, posterior_samples, *, n_cells, n_genes):
             self.posterior_samples = posterior_samples
             self.n_components = None
+            # ``log_likelihood`` now builds per-draw AxisLayouts via
+            # ``_build_canonical_layouts``; a ``None`` model_config is fine
+            # since the canonical p/r keys resolve by shape fallback.
+            self.model_config = None
+            self.n_cells = n_cells
+            self.n_genes = n_genes
 
         def _log_likelihood_fn(self):
             return nbdm_log_likelihood
@@ -666,7 +673,9 @@ def test_svi_likelihood_chunking_matches_full_vmap():
         "p": jnp.full((9,), 0.3, dtype=jnp.float32),
         "r": jnp.full((9, 4), 1.2, dtype=jnp.float32),
     }
-    _results = _DummySVI(_posterior)
+    _results = _DummySVI(
+        _posterior, n_cells=_counts.shape[0], n_genes=_counts.shape[1]
+    )
 
     _ll_full = _results.log_likelihood(
         _counts, return_by="cell", sample_chunk_size=None
@@ -689,10 +698,26 @@ def test_mcmc_likelihood_chunking_matches_full_vmap():
         "r": jnp.full((8, 3), 1.4, dtype=jnp.float32),
     }
 
+    # ``_compute_log_likelihood`` now requires per-draw param layouts
+    # (the ``Likelihood.log_prob`` contract).  Build canonical layouts from
+    # the samples and strip the sample axis.
+    _layouts = {
+        k: v.without_sample_dim()
+        for k, v in _build_canonical_layouts(
+            _samples,
+            None,
+            n_genes=_counts.shape[1],
+            n_cells=_counts.shape[0],
+            n_components=None,
+            has_sample_dim=True,
+        ).items()
+    }
+
     _ll_full = _compute_log_likelihood(
         _samples,
         _counts,
         model_type="nbdm",
+        param_layouts=_layouts,
         sample_chunk_size=None,
         return_by="cell",
     )
@@ -700,6 +725,7 @@ def test_mcmc_likelihood_chunking_matches_full_vmap():
         _samples,
         _counts,
         model_type="nbdm",
+        param_layouts=_layouts,
         sample_chunk_size=2,
         return_by="cell",
     )
