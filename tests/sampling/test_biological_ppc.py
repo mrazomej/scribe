@@ -21,7 +21,7 @@ from jax import random
 
 from scribe.sampling import sample_biological_nb
 from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
-from scribe.inference import run_scribe
+from scribe import fit
 from scribe.inference.preset_builder import build_config_from_preset
 
 
@@ -65,7 +65,7 @@ def _fit_svi(model, counts, parameterization="standard"):
         )
         svi_config = SVIConfig(n_steps=5, batch_size=5)
         inference_config = InferenceConfig.from_svi(svi_config)
-        _svi_cache[key] = run_scribe(
+        _svi_cache[key] = fit(
             counts=counts,
             model_config=model_config,
             inference_config=inference_config,
@@ -88,7 +88,7 @@ def _fit_mcmc(model, counts, parameterization="standard"):
         )
         mcmc_config = MCMCConfig(n_warmup=2, n_samples=3, n_chains=1)
         inference_config = InferenceConfig.from_mcmc(mcmc_config)
-        _mcmc_cache[key] = run_scribe(
+        _mcmc_cache[key] = fit(
             counts=counts,
             model_config=model_config,
             inference_config=inference_config,

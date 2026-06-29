@@ -2587,7 +2587,7 @@ class TestLikelihoodDeviceStay:
     def test_gene_batched_returns_jax_array(self):
         """Gene-batched MAP log-likelihood returns a jnp.ndarray (not np)."""
         from scribe.models.config import InferenceConfig, SVIConfig
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
 
         _np = np.random.RandomState(42)
@@ -2600,7 +2600,7 @@ class TestLikelihoodDeviceStay:
             priors={"r": (2, 0.1), "p": (1, 1)},
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
-        result = run_scribe(
+        result = fit(
             counts=counts,
             model_config=cfg,
             inference_config=inf,
@@ -2620,7 +2620,7 @@ class TestLikelihoodDeviceStay:
     def test_gene_batched_matches_full(self):
         """Gene-batched MAP log-likelihood matches full computation."""
         from scribe.models.config import InferenceConfig, SVIConfig
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
 
         _np = np.random.RandomState(42)
@@ -2633,7 +2633,7 @@ class TestLikelihoodDeviceStay:
             priors={"r": (2, 0.1), "p": (1, 1)},
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
-        result = run_scribe(
+        result = fit(
             counts=counts,
             model_config=cfg,
             inference_config=inf,
@@ -3123,7 +3123,7 @@ class TestSVIGetCompositionalSamples:
     def svi_results(self):
         """Minimal SVI-fitted NBDM results for compositional sampling tests."""
         from scribe.models.config import InferenceConfig, SVIConfig
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
 
         np.random.seed(0)
@@ -3138,14 +3138,14 @@ class TestSVIGetCompositionalSamples:
             priors={"r": (2, 0.1), "p": (1, 1)},
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
-        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+        return fit(counts=counts, model_config=cfg, inference_config=inf, seed=0)
 
     @pytest.fixture(scope="class")
     def svi_results_hier(self):
         """SVI-fitted hierarchical-p (gene-specific p) NBDM results."""
         from scribe.models.config import InferenceConfig, SVIConfig
         from scribe.models.config import ModelConfigBuilder
-        from scribe.inference import run_scribe
+        from scribe import fit
 
         np.random.seed(1)
         counts = jnp.array(
@@ -3159,13 +3159,13 @@ class TestSVIGetCompositionalSamples:
             .build()
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
-        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+        return fit(counts=counts, model_config=cfg, inference_config=inf, seed=0)
 
     @pytest.fixture(scope="class")
     def svi_results_mix(self):
         """SVI-fitted mixture NBDM results (2 components)."""
         from scribe.models.config import InferenceConfig, SVIConfig
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
 
         np.random.seed(2)
@@ -3181,7 +3181,7 @@ class TestSVIGetCompositionalSamples:
             n_components=2,
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
-        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+        return fit(counts=counts, model_config=cfg, inference_config=inf, seed=0)
 
     def test_basic_shape(self, svi_results):
         """Returns (N_posterior, n_genes) array."""
@@ -3272,7 +3272,7 @@ class TestMCMCGetCompositionalSamples:
     def mcmc_results(self):
         """Minimal MCMC-fitted NBDM results for compositional sampling tests."""
         from scribe.models.config import InferenceConfig, MCMCConfig
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
 
         np.random.seed(3)
@@ -3289,7 +3289,7 @@ class TestMCMCGetCompositionalSamples:
         inf = InferenceConfig.from_mcmc(
             MCMCConfig(n_warmup=2, n_samples=4, n_chains=1)
         )
-        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+        return fit(counts=counts, model_config=cfg, inference_config=inf, seed=0)
 
     def test_basic_shape(self, mcmc_results):
         """Returns (N_mcmc, n_genes) array."""

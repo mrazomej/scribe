@@ -46,6 +46,37 @@ def build_annotation_priors(ctx: FitContext) -> None:
     kw = ctx.kwargs
     annotation_key = kw.get("annotation_key")
 
+    # -- Pre-built annotation logits supplied via ``priors={...}`` ------------
+    # Power-user path: inject a per-cell ``(n_cells, n_components)`` logit
+    # matrix directly through the unified ``priors`` dict instead of deriving
+    # it from a label column.  Pop it here (this stage runs before
+    # ``build_model_config`` normalizes the remaining model-parameter priors).
+    priors = ctx.priors if isinstance(ctx.priors, dict) else None
+    if priors is not None and "annotation_logits" in priors:
+        import jax.numpy as jnp
+
+        if annotation_key is not None:
+            raise ValueError(
+                "Provide annotation component priors EITHER via "
+                "annotation_key (derive from a label column) OR via "
+                "priors={'annotation_logits': <(n_cells, n_components) "
+                "array>}, not both."
+            )
+        logits = jnp.asarray(priors.pop("annotation_logits"))
+        _n_comp = ctx.n_components
+        if _n_comp is None:
+            _mc = kw.get("model_config")
+            _n_comp = (
+                _mc.n_components
+                if _mc is not None and _mc.n_components is not None
+                else int(logits.shape[-1])
+            )
+        validate_annotation_prior_logits(logits, ctx.n_cells, _n_comp)
+        ctx.n_components = _n_comp
+        ctx.effective_mixture_params = kw.get("mixture_params", "all")
+        ctx.annotation_prior_logits = logits
+        return
+
     if annotation_key is None:
         ctx.effective_mixture_params = kw.get("mixture_params", "all")
         return

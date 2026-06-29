@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax import random
 import os
 from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
-from scribe.inference import run_scribe
+from scribe import fit
 from scribe.inference.preset_builder import build_config_from_preset
 
 ALL_METHODS = ["svi", "mcmc"]
@@ -167,7 +167,7 @@ def nbvcp_results(
         inference_config = InferenceConfig.from_mcmc(mcmc_config)
 
     # Run inference with new API
-    result = run_scribe(
+    result = fit(
         counts=counts,
         model_config=model_config,
         inference_config=inference_config,
@@ -559,7 +559,7 @@ def test_predictive_sampling(nbvcp_results, rng_key):
 
 def test_ppc_with_amortized_capture(small_dataset, rng_key):
     """Test PPC with amortized capture probability requires counts."""
-    from scribe.inference import run_scribe
+    from scribe import fit
     from scribe.inference.preset_builder import build_config_from_preset
     from scribe.models.config import InferenceConfig, SVIConfig
 
@@ -586,7 +586,7 @@ def test_ppc_with_amortized_capture(small_dataset, rng_key):
     inference_config = InferenceConfig.from_svi(svi_config)
 
     # Run inference
-    results = run_scribe(
+    results = fit(
         counts=counts,
         model_config=model_config,
         inference_config=inference_config,
@@ -608,7 +608,7 @@ def test_ppc_with_amortized_capture(small_dataset, rng_key):
 
 def test_ppc_without_counts_raises_error(small_dataset, rng_key):
     """Test that PPC without counts raises error for amortized capture."""
-    from scribe.inference import run_scribe
+    from scribe import fit
     from scribe.inference.preset_builder import build_config_from_preset
     from scribe.models.config import InferenceConfig, SVIConfig
 
@@ -634,7 +634,7 @@ def test_ppc_without_counts_raises_error(small_dataset, rng_key):
     inference_config = InferenceConfig.from_svi(svi_config)
 
     # Run inference
-    results = run_scribe(
+    results = fit(
         counts=counts,
         model_config=model_config,
         inference_config=inference_config,
