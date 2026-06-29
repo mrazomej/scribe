@@ -1,7 +1,7 @@
 """Tests for the parameter mapping system."""
 
 import pytest
-from src.scribe.models.config.parameter_mapping import (
+from scribe.models.config.parameter_mapping import (
     get_active_parameters,
     get_required_parameters,
     get_parameterization_mapping,
@@ -17,8 +17,8 @@ from src.scribe.models.config.parameter_mapping import (
     PRIOR_KEY_ALIASES,
     HIERARCHY_TARGET_BY_SITE,
 )
-from src.scribe.models.config.enums import Parameterization
-from src.scribe.models.parameterizations import PARAMETERIZATIONS
+from scribe.models.config.enums import Parameterization
+from scribe.models.parameterizations import PARAMETERIZATIONS
 
 
 class TestParameterMapping:

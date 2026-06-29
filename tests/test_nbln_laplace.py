@@ -37,58 +37,10 @@ from scribe.laplace._global_uncertainty import (
 from scribe.models.config import ModelConfig
 from scribe.models.config.enums import InferenceMethod, Parameterization
 
-
-# =====================================================================
-# Helpers
-# =====================================================================
-
-
-def _nbln_result(
-    *,
-    G: int = 20,
-    C: int = 15,
-    k: int = 3,
-    with_uncertainty: bool = True,
-    positive_transform: str = "softplus",
-    seed: int = 0,
-) -> ScribeLaplaceResults:
-    """Build a small synthetic NBLN ``ScribeLaplaceResults`` for unit tests."""
-    rng = np.random.default_rng(seed)
-    mu = jnp.asarray(rng.normal(0, 0.5, G).astype(np.float32))
-    W = jnp.asarray((0.3 * rng.normal(size=(G, k))).astype(np.float32))
-    d = jnp.asarray(np.full(G, 0.05, dtype=np.float32))
-    x_loc = jnp.asarray(rng.normal(0, 1, (C, G)).astype(np.float32))
-    r = jnp.asarray(rng.uniform(0.5, 5.0, G).astype(np.float32))
-
-    mc = ModelConfig(
-        base_model="nbln",
-        parameterization=Parameterization.COUNT_LOGNORMAL,
-        inference_method=InferenceMethod.LAPLACE,
-        positive_transform=positive_transform,
-    )
-
-    pos_fwd, pos_inv = resolve_positive_fns(mc)
-
-    kwargs = {}
-    if with_uncertainty:
-        kwargs["r_loc"] = pos_inv(r)
-        kwargs["r_scale"] = jnp.asarray(
-            rng.uniform(0.01, 0.3, G).astype(np.float32)
-        )
-
-    return ScribeLaplaceResults(
-        model_config=mc,
-        mu=mu,
-        W=W,
-        d=d,
-        n_genes=G,
-        n_cells=C,
-        x_loc=x_loc,
-        r=r,
-        losses=jnp.zeros(1),
-        final_grad_norms=jnp.zeros(1),
-        **kwargs,
-    )
+# ``_nbln_result`` lives in tests/_synthetic_results.py so it can be shared with
+# other suites (e.g. the viz compositional-PPC tests) without a cross-test
+# relative import.  Imported as a top-level module via ``pythonpath = ["tests"]``.
+from _synthetic_results import _nbln_result
 
 
 # =====================================================================

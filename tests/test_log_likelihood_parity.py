@@ -58,12 +58,12 @@ from scribe.core.axis_layout import AxisLayout
 # Path to the pinned golden file.  The ``.npz`` packs both the synthetic
 # inputs (counts, parameter tensors, weighting arrays) and the legacy
 # outputs against which we assert parity.
-_GOLDEN_PATH = Path(__file__).parent / "data" / "log_likelihood_golden.npz"
-
-
 @pytest.fixture(scope="session")
-def golden():
+def golden(data_dir):
     """Load the log-likelihood golden ``.npz`` once for the session.
+
+    The path is resolved from the session-scoped ``data_dir`` fixture (anchored
+    to ``tests/``), so it stays correct regardless of this file's location.
 
     Returns
     -------
@@ -74,7 +74,7 @@ def golden():
     # ``np.load`` with ``allow_pickle=False`` keeps the file structure
     # strictly numerical - a security-conscious default for checked-in
     # regression artefacts.
-    data = np.load(_GOLDEN_PATH, allow_pickle=False)
+    data = np.load(data_dir / "log_likelihood_golden.npz", allow_pickle=False)
     return {key: data[key] for key in data.files}
 
 

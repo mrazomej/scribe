@@ -6,7 +6,7 @@ provided by the ParameterCollector class.
 """
 
 import pytest
-from src.scribe.utils.parameter_collector import ParameterCollector
+from scribe.utils.parameter_collector import ParameterCollector
 
 
 class TestParameterCollector:

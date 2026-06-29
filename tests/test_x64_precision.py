@@ -288,34 +288,22 @@ class TestFitX64:
 class TestHydraEnableX64Config:
     """Verify that ``enable_x64`` from inference YAML flows to ``fit()``."""
 
-    def test_mcmc_yaml_has_enable_x64_true(self):
+    def test_mcmc_yaml_has_enable_x64_true(self, project_root):
         """conf/inference/mcmc.yaml should set enable_x64: true."""
         import yaml
 
-        yaml_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "conf",
-            "inference",
-            "mcmc.yaml",
-        )
+        yaml_path = project_root / "conf" / "inference" / "mcmc.yaml"
         with open(yaml_path) as f:
             cfg = yaml.safe_load(f)
         assert cfg["enable_x64"] is True
 
     # ------------------------------------------------------------------
 
-    def test_svi_yaml_has_enable_x64_null(self):
+    def test_svi_yaml_has_enable_x64_null(self, project_root):
         """conf/inference/svi.yaml should set enable_x64: null."""
         import yaml
 
-        yaml_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "conf",
-            "inference",
-            "svi.yaml",
-        )
+        yaml_path = project_root / "conf" / "inference" / "svi.yaml"
         with open(yaml_path) as f:
             cfg = yaml.safe_load(f)
         assert cfg["enable_x64"] is None

@@ -113,6 +113,9 @@ include = ["scribe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put tests/ on sys.path so shared, non-collected helper modules (e.g.
+# _synthetic_results.py) are importable as top-level modules from any subfolder.
+pythonpath = ["tests"]
 
 [tool.black]
 line-length = 80

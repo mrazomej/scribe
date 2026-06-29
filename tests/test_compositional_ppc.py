@@ -32,8 +32,9 @@ from scribe.viz.compositional_ppc import (
 )
 
 
-# Reuse the small synthetic NBLN result helper from the Laplace tests.
-from .test_nbln_laplace import _nbln_result
+# Reuse the small synthetic NBLN result helper (shared, not imported from a
+# sibling test module).  Top-level import via ``pythonpath = ["tests"]``.
+from _synthetic_results import _nbln_result
 
 
 # =====================================================================

@@ -7,6 +7,7 @@ import logging
 import pytest
 import numpy as np
 import os
+from pathlib import Path
 
 
 def pytest_addoption(parser):
@@ -76,6 +77,27 @@ def unconstrained(request):
     if opt == "all":
         return "all"
     return opt == "true"
+
+
+@pytest.fixture(scope="session")
+def project_root():
+    """Repository root, anchored to this conftest (which never moves).
+
+    Use instead of ``Path(__file__).parent / ...`` in tests that reach
+    repo-relative paths (e.g. ``conf/``); this stays correct regardless of
+    which subfolder a test file lives in.
+    """
+    return Path(__file__).parent.parent
+
+
+@pytest.fixture(scope="session")
+def data_dir():
+    """Directory holding checked-in test data/golden artifacts (``tests/data``).
+
+    Anchored to this conftest so it resolves correctly no matter where the
+    consuming test file is located in the ``tests/`` tree.
+    """
+    return Path(__file__).parent / "data"
 
 
 @pytest.fixture(scope="session")

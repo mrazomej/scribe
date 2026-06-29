@@ -6,7 +6,7 @@ rejections, independently of the factory/fit plumbing (Commit 2b).
 
 import pytest
 
-from src.scribe.models.config.grouping import (
+from scribe.models.config.grouping import (
     normalize_unified_priors,
     PriorFamilySpec,
 )
