@@ -34,8 +34,8 @@ class TestEarlyStoppingConfig:
         assert (
             config.min_delta == 1.0
         )  # Default is 1 (reasonable for ELBO ~10^6-10^7)
-        assert config.check_every == 10
-        assert config.smoothing_window == 50
+        assert config.check_every == 100
+        assert config.smoothing_window == 100
         assert config.restore_best is True
 
     def test_custom_values(self):

@@ -492,8 +492,15 @@ class TestFitSVIInit:
 
     # ------------------------------------------------------------------
 
-    def test_svi_init_model_mismatch_warns(self):
-        """Warning when SVI base_model differs from target model."""
+    def test_svi_init_model_mismatch_warns(self, scribe_caplog):
+        """Warning when SVI base_model differs from target model.
+
+        The mismatch is reported through the ``scribe`` logger (not
+        ``warnings.warn``), so it is captured with the ``scribe_caplog``
+        fixture rather than ``warnings.catch_warnings``.
+        """
+        import logging
+
         from scribe.api import fit
 
         mock_svi = MagicMock()
@@ -502,24 +509,25 @@ class TestFitSVIInit:
         )
         mock_svi.get_map.return_value = _canonical_map()
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            try:
-                fit(
-                    counts=jnp.zeros((10, 5)),
-                    model="nbdm",
-                    inference_method="mcmc",
-                    svi_init=mock_svi,
-                    n_samples=1,
-                    n_warmup=1,
-                )
-            except Exception:
-                # MCMC run will fail since this is a mock;
-                # we only care about the warning
-                pass
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        try:
+            fit(
+                counts=jnp.zeros((10, 5)),
+                model="nbdm",
+                inference_method="mcmc",
+                svi_init=mock_svi,
+                n_samples=1,
+                n_warmup=1,
+            )
+        except Exception:
+            # MCMC run will fail since this is a mock;
+            # we only care about the warning
+            pass
 
         mismatch_warnings = [
-            x for x in w if "differs from MCMC target" in str(x.message)
+            r
+            for r in scribe_caplog.records
+            if "differs from MCMC target" in r.message
         ]
         assert len(mismatch_warnings) >= 1
 
