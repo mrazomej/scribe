@@ -360,7 +360,7 @@ class TestLoadSVIInit:
             "hydra.utils.to_absolute_path", return_value="/no/such/file.pkl"
         ):
             with pytest.raises(
-                FileNotFoundError, match="svi_init file not found"
+                FileNotFoundError, match="SVI results file not found"
             ):
                 _load_svi_init("/no/such/file.pkl")
 
