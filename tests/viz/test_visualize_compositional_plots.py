@@ -118,6 +118,9 @@ def _make_minimal_viz_cfg(
             "compositional_ppc": compositional_ppc,
             "compositional_corner_ppc": compositional_corner_ppc,
             "w_shrinkage": w_shrinkage,
+            # Read by the pipeline's convergence gate; keep present so the
+            # OmegaConf struct check does not raise on a missing key.
+            "convergence": False,
             "format": "png",
             "ppc_opts": {
                 "n_rows": 2,

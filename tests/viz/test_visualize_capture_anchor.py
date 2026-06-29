@@ -111,6 +111,14 @@ def _make_minimal_viz_cfg(
             "p_capture_scaling": p_capture_scaling,
             "mean_calibration": False,
             "mu_pairwise": mu_pairwise,
+            # Plot toggles read unconditionally by the pipeline's summary
+            # block (and the w_shrinkage gate); keep them present so the
+            # OmegaConf struct check does not raise on a missing key.
+            "corner_ppc": False,
+            "compositional_ppc": False,
+            "compositional_corner_ppc": False,
+            "w_shrinkage": False,
+            "convergence": False,
             "format": "png",
             "capture_anchor_opts": {
                 "n_bins": 10,
