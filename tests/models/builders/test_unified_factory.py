@@ -38,7 +38,8 @@ class TestRegistryContents:
     def test_model_extra_params_contains_all_models(self):
         """Test MODEL_EXTRA_PARAMS has entries for all model types."""
         expected_models = {
-            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+            "nbdm", "lnm", "lnmvcp", "pln", "nbln",
+            "zinb", "nbvcp", "zinbvcp", "twostate", "twostatevcp",
         }
         assert set(MODEL_EXTRA_PARAMS.keys()) == expected_models
 
@@ -58,7 +59,8 @@ class TestRegistryContents:
     def test_likelihood_registry_contains_all_models(self):
         """Test LIKELIHOOD_REGISTRY has entries for all model types."""
         expected_models = {
-            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+            "nbdm", "lnm", "lnmvcp", "pln", "nbln",
+            "zinb", "nbvcp", "zinbvcp", "twostate", "twostatevcp",
         }
         assert set(LIKELIHOOD_REGISTRY.keys()) == expected_models
 

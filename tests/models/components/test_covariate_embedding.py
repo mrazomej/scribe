@@ -18,6 +18,27 @@ from scribe.models.components.covariate_embedding import (
 )
 
 
+def _perturb_params(params, *, seed=1, scale=0.5):
+    """Nudge flow params off the identity (zero) initialization.
+
+    Normalizing-flow layers zero-initialize their shift/scale heads so the
+    transform starts as the identity -- the output is then identically zero
+    for *any* input and *any* context.  Context-sensitivity must therefore be
+    checked away from that degenerate point; perturbing every parameter does
+    that without introducing artificial context dependence (we still vary only
+    the context when comparing outputs).
+    """
+    import jax.tree_util as tu
+
+    leaves, treedef = tu.tree_flatten(params)
+    key = jax.random.PRNGKey(seed)
+    noisy = [
+        leaf + scale * jax.random.normal(jax.random.fold_in(key, i), leaf.shape)
+        for i, leaf in enumerate(leaves)
+    ]
+    return tu.tree_unflatten(treedef, noisy)
+
+
 # ===========================================================================
 # CovariateSpec validation
 # ===========================================================================
@@ -287,6 +308,7 @@ class TestCouplingCovariateConditioning:
         ctx_a = jnp.zeros((1, 8))
         ctx_b = jnp.ones((1, 8))
         params = layer.init(jax.random.PRNGKey(0), x, context=ctx_a)
+        params = _perturb_params(params)  # move off the identity init
         y_a, _ = layer.apply(params, x, context=ctx_a)
         y_b, _ = layer.apply(params, x, context=ctx_b)
         assert not jnp.allclose(y_a, y_b)
@@ -355,6 +377,7 @@ class TestAutoregCovariateConditioning:
         ctx_a = jnp.zeros((1, 8))
         ctx_b = jnp.ones((1, 8))
         params = made.init(jax.random.PRNGKey(0), x, ctx_a)
+        params = _perturb_params(params)  # move off the identity init
         shift_a, _ = made.apply(params, x, ctx_a)
         shift_b, _ = made.apply(params, x, ctx_b)
         assert not jnp.allclose(shift_a, shift_b)
@@ -447,6 +470,7 @@ class TestFlowChainCovariateConditioning:
         covs_a = {"batch": jnp.array([0]), "donor": jnp.array([0])}
         covs_b = {"batch": jnp.array([1]), "donor": jnp.array([2])}
         params = chain.init(jax.random.PRNGKey(0), x, covariates=covs_a)
+        params = _perturb_params(params)  # move off the identity init
         z_a, _ = chain.apply(params, x, covariates=covs_a)
         z_b, _ = chain.apply(params, x, covariates=covs_b)
         assert not jnp.allclose(z_a, z_b)

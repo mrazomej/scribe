@@ -39,7 +39,7 @@ class TestOrganismPriorResolution:
     def test_human_defaults(self):
         priors = resolve_organism_priors("human")
         assert priors["total_mrna_mean"] == 200_000
-        assert priors["total_mrna_log_sigma"] == 0.5
+        assert priors["total_mrna_log_sigma"] == 0.3
 
     def test_mouse_defaults(self):
         priors = resolve_organism_priors("mouse")
@@ -102,7 +102,7 @@ class TestModelConfigCapturePrior:
         eta = extra.get("eta_capture")
         assert eta is not None
         assert eta[0] == pytest.approx(math.log(200_000))
-        assert eta[1] == pytest.approx(0.5)
+        assert eta[1] == pytest.approx(0.3)
 
     def test_explicit_eta_capture(self):
         """Explicit priors.eta_capture overrides organism defaults."""
@@ -165,7 +165,7 @@ class TestModelConfigCapturePrior:
 
     def test_capture_scaling_prior_requires_vcp(self):
         """capture_scaling_prior with non-VCP model should raise."""
-        with pytest.raises(ValueError, match="VCP"):
+        with pytest.raises(ValueError, match="capture-aware model"):
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
@@ -177,7 +177,7 @@ class TestModelConfigCapturePrior:
 
     def test_eta_capture_requires_vcp(self):
         """priors.eta_capture with non-VCP model should raise."""
-        with pytest.raises(ValueError, match="VCP"):
+        with pytest.raises(ValueError, match="capture-aware model"):
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
