@@ -7,11 +7,32 @@ as an editable dependency of ``../scribe``.
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from omegaconf import OmegaConf
 
 from scribe.cli.hydra_callbacks import OutputPrefixCallback
 from scribe.cli.infer_runner import _nested_output_prefix_resolver
 from scribe.cli.output_layout import apply_output_prefix_to_config
+
+
+@pytest.fixture(autouse=True)
+def _clear_hydra_singletons():
+    """Keep Hydra's process-wide singletons from leaking into other tests.
+
+    ``test_compose_resolves_nested_output_prefix_in_run_dir`` calls
+    ``HydraConfig.instance().set_config(...)``.  If left set, ``HydraConfig``
+    stays "initialized" for the rest of the process, which flips
+    ``hydra.utils.to_absolute_path`` into its ``get_original_cwd()`` branch in
+    unrelated downstream tests (notably the infer-runner CLI tests, whose
+    mocked ``HydraConfig.get`` has no ``runtime.cwd``).  Reset both singletons
+    after every test in this module.
+    """
+    yield
+    from hydra.core.global_hydra import GlobalHydra
+    from hydra.core.hydra_config import HydraConfig
+
+    GlobalHydra.instance().clear()
+    HydraConfig.instance().cfg = None
 
 
 def _mock_hydra_runtime(data_choice: str, data_cfg: dict | None = None):
