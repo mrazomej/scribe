@@ -260,9 +260,35 @@ class Factor(BaseModel):
         return len(self.levels)
 
     def family(self, target: str) -> str:
-        """Family *type* for ``target`` (``"none"`` when not hierarchicalized)."""
+        """Family *type* for ``target`` (``"none"`` when not hierarchicalized).
+
+        Parameters
+        ----------
+        target : str
+            One of :data:`TARGET_NAMES` (e.g. ``"expression"``,
+            ``"dispersion"``) — the model target whose dataset-level prior
+            family is requested.
+
+        Returns
+        -------
+        str
+            The family type (``"gaussian"``, ``"horseshoe"``, ``"neg"``), or
+            ``"none"`` when ``target`` carries no dataset-level prior on this
+            factor.
+
+        Notes
+        -----
+        Tolerates the legacy ``{target: str}`` form found in pickles written by
+        older `scribe` versions: pydantic's ``_coerce_priors`` validator (which
+        would upgrade those strings to :class:`PriorFamilySpec`) does not re-run
+        when a model is unpickled, so a value may still be a bare family-name
+        string here. In that case the string *is* the family type and is
+        returned as-is, keeping cached hierarchical fits loadable.
+        """
         spec = self.priors.get(target)
-        return spec.type if spec is not None else "none"
+        if spec is None:
+            return "none"
+        return spec if isinstance(spec, str) else spec.type
 
 
 class GroupingSpec(BaseModel):
