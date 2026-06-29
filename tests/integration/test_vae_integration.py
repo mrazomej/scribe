@@ -351,6 +351,11 @@ class TestVAEPosteriorPriorPath:
             def _model_and_guide(self):
                 return model, guide
 
+            def _factory_n_genes(self):
+                # Real VAE results expose this; the stub has no factory-recorded
+                # gene count, so fall back to self.n_genes in the PPC path.
+                return None
+
         class _DummyModelConfig:
             base_model = "lnm"
             parameterization = "logistic_normal"
@@ -490,6 +495,11 @@ class TestVAEPosteriorPriorPathWarnings:
             def _model_and_guide(self):
                 return model, guide
 
+            def _factory_n_genes(self):
+                # Real VAE results expose this; the stub has no factory-recorded
+                # gene count, so fall back to self.n_genes in the PPC path.
+                return None
+
         dummy = _DummyVAEPosterior()
         dummy.n_cells = 1
         dummy.n_genes = 1
@@ -540,6 +550,11 @@ class TestVAEPosteriorPriorPathWarnings:
         class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
             def _model_and_guide(self):
                 return model, guide
+
+            def _factory_n_genes(self):
+                # Real VAE results expose this; the stub has no factory-recorded
+                # gene count, so fall back to self.n_genes in the PPC path.
+                return None
 
         dummy = _DummyVAEPosterior()
         dummy.n_cells = 1

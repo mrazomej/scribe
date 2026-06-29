@@ -683,8 +683,15 @@ def fit(
         ``{"p": (1.0, 1.0), "r": (0.0, 1.0)}``.  For ``"mixing"``,
         a single scalar is broadcast to all ``n_components``.
 
-        Two entries have *dict-shaped* values rather than tuples:
+        A few entries have *array-* or *dict-shaped* values rather than
+        tuples (each is extracted before downstream stages normalize the
+        remaining tuple-shaped priors):
 
+        - ``"annotation_logits"``: a pre-built per-cell
+          ``(n_cells, n_components)`` logit matrix providing soft
+          component-assignment priors for a mixture fit.  Use this when you
+          have logits in hand; the label-column alternative is
+          ``annotation_key``.  The two are mutually exclusive.
         - ``"capture_efficiency"`` (alias for ``"eta_capture"``): the
           biology-informed capture-anchor prior for PLN/NBLN/LNMVCP.
         - ``"loadings"`` (alias for the W matrix): the **shrinkage
@@ -1027,7 +1034,6 @@ def fit(
 
     See Also
     --------
-    run_scribe : Lower-level inference function with more options.
     ModelConfigBuilder : Builder for creating ModelConfig objects.
     InferenceConfig : Unified inference configuration class.
     """

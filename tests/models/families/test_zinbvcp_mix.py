@@ -6,7 +6,7 @@ Probability.
 import pytest
 import jax.numpy as jnp
 from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
-from scribe.inference import run_scribe
+from scribe import fit
 from scribe.inference.preset_builder import build_config_from_preset
 
 ALL_METHODS = ["svi", "mcmc"]
@@ -153,7 +153,7 @@ def zinbvcp_mix_results(
         inference_config = InferenceConfig.from_mcmc(mcmc_config)
 
     # Run inference with new API
-    result = run_scribe(
+    result = fit(
         counts=counts,
         model_config=model_config,
         inference_config=inference_config,

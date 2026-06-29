@@ -102,11 +102,8 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'scribe' has no attribute '{name}'")
 
 
-# Import configuration classes
-# Import main inference function
-from .inference import run_scribe
-
-# Import simplified API
+# Import simplified API (the main entry point; the former lower-level
+# ``run_scribe`` was removed in favor of ``fit``).
 from .api import fit
 
 # Import results classes
@@ -130,9 +127,8 @@ __all__ = [
     "DataConfig",
     "InferenceConfig",
     "GroupLevel",
-    # Main inference functions
-    "fit",  # Simplified API (recommended)
-    "run_scribe",  # Lower-level API
+    # Main inference function
+    "fit",
     # Results classes
     "ScribeSVIResults",
     "ScribeVariationalResults",

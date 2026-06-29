@@ -728,7 +728,7 @@ class TestSVISmoke:
 
     def test_svi_with_annotation_logits(self):
         """Run 3 steps of SVI on NBDM mixture with annotation_prior_logits."""
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
         from scribe.models.config import InferenceConfig, SVIConfig
 
@@ -753,12 +753,12 @@ class TestSVISmoke:
         ann_logits = ann_logits.at[:5, 0].set(3.0)
         ann_logits = ann_logits.at[5:, 1].set(3.0)
 
-        result = run_scribe(
+        result = fit(
             counts=counts,
             model_config=model_config,
             inference_config=inference_config,
             seed=42,
-            annotation_prior_logits=ann_logits,
+            priors={"annotation_logits": ann_logits},
         )
 
         assert result.n_cells == n_cells
@@ -1042,7 +1042,7 @@ class TestSVISmoke:
 
     def test_svi_zinb_mixture_with_annotation(self):
         """Run SVI on ZINB mixture with annotation priors."""
-        from scribe.inference import run_scribe
+        from scribe import fit
         from scribe.inference.preset_builder import build_config_from_preset
         from scribe.models.config import InferenceConfig, SVIConfig
 
@@ -1065,12 +1065,12 @@ class TestSVISmoke:
         ann_logits = ann_logits.at[:5, 0].set(3.0)
         ann_logits = ann_logits.at[5:, 1].set(3.0)
 
-        result = run_scribe(
+        result = fit(
             counts=counts,
             model_config=model_config,
             inference_config=inference_config,
             seed=42,
-            annotation_prior_logits=ann_logits,
+            priors={"annotation_logits": ann_logits},
         )
 
         assert result.n_cells == n_cells
