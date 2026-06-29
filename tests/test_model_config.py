@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.scribe.models.config import (
+from scribe.models.config import (
     ModelConfigBuilder,
     ModelConfig,
     ModelType,
@@ -11,7 +11,7 @@ from src.scribe.models.config import (
     InferenceMethod,
     GuideFamilyConfig,
 )
-from src.scribe.models.components import LowRankGuide
+from scribe.models.components import LowRankGuide
 
 
 class TestModelConfigBuilder:

@@ -7,8 +7,8 @@ types, parameterizations, and inference methods.
 """
 
 import pytest
-from src.scribe.models import get_model_and_guide
-from src.scribe.inference.preset_builder import build_config_from_preset
+from scribe.models import get_model_and_guide
+from scribe.inference.preset_builder import build_config_from_preset
 
 
 class TestGetModelAndGuide:

@@ -113,9 +113,15 @@ include = ["scribe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Put tests/ on sys.path so shared, non-collected helper modules (e.g.
-# _synthetic_results.py) are importable as top-level modules from any subfolder.
-pythonpath = ["tests"]
+# importlib import mode: test files are imported under unique, path-derived
+# module names, so the subsystem-first tree needs no __init__.py files and test
+# basenames need not be globally unique.
+addopts = "--import-mode=importlib"
+# Put tests/ and the repo root on sys.path so (a) shared non-collected helpers
+# (e.g. _synthetic_results.py) import as top-level modules from any subfolder,
+# and (b) the repo-root slurm_infer.py script stays importable under importlib
+# (prepend mode used to add the repo root implicitly; importlib does not).
+pythonpath = ["tests", "."]
 
 [tool.black]
 line-length = 80
