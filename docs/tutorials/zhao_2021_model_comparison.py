@@ -242,12 +242,18 @@ def _(mo):
     mo.md(r"""
     ## The comparison framework, briefly
 
-    We compare models by **expected log predictive density (elpd)** — how well a fitted model predicts *new* data drawn from the same process. Since we cannot sample new data, `scribe.mc` estimates the leave-one-out elpd two ways (full derivations in `paper/_model_comparison.qmd`):
+    We compare models by **expected log predictive density (elpd)** — how well a fitted model predicts *new* data drawn from the same process. Since we cannot sample new data, `scribe.mc` estimates the leave-one-out elpd two ways (full derivations in the supplementary material):
 
     - **WAIC** — an analytical approximation: $\widehat{\mathrm{elpd}} = \mathrm{lppd} - p_{\mathrm{WAIC}}$, where the in-sample log pointwise predictive density `lppd` is penalized by $p_{\mathrm{WAIC}}$, the posterior **variance** of the per-observation log-likelihood (the "effective number of parameters"). Fully vectorized, computed from the posterior draws we already have.
     - **PSIS-LOO** — Pareto-smoothed importance-sampling LOO: more reliable, and it carries a **per-observation diagnostic $\hat{k}$** (the fitted Pareto-tail shape) that tells us *when the estimate itself is trustworthy* — $\hat{k} < 0.7$ good, $\hat{k} \ge 0.7$ unreliable.
 
-    One call computes the per-cell **and** per-gene log-likelihoods for both models. (The per-cell likelihood of a crossed-hierarchical fit gathers each cell's leaf parameters internally; `compare_models` evaluates it as a single batched pass, so this is fast even at 75k cells × 17.5k genes.)
+    The subtle question — *at what unit do we score predictions?* — is the
+    subject of the next section. For these variable-capture models the answer is
+    the **gene**, and `compare_models` detects that automatically: one call
+    computes the per-gene log-likelihoods for both models and reports cell-level
+    leave-one-out as unsupported. (The likelihood of a crossed-hierarchical fit
+    gathers each cell's leaf parameters internally and `compare_models` evaluates
+    it as a single batched pass, so this is fast even at 75k cells × 17.5k genes.)
     """)
     return
 
@@ -257,8 +263,11 @@ def _(adata_joint, results_mu_only, results_mu_plus_r, scribe):
     import jax
 
     # Build the model's gene axis (kept genes + pooled `_other`) from the stored
-    # coverage mask, then compute per-cell and per-gene log-likelihoods for both
-    # models. `compute_gene_liks=True` is what unlocks the gene-level comparison.
+    # coverage mask, then compare. For variable-capture models compare_models
+    # detects the cell-specific `p_capture` latent and computes only the
+    # gene-level log-likelihoods (cell-level leave-one-out is ill-posed; see the
+    # next cell). `compute_gene_liks=True` is passed explicitly for clarity but
+    # is auto-enabled in that case.
     from scribe.core.gene_coverage import build_filtered_gene_names
     import numpy as _np
     import scipy.sparse as _sp
@@ -295,71 +304,46 @@ def _(adata_joint, results_mu_only, results_mu_plus_r, scribe):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## The global ranking (WAIC) — and a cautionary surprise
+    ## Why the comparison is at the *gene* level, not the cell
 
-    `mc.rank(criterion="waic_2")` ranks the models by their total WAIC elpd. Read
-    the `elpd`, the effective-parameter count `p_eff`, and the difference with its
-    standard error.
-    """)
-    return
+    Notice what `compare_models` printed: it computed **gene-level**
+    log-likelihoods and declared cell-level leave-one-out *unsupported*. That is
+    deliberate, and it is the subtle part of comparing single-cell models —
+    worth understanding before reading the result.
 
+    The instinctive thing is to score each model by leave-one-**cell**-out
+    (cell-level WAIC / PSIS-LOO). But this model gives every cell its **own**
+    capture probability $\nu_c$ (`p_capture`) — a latent informed by *that cell
+    alone*. An honest held-out-cell prediction must integrate $\nu_c$ over its
+    **prior**, because the other cells say nothing about it:
 
-@app.cell
-def _(mc):
-    mc.rank(criterion="waic_2", include_stacking=False).round(1)
-    return
+    $$
+    p(\tilde u_c \mid U_{-c}) =
+    \iint p(\tilde u_c \mid \theta, \nu)\, p(\nu)\,
+    p(\theta \mid U_{-c})\, d\nu\, d\theta .
+    $$
 
+    The pointwise log-likelihood, however, conditions on the $\nu_c$ that was
+    fit *to $u_c$ itself*. To turn that into a leave-one-out estimate, PSIS-LOO
+    would have to reweight a **posterior-to-prior collapse** of $\nu_c$ — which
+    it cannot — so the Pareto diagnostic gives $\hat{k} \ge 0.7$ for
+    *essentially every cell*, and the WAIC variance penalty explodes
+    ($p_{\mathrm{eff}}$ in the tens of millions). This is the textbook failure
+    of leave-one-out under **per-observation latent variables**; it is a
+    property of the design, not a defect of either model. (Full derivation:
+    `paper/_model_comparison.qmd`, *Leave-one-cell-out with cell-specific
+    latents*.)
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    Two things jump out, and both are *lessons* rather than the final answer.
-
-    First, the effective-parameter counts `p_eff` are enormous — in the **tens of millions**. That is not a count of parameters; it is the summed posterior *variance* of each cell's log-likelihood. The clue is the **unit of observation**: here an "observation" is a *cell*, whose log-likelihood is a sum over ~17,500 genes. The variance of that huge sum, across posterior draws, dominates the WAIC penalty — and the more flexible Model B has roughly *twice* the penalty, so on this aggregate WAIC it actually looks **worse**.
-
-    That should make us suspicious, not satisfied. A penalty in the tens of millions is a red flag that **cell-level leave-one-out is the wrong lens for high-dimensional count data**. The next diagnostic confirms it directly.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Is the LOO estimate even trustworthy? The PSIS-LOO $\hat{k}$ diagnostic
-
-    PSIS-LOO's whole value is that it *tells us when to distrust it*. We compute it
-    (vectorized on the GPU, so it is fast even for 75k cells) and look at the
-    distribution of the per-cell Pareto-tail shape $\hat{k}$.
-    """)
-    return
-
-
-@app.cell
-def _(mc, np):
-    # k-hat health per model (cell-level). k-hat >= 0.7 => unreliable LOO.
-    for _name, _loo in zip(mc.model_names, mc.psis_loo()):
-        _k = np.asarray(_loo["k_hat"])
-        print(
-            f"{_name}: k<0.5 {np.mean(_k < 0.5):.2%} | "
-            f"0.5-0.7 {np.mean((_k >= 0.5) & (_k < 0.7)):.2%} | "
-            f">=0.7 {np.mean(_k >= 0.7):.2%}  (n_bad={int((_k >= 0.7).sum()):,})"
-        )
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    Essentially **every cell has $\hat{k} \ge 0.7$**. The cell-level importance
-    weights are degenerate: with thousands of genes summed into each cell's
-    log-likelihood, removing one cell shifts the weights so violently that the
-    Pareto tail is unbounded. This is not a defect of either model — it is a
-    property of doing leave-one-*cell*-out on high-dimensional data. **The
-    cell-level comparison, by either WAIC or PSIS-LOO, is simply not the right
-    question.**
-
-    The honest move is to change the unit of observation to the one we actually
-    care about: the **gene**.
+    The resolution is to change the **unit of observation** to the gene.
+    Dropping one gene barely moves any parameter — the gene-level $\mu_g, r_g$
+    are pinned by ~75k cells, and every $\nu_c$ is still informed by the
+    thousands of *retained* genes in its cell — so leave-one-gene-out is
+    well-posed and stable. Because **every realistic single-cell model needs
+    variable capture**, the gene is the right unit for `scribe` model
+    comparison, and `compare_models` switches to it automatically whenever a
+    cell-specific latent is present (hence the message above, and why
+    `mc.rank()` / `mc.psis_loo()` deliberately refuse here and point you to the
+    gene-level comparison).
     """)
     return
 
