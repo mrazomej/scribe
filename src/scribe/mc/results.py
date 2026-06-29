@@ -104,13 +104,26 @@ class ScribeModelComparisonResults:
 
     # --- Required fields ---
     model_names: List[str]
-    log_liks_cell: List[jnp.ndarray]
 
     # --- Optional fields ---
+    # Per-cell log-likelihoods ``(S, C)`` for cell-level WAIC / PSIS-LOO.
+    # ``None`` when cell-level leave-one-out is not supported for these models
+    # (see ``cell_loo_supported``) — e.g. variable-capture fits, whose
+    # per-cell latent makes leave-one-cell-out ill-posed, in which case
+    # ``compare_models`` computes only the gene-level log-likelihoods.
+    log_liks_cell: Optional[List[jnp.ndarray]] = field(default=None, repr=False)
     log_liks_gene: Optional[List[jnp.ndarray]] = field(default=None, repr=False)
     gene_names: Optional[List[str]] = None
     n_cells: int = 0
     n_genes: int = 0
+    # Whether cell-level leave-one-out (WAIC / PSIS-LOO over cells) is a valid
+    # comparison for these models. ``False`` when any model carries a
+    # cell-specific latent parameter (e.g. the variable-capture probability
+    # ``p_capture``): a held-out cell's latent cannot be informed by the other
+    # cells, so the LOO predictive density is not identifiable and the cell-level
+    # criteria are meaningless. Gene-level comparison remains valid and is the
+    # supported path in that case.
+    cell_loo_supported: bool = True
     # Per-model boolean masks of surviving components after dead-component
     # pruning; None per entry means the model was not pruned (non-mixture or all
     # active).
@@ -140,6 +153,54 @@ class ScribeModelComparisonResults:
         return len(self.model_names)
 
     # ------------------------------------------------------------------
+    # Validity guard
+    # ------------------------------------------------------------------
+
+    def _require_cell_loo(self, method: str) -> None:
+        """Reject cell-level leave-one-out when it is statistically invalid.
+
+        Parameters
+        ----------
+        method : str
+            Name of the calling method, for the error message.
+
+        Raises
+        ------
+        ValueError
+            When :attr:`cell_loo_supported` is ``False`` (a model carries a
+            cell-specific latent such as the variable-capture probability), or
+            when no per-cell log-likelihoods are available.
+
+        Notes
+        -----
+        Leave-one-cell-out (cell-level WAIC / PSIS-LOO) requires that each
+        held-out cell be predictable from the others. Variable-capture models
+        give every cell its own latent capture probability ``p_capture``, which
+        is informed by that cell alone — so the leave-one-out predictive density
+        the criteria target is not identifiable, and PSIS k-hat degenerates
+        (k >= 0.7 for essentially every cell). Rather than return a meaningless
+        number, we refuse and point to the gene-level comparison, which is well
+        posed (dropping one gene barely perturbs any parameter, cell-specific
+        latents included).
+        """
+        if not self.cell_loo_supported:
+            raise ValueError(
+                f"{method}() is a cell-level leave-one-out comparison, which is "
+                "ill-posed for models with a cell-specific latent parameter "
+                "(e.g. the variable-capture probability 'p_capture'): a held-out "
+                "cell's latent cannot be informed by the other cells, so the "
+                "PSIS/WAIC leave-one-out estimate is not identifiable (k-hat "
+                "degenerates). Compare these models at the GENE level instead — "
+                "call gene_level_comparison(model_A, model_B). "
+                "(compare_models computed gene-level log-likelihoods for you.)"
+            )
+        if self.log_liks_cell is None:
+            raise RuntimeError(
+                f"{method}() needs per-cell log-likelihoods, which are not "
+                "available on this comparison object."
+            )
+
+    # ------------------------------------------------------------------
     # WAIC
     # ------------------------------------------------------------------
 
@@ -165,6 +226,7 @@ class ScribeModelComparisonResults:
         >>> stats_all = mc.waic()
         >>> stats_first = mc.waic(model_idx=0)
         """
+        self._require_cell_loo("waic")
         if self._waic_cache is None:
             self._waic_cache = [
                 {
@@ -207,6 +269,7 @@ class ScribeModelComparisonResults:
         >>> loo_all = mc.psis_loo()
         >>> print(loo_all[0]["n_bad"])
         """
+        self._require_cell_loo("psis_loo")
         if self._psis_loo_cache is None:
             self._psis_loo_cache = [
                 compute_psis_loo(np.asarray(ll), dtype=self.dtype)
@@ -305,6 +368,7 @@ class ScribeModelComparisonResults:
         >>> df = mc.rank()
         >>> print(df[["model", "elpd", "elpd_diff", "weight_stacking"]])
         """
+        self._require_cell_loo("rank")
         if criterion == "psis_loo":
             loo_results = self.psis_loo()
             elpd_values = np.array([r["elpd_loo"] for r in loo_results])
@@ -893,6 +957,39 @@ def compare_models(
             f"model_names has length {len(model_names)} but results_list has {K} models."
         )
 
+    # Cell-level leave-one-out (cell-level WAIC / PSIS-LOO) is ill-posed for
+    # models with a cell-specific latent parameter — e.g. the variable-capture
+    # probability ``p_capture`` — because a held-out cell's latent cannot be
+    # informed by the other cells. Detect that here; when present, compare at
+    # the GENE level instead: compute only the gene-level log-likelihoods and
+    # mark the cell-level criteria unsupported (the cell-level methods will then
+    # refuse with a pointer to gene_level_comparison).
+    def _has_cell_specific_latent(res) -> bool:
+        specs = getattr(
+            getattr(res, "model_config", None), "param_specs", None
+        )
+        return any(
+            getattr(spec, "is_cell_specific", False) for spec in (specs or [])
+        )
+
+    cell_loo_supported = not any(
+        _has_cell_specific_latent(r) for r in results_list
+    )
+    if not cell_loo_supported:
+        if not compute_gene_liks:
+            compute_gene_liks = True
+            print(
+                "Detected a cell-specific latent (e.g. variable-capture "
+                "'p_capture'): leave-one-cell-out is ill-posed for these "
+                "models, so compare_models is computing GENE-level "
+                "log-likelihoods only. Use gene_level_comparison() to compare."
+            )
+        else:
+            print(
+                "Detected a cell-specific latent: comparing at the gene level "
+                "only (leave-one-cell-out is ill-posed for these models)."
+            )
+
     # Default RNG key for SVI sampling
     if rng_key is None:
         rng_key = jrandom.PRNGKey(0)
@@ -901,8 +998,10 @@ def compare_models(
     counts = jnp.asarray(counts, dtype=dtype_lik)
     n_cells, n_genes = counts.shape
 
-    # Compute per-cell log-likelihoods for each model
-    log_liks_cell = []
+    # Compute per-cell log-likelihoods for each model (skipped entirely when
+    # cell-level LOO is unsupported — it would be invalid, so we do not even
+    # spend the compute on it).
+    log_liks_cell = [] if cell_loo_supported else None
     log_liks_gene = [] if compute_gene_liks else None
     # Track dead-component pruning info (None per model = no pruning applied)
     active_masks: List[Optional[np.ndarray]] = []
@@ -939,19 +1038,21 @@ def compare_models(
                 f"({k_orig} → {k_kept} components)."
             )
 
-        # Per-cell log-likelihoods: shape (S, C)
-        ll_cell = _get_log_liks(
-            results_eff,
-            counts,
-            "cell",
-            batch_size,
-            posterior_sample_chunk_size,
-            dtype_lik,
-            ignore_nans,
-            r_floor,
-            p_floor,
-        )
-        log_liks_cell.append(ll_cell)
+        # Per-cell log-likelihoods: shape (S, C). Only when cell-level LOO is
+        # valid for these models (no cell-specific latent).
+        if cell_loo_supported:
+            ll_cell = _get_log_liks(
+                results_eff,
+                counts,
+                "cell",
+                batch_size,
+                posterior_sample_chunk_size,
+                dtype_lik,
+                ignore_nans,
+                r_floor,
+                p_floor,
+            )
+            log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
@@ -977,5 +1078,6 @@ def compare_models(
         n_genes=n_genes,
         # Store masks only when at least one model was pruned, otherwise None
         active_components=active_masks if any_pruned else None,
+        cell_loo_supported=cell_loo_supported,
         dtype=dtype_psis,
     )

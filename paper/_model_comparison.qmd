@@ -403,7 +403,68 @@ comparison should reflect this.
 The per-observation diagnostic $\hat{k}$ is particularly informative in
 single-cell data: cells with high $\hat{k}$ are influential outliers for which
 the full-data posterior deviates substantially from the LOO posterior. These
-often correspond to cells with unusually high or low total counts.
+often correspond to cells with unusually high or low total counts. As the next
+section shows, however, when the model carries a cell-specific latent the
+high-$\hat{k}$ pattern stops being about a few outliers and becomes systematic,
+signalling that the cell-level estimand itself is ill-posed.
+
+### Leave-one-cell-out with cell-specific latents {#sec-mc-loco-vcp}
+
+The cell-level analysis above tacitly assumes that each held-out cell can be
+predicted from the others. This assumption fails for any model with a
+**cell-specific latent variable**, and that case is the rule rather than the
+exception in single-cell data: variable sequencing depth forces a per-cell
+capture probability $\nu_c \in (0,1)$, so realistic models thin each cell's
+expression by its own $\nu_c$. We make the failure precise here, because it
+determines the *unit* at which model comparison is meaningful.
+
+Let a cell's counts be drawn from $p(u_c \mid \theta, \nu_c)$, with $\theta$
+the shared (gene-level) parameters and $\nu_c \sim p(\nu)$ the cell's own
+capture latent. The leave-one-out predictive density that elpd targets is the
+density of a *new* cell, whose capture is unknown and must therefore be
+integrated over its prior,
+
+$$
+p(\tilde{u}_c \mid U_{-c}) =
+\iint p(\tilde{u}_c \mid \theta, \nu)\, p(\nu)\,
+p(\theta \mid U_{-c})\, d\nu\, d\theta .
+$${#eq-mc-loco-marginal}
+
+The pointwise log-likelihood actually evaluated (@eq-mc-hierarchical-ll and its
+variable-capture analogue) instead **conditions on the cell's own fitted
+capture**, $\nu_c^{(s)} \sim p(\nu_c \mid u_c)$,
+
+$$
+\ell_c^{(s)} = \log p\big(u_c \mid \theta^{(s)}, \nu_c^{(s)}\big).
+$${#eq-mc-loco-conditional}
+
+The two expressions treat $\nu_c$ in incompatible ways:
+@eq-mc-loco-marginal marginalizes it over the *prior*, whereas
+@eq-mc-loco-conditional fixes it at a draw from the *posterior given $u_c$
+itself*. Importance-sampling LOO (@sec-mc-psis) attempts to bridge them by
+reweighting the full-data posterior into the leave-$c$-out posterior with
+weights $w_c^{(s)} \propto 1 / p(u_c \mid \theta^{(s)}, \nu_c^{(s)})$. But
+$\nu_c$ is informed by the **single** observation $u_c$ — no other cell
+carries any information about it — so its leave-$c$-out posterior collapses all
+the way back to the prior $p(\nu)$. No finite collection of importance weights
+can represent a posterior-to-prior collapse: the weights are heavy-tailed and
+the fitted Pareto shape satisfies $\hat{k}_c \to 1$ for essentially every cell.
+The diagnostic is then not detecting outliers; it is correctly reporting that
+the cell-level LOO estimand is **not identifiable** from the data.
+
+This is the model-comparison instance of a general rule: leave-one-out is
+ill-posed whenever each observation carries its own latent parameter. The
+standard remedies are to integrate the local latent over its prior, or to leave
+out *groups* of observations rather than single ones. For single-cell models
+the clean resolution is to change the **unit of observation** to the gene
+(@sec-mc-gene-level): removing one gene barely perturbs any parameter — the
+gene-level $\theta$ are pinned by tens of thousands of cells, and each capture
+$\nu_c$ remains informed by the thousands of retained genes in its own cell —
+so the leave-one-gene-out posterior is essentially the full posterior and the
+importance weights are well-behaved. Cell-level WAIC and PSIS-LOO are therefore
+appropriate only for models *without* a cell-specific latent; once a per-cell
+capture (or any per-cell random effect) is present, gene-level comparison is
+the meaningful tool.
 
 ### Gene-level model comparison {#sec-mc-gene-level}
 
