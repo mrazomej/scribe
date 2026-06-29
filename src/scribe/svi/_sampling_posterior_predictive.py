@@ -493,7 +493,55 @@ class PosteriorPredictiveSamplingMixin:
         """Standard posterior sampling via NumPyro Predictive."""
         model, guide = self._model_and_guide()
 
-        if guide is None:
+        # VAE generative prior-path: with no counts, a VAE samples z from the
+        # N(0, I) prior and pushes it through the trained decoder (no
+        # encoder/guide) rather than the encoder-based posterior q(z|counts).
+        # Detect it here so we neither require a guide nor run one.
+        _is_vae_result = (
+            hasattr(self, "_encoder")
+            and getattr(self, "_encoder", None) is not None
+        )
+        _use_vae_prior_path = _is_vae_result and counts is None
+        if _use_vae_prior_path:
+            import warnings
+
+            _latent_spec = getattr(self, "_latent_spec", None)
+            _has_flow_prior = (
+                _latent_spec is not None
+                and getattr(_latent_spec, "flow", None) is not None
+            )
+            _base_model = getattr(self.model_config, "base_model", None)
+            _base_model = (
+                _base_model.value
+                if hasattr(_base_model, "value")
+                else _base_model
+            )
+            _parameterization = getattr(
+                self.model_config, "parameterization", None
+            )
+            _parameterization = (
+                _parameterization.value
+                if hasattr(_parameterization, "value")
+                else _parameterization
+            )
+            _is_lnm_model = (
+                self.model_type in ("lnm", "lnmvcp")
+                or _base_model in ("lnm", "lnmvcp")
+                or _parameterization == "logistic_normal"
+            )
+            # Warn only for plain VAEs, where prior sampling is least
+            # meaningful; LNM and flow-prior VAEs have structured priors.
+            if not _is_lnm_model and not _has_flow_prior:
+                warnings.warn(
+                    "No counts provided for VAE posterior sampling. "
+                    "Sampling z from the uninformative N(0, I) prior "
+                    "instead of the encoder-based posterior q(z|counts). "
+                    "Pass counts= for encoder-based inference.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+
+        if guide is None and not _use_vae_prior_path:
             raise ValueError(
                 f"Could not find a guide for model '{self.model_type}'."
             )
@@ -575,15 +623,31 @@ class PosteriorPredictiveSamplingMixin:
         if batch_size is not None:
             model_args["batch_size"] = batch_size
 
-        posterior_samples = sample_variational_posterior(
-            guide,
-            params_for_guide,
-            model,
-            model_args,
-            rng_key=rng_key,
-            n_samples=n_samples,
-            counts=counts,
-        )
+        if _use_vae_prior_path:
+            from numpyro.handlers import block
+            from numpyro.infer import Predictive
+
+            # Hide the observed-counts site so Predictive samples it from the
+            # generative model (prior z -> trained decoder) rather than
+            # conditioning on data.
+            blocked_model = block(model, hide=["counts"])
+            predictive = Predictive(
+                blocked_model,
+                num_samples=n_samples,
+                params=self.params,
+                exclude_deterministic=False,
+            )
+            posterior_samples = predictive(rng_key, **model_args)
+        else:
+            posterior_samples = sample_variational_posterior(
+                guide,
+                params_for_guide,
+                model,
+                model_args,
+                rng_key=rng_key,
+                n_samples=n_samples,
+                counts=counts,
+            )
 
         # Slice full-dim flow samples down to the gene subset.
         # Build sample-level layouts (with_sample_dim) so that gene_axis
