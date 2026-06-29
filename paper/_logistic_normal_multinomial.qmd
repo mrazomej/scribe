@@ -3608,7 +3608,7 @@ The capture-anchor activation keys are `eta_capture`, `mu_eta`, and `organism`,
 mirroring the keys consumed by the mean-anchoring injection in
 @sec-mean-multi-dataset. The full implementation is the helper
 `scribe.core.lnm_data_init.resolve_r_T_prior`, which is exercised in isolation
-by the tests in `tests/test_lnm_stability.py` so the policy is
+by the tests in `tests/core/test_lnm_stability.py` so the policy is
 regression-protected against any future drift.
 
 ### Why clamp the encoder $\log\sigma$ head? {#sec-lnm-stability-log-sigma}

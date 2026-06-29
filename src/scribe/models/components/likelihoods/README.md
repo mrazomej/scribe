@@ -450,7 +450,7 @@ A module-level constant `_P_EPS = 1e-6` is defined in both
 
 This mirrors the `p_floor` parameter already used in the post-hoc
 log-likelihood evaluation functions in `log_likelihood.py`.  Tests for both
-layers live in `tests/test_floor.py`.
+layers live in `tests/models/likelihoods/test_floor.py`.
 
 ### PLN numerical stability
 
@@ -492,6 +492,6 @@ To add a new likelihood:
    ``*_log_prob`` helper in [`_log_prob.py`](_log_prob.py) (or reuse a parent
    class's implementation when the only difference is the distribution
    constructor, as the BNB family does via ``_build_ll_count_dist``).
-5. Add parity coverage in ``tests/test_log_likelihood_parity.py`` and update the
+5. Add parity coverage in ``tests/models/likelihoods/test_log_likelihood_parity.py`` and update the
    ``_LAYOUT_TABLE`` there so golden outputs are checked against your new class.
 6. Export the class in `__init__.py`

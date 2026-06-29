@@ -635,9 +635,9 @@ consistent end-to-end:
      cell-assignment probabilities, denoising, and MAP-based diagnostics).
 4. **Regression coverage**:
    - Add/update tests in:
-     - `tests/test_builders.py` (posterior + MAP extraction)
-     - `tests/test_visualize_capture_anchor.py` (p-capture scaling path)
-     - `tests/test_viz_utils_module_refactor.py` (bio-PPC / denoising path)
+     - `tests/models/builders/test_builders.py` (posterior + MAP extraction)
+     - `tests/viz/test_visualize_capture_anchor.py` (p-capture scaling path)
+     - `tests/viz/test_viz_utils_module_refactor.py` (bio-PPC / denoising path)
 
 Without this checklist, a joint-parameter addition can appear to train
 correctly while failing later in diagnostics with missing-key errors.

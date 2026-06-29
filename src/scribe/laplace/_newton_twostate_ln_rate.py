@@ -81,7 +81,7 @@ fails because the Beta density is not log-concave in that regime.
 Woodbury solve.  Both the clamped ``a`` and the raw ``a_raw`` are
 returned by the factor function so the obs model can surface a
 "clamp activation rate" diagnostic.  Tests must exercise the
-``α, β < 1`` grid; see ``tests/test_twostate_ln_rate_newton.py``.
+``α, β < 1`` grid; see ``tests/laplace/test_twostate_ln_rate_newton.py``.
 
 Capture-active path (joint Newton on x and η)
 ----------------------------------------------

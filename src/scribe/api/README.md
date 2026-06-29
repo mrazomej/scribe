@@ -177,7 +177,7 @@ monolithic `api.py` module. It re-exports:
 | Symbol | Source | Why re-exported |
 |--------|--------|-----------------|
 | `fit` | `.fit` | Main entry point; `scribe.__init__` imports `from .api import fit` |
-| `VALID_MODELS` | `.constants` | Imported by `tests/test_lnm_factory.py`, `tests/test_pln_factory.py` |
+| `VALID_MODELS` | `.constants` | Imported by `tests/models/families/test_lnm_factory.py`, `tests/models/families/test_pln_factory.py` |
 | `VALID_PARAMETERIZATIONS` | `.constants` | Validation sets used by tests |
 | `VALID_INFERENCE_METHODS` | `.constants` | Validation sets used by tests |
 | `ScribeResults` | `.types` | Return-type alias |
@@ -325,12 +325,12 @@ code.
 
 ```bash
 # All tests that exercise the api/ package directly
-python -m pytest tests/test_x64_precision.py \
-                 tests/test_gene_coverage.py \
-                 tests/test_svi_mcmc_init.py \
-                 tests/test_lnm_factory.py \
-                 tests/test_pln_factory.py \
-                 tests/test_lnm_stability.py \
-                 tests/test_annotation_prior.py \
+python -m pytest tests/integration/test_x64_precision.py \
+                 tests/core/test_gene_coverage.py \
+                 tests/inference/test_svi_mcmc_init.py \
+                 tests/models/families/test_lnm_factory.py \
+                 tests/models/families/test_pln_factory.py \
+                 tests/core/test_lnm_stability.py \
+                 tests/core/test_annotation_prior.py \
                  -v
 ```

@@ -1729,7 +1729,7 @@ order of magnitude smaller.
 ### Verification against autodiff
 
 The hand-derivation is cross-checked against ``hessian_diag_chunked`` in
-``tests/test_twostate_ln_rate_global_curvature.py``.  On a small synthetic fit
+``tests/laplace/test_twostate_ln_rate_global_curvature.py``.  On a small synthetic fit
 (C=18, G=10, k=2) the closed-form path agrees with the autodiff diagonal
 extractor on all three gene-globals to float32 precision (relative tolerance
 5e-3, comfortably within autodiff's roundoff for forward-over-reverse Hessians
@@ -2214,7 +2214,7 @@ memory.
 
 The hand-derivation is cross-checked against
 ``hessian_diag_chunked`` (the chunked-autodiff diagonal extractor) in
-``tests/test_twostate_ln_logit_global_curvature.py``.  On a small synthetic fit
+``tests/laplace/test_twostate_ln_logit_global_curvature.py``.  On a small synthetic fit
 the two paths agree on all three gene-globals to float32 precision (relative
 tolerance 5e-3, comfortably within autodiff's roundoff for forward-over-reverse
 hessian).

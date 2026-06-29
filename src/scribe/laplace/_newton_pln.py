@@ -412,7 +412,7 @@ def newton_step_joint(
     # The sign convention here had a long-standing bug. Verified by
     # constructing the dense (G+1)x(G+1) -H matrix and comparing the
     # block solve to ``np.linalg.solve``; see
-    # ``tests/test_laplace_newton.py::test_single_step_matches_dense``.
+    # ``tests/laplace/test_laplace_newton.py::test_single_step_matches_dense``.
     delta_eta = (g_eta + jnp.dot(rate, A_inv_g_x)) / s
     delta_x = A_inv_g_x + rate_inv_A * delta_eta
 

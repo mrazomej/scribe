@@ -454,7 +454,7 @@ If you experience slowdowns during SVI:
    per-parameter `AxisLayout` metadata) and delegate to the
    appropriate helper in `likelihoods/_log_prob.py`
 4. Add to `__init__.py` exports
-5. Add tests in `tests/test_log_likelihood_parity.py` (parity) and
+5. Add tests in `tests/models/likelihoods/test_log_likelihood_parity.py` (parity) and
    the relevant model-family test file
 
 ```python

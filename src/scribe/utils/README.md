@@ -197,7 +197,7 @@ scipy_dists = {
 ## Testing
 
 The module includes comprehensive test coverage in
-`tests/test_parameter_collector.py`:
+`tests/models/config/test_parameter_collector.py`:
 
 - Parameter collection and filtering
 - Prior mapping for all parameterization types
@@ -207,7 +207,7 @@ The module includes comprehensive test coverage in
 Run tests with:
 
 ```bash
-pytest tests/test_parameter_collector.py -v
+pytest tests/models/config/test_parameter_collector.py -v
 ```
 
 ## Dependencies

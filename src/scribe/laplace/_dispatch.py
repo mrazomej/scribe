@@ -892,7 +892,7 @@ class DispatchResultsMixin:
             # corrected parents we just placed in ``out``. Uses the NB
             # success-prob convention ``p = r_T / (r_T + mu_T)``, NOT
             # ``mu_T / (mu_T + r_T)``. Verified against
-            # tests/test_lnm_laplace.py:417-421.
+            # tests/laplace/test_lnm_laplace.py:417-421.
             if out.get("mu_T") is not None and out.get("r_T") is not None:
                 out["p"] = lnm_p_from_parents(
                     mu_T=out["mu_T"], r_T=out["r_T"]

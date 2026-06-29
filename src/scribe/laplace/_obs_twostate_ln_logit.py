@@ -1159,7 +1159,7 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
         #   * ~10–50× faster than ``hessian_diag_chunked``.
         #   * Numerically agrees with the chunked-autodiff path to
         #     float32 precision (covered by
-        #     ``tests/test_twostate_ln_logit_global_curvature.py``).
+        #     ``tests/laplace/test_twostate_ln_logit_global_curvature.py``).
         from ._newton_twostate_ln_logit import (
             global_curvature_logit_summed,
         )

@@ -206,7 +206,7 @@ Conflating these — writing $\mathcal{N}(\underline{0},
 \lambda_{k}^{2})$ for horseshoe or $\mathcal{N}(\underline{0},
 \psi_{k})$ for NEG — produces a fit that runs but converges to the
 wrong $\lambda_{k}$ / $\psi_{k}$ by a factor of two in log-units.
-The unit tests in ``tests/test_w_priors.py`` include explicit
+The unit tests in ``tests/laplace/test_w_priors.py`` include explicit
 numerical checks: for horseshoe with $\lambda_{k} = 2$ and
 $\underline{\underline{W}}_\perp = 1$, the Normal log-density
 should match $\log \mathcal{N}(1; 0, 2) \approx -1.74$, **not**

@@ -938,7 +938,7 @@ results = scribe.fit(
 
 The pure-JAX Newton kernel lives at
 ``src/scribe/svi/_laplace_newton.py`` and is unit-tested against
-``scipy.optimize`` in ``tests/test_laplace_newton.py``. The outer
+``scipy.optimize`` in ``tests/laplace/test_laplace_newton.py``. The outer
 training loop lives at ``src/scribe/svi/laplace_engine.py``; results
 are returned as a ``ScribeLaplaceResults`` (see
 ``src/scribe/svi/laplace_results.py``) which exposes the same

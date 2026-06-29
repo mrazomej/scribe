@@ -31,7 +31,7 @@ future change to the floor / clip constants
 Verified against:
 * :func:`_twostate_reparam` at
   ``src/scribe/models/components/likelihoods/two_state.py:74-124``.
-* LNM ``p`` convention at ``tests/test_lnm_laplace.py:417-421``
+* LNM ``p`` convention at ``tests/laplace/test_lnm_laplace.py:417-421``
   (``p = r_T / (r_T + mu_T)``).
 """
 
@@ -139,7 +139,7 @@ def lnm_p_from_parents(
 
     Convention: ``p = r_T / (r_T + mu_T)``. This is the NB success-prob
     convention where the shape parameter is in the numerator. Verified
-    against ``tests/test_lnm_laplace.py:417-421``.
+    against ``tests/laplace/test_lnm_laplace.py:417-421``.
 
     Parameters
     ----------
