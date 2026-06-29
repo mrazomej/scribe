@@ -1219,14 +1219,14 @@ class TestHierarchicalComponentSubsetting:
         assert len(shapes) == 1
         assert shapes.pop() == (2, results.n_cells, 1)
 
-    def test_get_map_ppc_scalar_map_params_normalized(
+    def test_get_map_ppc_single_gene_map_params_normalized(
         self, hierarchical_mixture_results, monkeypatch
     ):
-        """Scalar MAP parameters are normalized to singleton-gene PPC output.
+        """A single-gene MAP result yields ``(S, n_cells, 1)`` PPC output.
 
-        This guards the scalar-shape edge case directly by forcing ``get_map``
-        to return rank-0 ``r`` and ``p`` and checking that MAP PPC still
-        returns ``(S, n_cells, 1)``.
+        ``r`` is always gene-specific, so for a one-gene subset it has shape
+        ``(1,)`` (a shared scalar ``p`` is fine).  This checks MAP PPC still
+        returns ``(S, n_cells, 1)`` in that minimal single-gene case.
         """
         results = hierarchical_mixture_results
         comp_sub = results.get_component(0)[jnp.array([0])]
@@ -1234,7 +1234,7 @@ class TestHierarchicalComponentSubsetting:
         def _fake_get_map(*args, **kwargs):
             _ = args, kwargs
             return {
-                "r": jnp.array(2.0),
+                "r": jnp.array([2.0]),
                 "p": jnp.array(0.4),
                 "p_capture": jnp.ones(results.n_cells) * 0.9,
             }
