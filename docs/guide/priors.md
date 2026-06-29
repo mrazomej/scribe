@@ -44,7 +44,8 @@ symbol.
 | `overdispersion` | \(\kappa\) | BNB concentration (`overdispersion="bnb"`) |
 | `regime` | --- | two-state bursting-regime hierarchy (`twostate`) |
 | `capture_probability` | \(p_{\text{cap}}\) | per-cell capture probability (VCP) |
-| `capture_efficiency` | \(\eta\) | capture efficiency (NBLN) |
+| `capture_efficiency` | \(\eta\) | capture-efficiency anchor `(log_M0, sigma_M)` (VCP/NBLN) |
+| `capture_scaling` | \(\mu_\eta\) | per-dataset capture-scaling hierarchy (VCP) |
 | `loadings` | \(W\) | low-rank loadings (PLN/NBLN) |
 
 A prior key is only valid if the chosen parameterization actually **samples**
@@ -237,6 +238,38 @@ base (tuple) form. To pin the regime hierarchy to a *specific* coordinate (the
 regime coordinate vs. the overdispersion coordinate), pass the structural
 `regime_dataset_target` kwarg --- it is the only escape hatch and defaults to
 the parameterization's regime coordinate.
+
+---
+
+## Capture scaling (per-dataset \(\mu_\eta\))
+
+For variable-capture (VCP) models with the biology-informed capture prior, the
+per-dataset capture-scaling parameter \(\mu_\eta\) can itself carry a shrinkage
+hierarchy across datasets, shrunk toward a shared population mean. Declare it on
+the `capture_scaling` key (an alias of `mu_eta`); its **value shape** picks the
+behavior:
+
+| Value shape | Meaning |
+|---|---|
+| `(center, sigma_mu)` tuple | fixed population hyperparameters, **no** shrinkage |
+| family string `"gaussian"`/`"horseshoe"`/`"neg"` | shrinkage with default hyperparameters |
+| `{"type": family, "center": ..., "sigma_mu": ...}` | shrinkage **and** custom hyperparameters |
+
+```python
+scribe.fit(
+    adata,
+    variable_capture=True,
+    unconstrained=True,
+    priors={
+        "organism": "human",            # resolves the per-cell capture anchor
+        "capture_scaling": "horseshoe",  # per-dataset mu_eta hierarchy
+    },
+)
+```
+
+A non-`"none"` family additionally needs a capture anchor — `capture_efficiency`
+/ `eta_capture` `(log_M0, sigma_M)` or `organism`. (This replaces the former
+`capture_scaling_prior=` kwarg, which no longer exists.)
 
 ---
 

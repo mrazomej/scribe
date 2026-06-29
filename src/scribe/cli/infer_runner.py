@@ -602,6 +602,13 @@ def _fold_legacy_prior_cfg(cfg, priors, dataset_key):
     ):
         priors["overdispersion"] = _spec(cfg.get("overdispersion_prior"))
 
+    # Capture-scaling family -> the unified ``capture_scaling`` key (the former
+    # ``capture_scaling_prior`` kwarg). Folds to a bare family string, or a
+    # ``{"type": ...}`` spec when horseshoe/NEG hyperparameters are present.
+    _cap_fam = cfg.get("capture_scaling_prior", "none")
+    if _cap_fam and _cap_fam != "none" and "capture_scaling" not in priors:
+        priors["capture_scaling"] = _spec(_cap_fam)
+
     # Dataset-level selectors -> {factor: family} keyed by dataset_key.
     if isinstance(dataset_key, (list, tuple)):
         factors = list(dataset_key)
@@ -1255,7 +1262,8 @@ def main(cfg: DictConfig) -> None:
         "overdispersion_dataset_independent": cfg.get(
             "overdispersion_dataset_independent", True
         ),
-        "capture_scaling_prior": cfg.get("capture_scaling_prior", "none"),
+        # capture_scaling_prior is folded into priors={"capture_scaling": ...}
+        # by _fold_legacy_prior_cfg above (no longer a fit() kwarg).
         # Data-informed mean anchoring prior
         "expression_anchor": cfg.get("expression_anchor", False),
         "expression_anchor_sigma": cfg.get("expression_anchor_sigma", 0.3),

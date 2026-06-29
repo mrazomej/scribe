@@ -104,6 +104,52 @@ def process_data_and_datasets(ctx: FitContext) -> None:
         _decl_levels.append(dataset_key)
     _decl_levels = tuple(dict.fromkeys(_decl_levels))
 
+    # The capture-scaling hierarchy FAMILY lives in the unified priors dict
+    # under the ``capture_scaling`` key (an alias of ``mu_eta``). Unlike the
+    # other capture entries -- a ``(center, sigma_mu)`` tuple of base
+    # hyperparameters -- the family is a shrinkage selector, so we extract it
+    # here into the internal ``capture_scaling_prior`` field and leave only the
+    # tuple (if any) for ``normalize_unified_priors`` to bucket as base.
+    # Accepted value shapes on the key:
+    #   - ``(center, sigma_mu)`` tuple   -> hyperparameters only (family "none")
+    #   - ``"gaussian"|"horseshoe"|"neg"`` str -> family; hyperparams default
+    #   - ``{"type": fam, "center"?: c, "sigma_mu"?: s}`` -> family + params
+    if isinstance(ctx.priors, dict):
+        _cap_key = next(
+            (k for k in ("capture_scaling", "mu_eta") if k in ctx.priors),
+            None,
+        )
+        if _cap_key is not None and not isinstance(
+            ctx.priors[_cap_key], tuple
+        ):
+            _cap_val = ctx.priors[_cap_key]
+            _rest = {k: v for k, v in ctx.priors.items() if k != _cap_key}
+            if isinstance(_cap_val, str):
+                kw["capture_scaling_prior"] = _cap_val
+                ctx.priors = _rest
+            elif isinstance(_cap_val, dict):
+                _fam = _cap_val.get("type")
+                if _fam is not None:
+                    kw["capture_scaling_prior"] = _fam
+                _center = _cap_val.get("center")
+                _sigma = _cap_val.get("sigma_mu")
+                if (_center is None) != (_sigma is None):
+                    raise ValueError(
+                        f"priors[{_cap_key!r}]: a capture-scaling spec dict "
+                        "must provide both 'center' and 'sigma_mu' or neither "
+                        f"(got center={_center!r}, sigma_mu={_sigma!r})."
+                    )
+                if _center is not None:
+                    _rest[_cap_key] = (_center, _sigma)
+                ctx.priors = _rest
+            else:
+                raise ValueError(
+                    f"priors[{_cap_key!r}] must be a (center, sigma_mu) tuple, "
+                    "a family string ('gaussian'/'horseshoe'/'neg'), or a "
+                    "{'type': family, 'center': ..., 'sigma_mu': ...} dict; "
+                    f"got {type(_cap_val).__name__}."
+                )
+
     _base_p, _gene_p, _hier_p = normalize_unified_priors(ctx.priors, _decl_levels)
     if _gene_p or _hier_p:
         ctx.priors = _base_p or None

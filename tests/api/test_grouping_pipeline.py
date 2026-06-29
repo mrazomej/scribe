@@ -193,3 +193,59 @@ def test_unified_priors_dispersion_routes_into_grouping():
     # Condition factor carries the dispersion family; others do not.
     assert by_name["treatment"].family("dispersion") == "gaussian"
     assert by_name["sample"].family("dispersion") == "none"
+
+
+def test_unified_priors_capture_scaling_routes_to_field():
+    """The mu_eta hierarchy FAMILY routes from priors[capture_scaling] to the
+    internal ``capture_scaling_prior`` kwarg; the (center, sigma_mu) tuple stays
+    a base hyperparameter. Replaces the removed ``capture_scaling_prior`` kwarg.
+    """
+    adata = _make_adata(["D1", "D1", "D2", "D2"])
+
+    # (a) bare family string -> capture_scaling_prior; entry stripped, the
+    #     anchor (eta_capture) stays a base hyperparameter.
+    ctx = FitContext(
+        counts=adata,
+        kwargs={},
+        priors={"eta_capture": (12.0, 1.0), "capture_scaling": "horseshoe"},
+    )
+    process_data_and_datasets(ctx)
+    assert ctx.kwargs["capture_scaling_prior"] == "horseshoe"
+    assert "capture_scaling" not in (ctx.priors or {})
+    assert ctx.priors["eta_capture"] == (12.0, 1.0)
+
+    # (b) spec dict -> family + (center, sigma_mu) tuple under the key.
+    ctx = FitContext(
+        counts=adata,
+        kwargs={},
+        priors={
+            "capture_scaling": {"type": "neg", "center": 12.0, "sigma_mu": 0.5}
+        },
+    )
+    process_data_and_datasets(ctx)
+    assert ctx.kwargs["capture_scaling_prior"] == "neg"
+    assert ctx.priors["capture_scaling"] == (12.0, 0.5)
+
+    # (c) bare tuple -> base hyperparameter only, no family (existing behavior).
+    ctx = FitContext(
+        counts=adata, kwargs={}, priors={"capture_scaling": (12.0, 1.0)}
+    )
+    process_data_and_datasets(ctx)
+    assert ctx.kwargs.get("capture_scaling_prior", "none") == "none"
+    assert ctx.priors["capture_scaling"] == (12.0, 1.0)
+
+    # (d) the mu_eta alias works identically to capture_scaling.
+    ctx = FitContext(
+        counts=adata, kwargs={}, priors={"mu_eta": "gaussian"}
+    )
+    process_data_and_datasets(ctx)
+    assert ctx.kwargs["capture_scaling_prior"] == "gaussian"
+
+    # (e) a partial spec dict (center without sigma_mu) is a clear error.
+    ctx = FitContext(
+        counts=adata,
+        kwargs={},
+        priors={"capture_scaling": {"type": "gaussian", "center": 12.0}},
+    )
+    with pytest.raises(ValueError, match="both 'center' and 'sigma_mu'"):
+        process_data_and_datasets(ctx)

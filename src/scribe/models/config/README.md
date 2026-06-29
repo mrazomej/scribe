@@ -228,25 +228,35 @@ biological knowledge about total cellular mRNA content. The biology-informed
 path activates automatically when any of `priors.organism`,
 `priors.eta_capture`, or `priors.mu_eta` is set.
 
-| `priors.eta_capture` | `capture_scaling_prior` | Behavior |
-|----------------------|-------------------------|----------|
-| not set | `"none"` (or omitted) | Standard flat prior (no eta framework) |
-| set (directly or via `priors.organism`) | `"none"` | Fixed M_0, no shared parameter |
-| set | `"gaussian"`, `"horseshoe"`, or `"neg"` | Learn **per-dataset** `mu_eta` via hierarchical NCP prior, shrunk toward a shared population mean `mu_eta_pop`. `priors.mu_eta` controls `[center, sigma_mu]`. |
+All of these are declared in the unified `priors` dict; there is no
+`capture_scaling_prior` kwarg.
+
+| capture anchor | `priors.capture_scaling` family | Behavior |
+|----------------|---------------------------------|----------|
+| not set | omitted / `"none"` | Standard flat prior (no eta framework) |
+| set (directly or via `priors.organism`) | omitted / tuple only | Fixed M_0, no shared parameter |
+| set | `"gaussian"`, `"horseshoe"`, or `"neg"` | Learn **per-dataset** `mu_eta` via hierarchical NCP prior, shrunk toward a shared population mean `mu_eta_pop`. |
 
 - `priors.organism: str` — Shortcut to resolve default `eta_capture` and
   `mu_eta` values: `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases).
-- `priors.eta_capture: (float, float)` — `(log_M0, sigma_M)` for the per-cell
-  TruncatedNormal+ prior on `eta_c`. Overrides organism defaults.
-- `priors.mu_eta: (float, float)` — `(center, sigma_mu)` for the population-
-  level `mu_eta_pop` Normal prior. When not set but `capture_scaling_prior !=
-  "none"`, defaults to `(eta_capture[0], 1.0)`.
-- `capture_scaling_prior: str` — Hierarchical prior type for per-dataset
-  `mu_eta`: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (uses
-  `HierarchicalPriorType`). When not `"none"`, per-dataset `mu_eta` values are
-  learned via a non-centered parameterization, shrunk toward a shared
-  `mu_eta_pop` by the chosen shrinkage prior. For single-dataset runs, a scalar
-  `mu_eta` fallback is used automatically.
+- `priors.eta_capture: (float, float)` (alias `capture_efficiency`) —
+  `(log_M0, sigma_M)` for the per-cell TruncatedNormal+ prior on `eta_c`.
+  Overrides organism defaults.
+- `priors.capture_scaling` (alias `mu_eta`) — the per-dataset `mu_eta`
+  hierarchy, **dispatched by value shape**:
+  - `(center, sigma_mu)` tuple — fixed population `mu_eta_pop` hyperparameters,
+    **no** shrinkage (family `"none"`).
+  - family string `"gaussian"`/`"horseshoe"`/`"neg"` — learn per-dataset
+    `mu_eta` via a non-centered shrinkage prior toward `mu_eta_pop`
+    (hyperparameters default; `mu_eta_pop` center defaults to
+    `(eta_capture[0], 1.0)`).
+  - `{"type": family, "center": c, "sigma_mu": s}` spec dict — both the family
+    and the `mu_eta_pop` hyperparameters.
+  A non-`"none"` family additionally requires a capture anchor (`eta_capture` /
+  `capture_efficiency` or `organism`). For single-dataset runs a scalar
+  `mu_eta` fallback is used automatically. Internally this populates the
+  `ModelConfig.capture_scaling_prior` field (still the builder/config knob, set
+  via `with_capture_priors`).
 
 The biology-informed prior samples a latent variable
 `eta_c ~ TruncatedNormal+(log M_0 - log L_c, sigma_M^2, low=0)` and derives

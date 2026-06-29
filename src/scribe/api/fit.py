@@ -142,8 +142,6 @@ def fit(
     regime_dataset_target: Optional[str] = None,
     overdispersion_dataset_independent: bool = True,
     auto_downgrade_single_dataset_hierarchy: bool = True,
-    # Hierarchical prior for per-dataset mu_eta (capture scaling)
-    capture_scaling_prior: str = "none",
     # Data-informed mean anchoring prior
     expression_anchor: bool = False,
     expression_anchor_sigma: float = 0.3,
@@ -539,10 +537,15 @@ def fit(
         "slab_df": 4, "slab_scale": 2.0}}`` or
         ``{"type": "neg", "u": 1.0, "a": 1.0, "tau": 1.0}``.
 
-    capture_scaling_prior : str, default="none"
-        Hierarchical prior for per-dataset capture scaling
-        (``mu_eta``).  Accepted values: ``"none"``, ``"gaussian"``,
-        ``"horseshoe"``, ``"neg"``.
+    Capture-scaling hierarchy
+        The per-dataset ``mu_eta`` shrinkage family is no longer a ``fit``
+        kwarg. Declare it on the ``capture_scaling`` key in ``priors`` (an alias
+        of ``mu_eta``), which accepts, by value shape:
+        ``(center, sigma_mu)`` tuple (fixed hyperparameters, no shrinkage);
+        a family string ``"gaussian"``/``"horseshoe"``/``"neg"`` (shrinkage with
+        default hyperparameters); or a
+        ``{"type": family, "center": ..., "sigma_mu": ...}`` spec dict (family
+        + hyperparameters). See ``priors`` below and ``docs/guide/priors.md``.
 
     Mixture and variational guide configuration
     --------------------------------------------
@@ -658,32 +661,91 @@ def fit(
     Prior overrides and VAE architecture
     -------------------------------------
     priors : Dict[str, Any], optional
-        Dictionary of prior hyperparameters keyed by parameter name.
-        Most entries are tuples of hyperparameters — e.g.
-        ``{"p": (1.0, 1.0), "r": (0.0, 1.0)}``.  For ``"mixing"``,
-        a single scalar is broadcast to all ``n_components``.
+        **The single user-facing entry point for every prior.** All prior
+        configuration — base hyperparameters, gene-level shrinkage, dataset/
+        condition hierarchies, the two-state regime prior, the biology-informed
+        capture prior, and the low-rank loadings shrinkage — is declared here.
+        There are no separate ``*_prior`` / ``*_dataset_prior`` /
+        ``capture_scaling_prior`` / sparsity-hyperparameter ``fit`` kwargs; they
+        were all folded into this dict. See ``docs/guide/priors.md`` for the
+        full guide.
 
-        A few entries have *array-* or *dict-shaped* values rather than
-        tuples (each is extracted before downstream stages normalize the
-        remaining tuple-shaped priors):
+        **Keys** are canonical (descriptive) parameter names or their internal
+        site names. The canonical names:
+
+        ===================  ==================  ===============================
+        canonical name       internal site       role
+        ===================  ==================  ===============================
+        ``mean_expression``  ``mu``              per-gene mean expression
+        ``dispersion``       ``r``               NB dispersion (size)
+        ``probability``      ``p``               NB success probability
+        ``odds_ratio``       ``phi``             mean-odds parameter
+        ``zero_inflation``   ``gate``            ZI dropout gate (ZINB)
+        ``regime``           (two-state coord)   two-state NB↔bursty axis
+        ``capture_efficiency`` ``eta_capture``   biology-informed capture anchor
+        ``capture_scaling``  ``mu_eta``          per-dataset capture-scaling prior
+        ``loadings``         ``W``               low-rank loadings (PLN/NBLN)
+        ===================  ==================  ===============================
+
+        **The value's SHAPE selects the role** (the routing discriminator):
+
+        - **tuple** ``(a, b)`` -> *base hyperparameters* for that parameter's
+          flat prior, e.g. ``{"probability": (1.0, 1.0), "dispersion":
+          (0.0, 1.0)}``. (``"mixing"`` takes a single scalar broadcast to all
+          ``n_components``.)
+        - **family string** ``"gaussian"`` / ``"horseshoe"`` / ``"neg"`` ->
+          *gene-level* adaptive shrinkage across genes (and across mixture
+          components), e.g. ``{"probability": "horseshoe"}``.
+        - **``{level: family}`` dict** -> a *dataset / condition hierarchy*: each
+          key is a declared grouping factor (from ``hierarchy=`` / ``dataset_key=``)
+          and gets its own zero-mean per-factor effect with that family. The
+          reserved key ``"base"`` instead sets the gene-level family. Example:
+          ``{"mean_expression": {"condition": "gaussian", "donor": "horseshoe"}}``.
+        - **``{"type": family, ...}`` dict** (no level keys) -> a *family spec*
+          carrying per-spec hyperparameters, e.g.
+          ``{"probability": {"type": "horseshoe", "tau0": 1.0, "slab_df": 4,
+          "slab_scale": 2.0}}`` or ``{"type": "neg", "u": 1.0, "a": 1.0,
+          "tau": 1.0}``. (Horseshoe ``tau0``/``slab_df``/``slab_scale`` and NEG
+          ``u``/``a``/``tau`` are *only* set this way — there are no global
+          sparsity-hyperparameter kwargs.)
+
+        **Biology-informed capture prior** (VCP models). Activates when any of
+        these is present:
+
+        - ``"organism"``: shortcut string (``"human"``/``"mouse"``/...) resolving
+          default ``eta_capture`` and ``mu_eta`` values.
+        - ``"capture_efficiency"`` / ``"eta_capture"``: ``(log_M0, sigma_M)``
+          tuple for the per-cell capture anchor.
+        - ``"capture_scaling"`` / ``"mu_eta"``: the **per-dataset ``mu_eta``
+          hierarchy**, by value shape — ``(center, sigma_mu)`` tuple (fixed
+          population hyperparameters, no shrinkage); a family **string**
+          (shrinkage with default hyperparameters); or a ``{"type": family,
+          "center": ..., "sigma_mu": ...}`` **spec dict** (family + population
+          hyperparameters). A non-``"none"`` family additionally requires a
+          capture anchor (``capture_efficiency``/``eta_capture`` or
+          ``organism``).
+
+        **Other special entries:**
 
         - ``"annotation_logits"``: a pre-built per-cell
           ``(n_cells, n_components)`` logit matrix providing soft
-          component-assignment priors for a mixture fit.  Use this when you
-          have logits in hand; the label-column alternative is
-          ``annotation_key``.  The two are mutually exclusive.
-        - ``"capture_efficiency"`` (alias for ``"eta_capture"``): the
-          biology-informed capture-anchor prior for PLN/NBLN/LNMVCP.
-        - ``"loadings"`` (alias for the W matrix): the **shrinkage
-          prior on the low-rank loadings matrix** for PLN/NBLN
-          Laplace fits.  Value is a strategy spec — e.g.
-          ``{"type": "horseshoe_columnwise", "tau_scale": 1.0}``.
-          See ``src/scribe/laplace/_w_priors.py`` for the four
-          registered strategies (``none``, ``gaussian``,
-          ``horseshoe_columnwise``, ``neg_columnwise``).  When passed,
-          this entry is extracted from the dict before downstream
-          stages see it, so the rest of the priors dict stays tuple-
-          shaped as usual.
+          component-assignment priors for a mixture fit. Mutually exclusive with
+          ``annotation_key``.
+        - ``"loadings"``: the shrinkage prior on the low-rank loadings matrix
+          ``W`` for PLN/NBLN Laplace fits — a strategy spec, e.g.
+          ``{"type": "horseshoe_columnwise", "tau_scale": 1.0}`` (strategies:
+          ``none``, ``gaussian``, ``horseshoe_columnwise``, ``neg_columnwise``;
+          see ``src/scribe/laplace/_w_priors.py``).
+
+        Examples
+        --------
+        >>> # flat hyperparameters + gene-level sparsity
+        >>> priors={"mean_expression": (0.0, 1.0), "probability": "horseshoe"}
+        >>> # crossed donor x condition hierarchy on the mean
+        >>> priors={"mean_expression": {"condition": "gaussian",
+        ...                             "donor": "horseshoe"}}
+        >>> # biology-informed capture with a per-dataset horseshoe on mu_eta
+        >>> priors={"organism": "human", "capture_scaling": "horseshoe"}
 
     latent_dim : int, optional
         Rank of the low-rank loadings matrix ``W ∈ R^{G × k}`` in the
@@ -1112,7 +1174,6 @@ def fit(
             regime_dataset_target=regime_dataset_target,
             overdispersion_dataset_independent=overdispersion_dataset_independent,
             auto_downgrade_single_dataset_hierarchy=auto_downgrade_single_dataset_hierarchy,
-            capture_scaling_prior=capture_scaling_prior,
             expression_anchor=expression_anchor,
             expression_anchor_sigma=expression_anchor_sigma,
             overdispersion=overdispersion,

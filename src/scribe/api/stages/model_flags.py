@@ -97,8 +97,9 @@ def resolve_model_flags(ctx: FitContext) -> None:
         #   * ``mu_eta``              hierarchical capture scaling
         #   * ``capture_scaling``     alias for mu_eta
         #
-        # Also reject ``capture_scaling_prior`` (a top-level kwarg,
-        # not in the priors dict) when it's not the "none" default.
+        # The capture-scaling family now lives in the priors dict under
+        # ``capture_scaling`` / ``mu_eta`` (no ``capture_scaling_prior`` kwarg),
+        # so the priors-key scan below covers every capture configuration.
         if model.lower() == "twostate_ln_logit":
             _capture_keys = {
                 "capture_efficiency",
@@ -115,23 +116,8 @@ def resolve_model_flags(ctx: FitContext) -> None:
                 if _priors_dict is not None
                 else []
             )
-            _capture_scaling_prior = kw.get(
-                "capture_scaling_prior", "none"
-            )
-            _has_capture_scaling = (
-                isinstance(_capture_scaling_prior, str)
-                and _capture_scaling_prior.lower() != "none"
-            )
-            if _capture_keys_present or _has_capture_scaling:
-                _bits = []
-                if _capture_keys_present:
-                    _bits.append(
-                        f"priors keys {_capture_keys_present!r}"
-                    )
-                if _has_capture_scaling:
-                    _bits.append(
-                        f"capture_scaling_prior={_capture_scaling_prior!r}"
-                    )
+            if _capture_keys_present:
+                _bits = [f"priors keys {_capture_keys_present!r}"]
                 raise NotImplementedError(
                     f"model='twostate_ln_logit' does not accept "
                     "biology-informed capture priors (received "
