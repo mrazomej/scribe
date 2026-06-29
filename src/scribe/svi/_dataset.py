@@ -206,12 +206,26 @@ class DatasetMixin:
                 new_params, ds_indices, dataset_index
             )
 
-        # Subset posterior samples
+        # Subset posterior samples.  This proceeds in two stages:
+        #   1. ``_subset_posterior_by_dataset`` removes the *dataset* axis from
+        #      per-dataset keys (e.g. ``r`` of shape ``(S, D, G)`` -> ``(S, G)``).
+        #   2. ``_subset_cell_specific_posterior`` then slices *cell-specific*
+        #      keys (e.g. ``p_capture`` of shape ``(S, n_cells_total)``) down to
+        #      only the cells belonging to this dataset, using the same per-cell
+        #      ``_dataset_indices`` mask that gates the cell-specific variational
+        #      params above.  Without stage 2 a single-leaf view would still
+        #      carry capture samples for *all* cells, and any per-cell
+        #      likelihood would fail to broadcast leaf counts ``(C_d, G)``
+        #      against capture samples ``(S, C_total)``.
         new_posterior_samples = None
         if self.posterior_samples is not None:
             new_posterior_samples = self._subset_posterior_by_dataset(
                 self.posterior_samples, dataset_index, n_datasets
             )
+            if ds_indices is not None:
+                new_posterior_samples = self._subset_cell_specific_posterior(
+                    new_posterior_samples, ds_indices, dataset_index
+                )
 
         # The additive multi-factor hierarchy reconstructs a leaf as
         # ``pop + sum_f effect_f[level_f(leaf)]`` at sample time. A stripped
@@ -412,6 +426,86 @@ class DatasetMixin:
             else:
                 new_params[key] = value
         return new_params
+
+    def _subset_cell_specific_posterior(
+        self,
+        samples: Dict[str, jnp.ndarray],
+        dataset_indices: jnp.ndarray,
+        dataset_index: int,
+    ) -> Dict[str, jnp.ndarray]:
+        """Slice cell-specific posterior samples to one dataset's cells.
+
+        This is the posterior-sample analogue of
+        :meth:`_subset_cell_specific_params`.  Cell-specific posterior
+        samples (e.g. the per-cell capture probability ``p_capture`` in
+        variable-capture models) are drawn for the *full* concatenated cell
+        population, so their arrays have shape ``(S, n_cells_total[, ...])``
+        where ``S`` is the number of posterior draws and the cell axis is
+        axis ``1`` (the leading axis ``0`` is the draw axis).  When a
+        single-dataset view is extracted, these arrays must be restricted to
+        the cells belonging to ``dataset_index`` so that they line up with
+        that leaf's count matrix in any downstream per-cell computation
+        (log-likelihood, posterior predictive sampling, ...).
+
+        Non-cell-specific keys (gene-level parameters, population-level
+        hyperparameters, already-dataset-sliced tensors, ...) are returned
+        unchanged.
+
+        Parameters
+        ----------
+        samples : dict of str to jnp.ndarray
+            Posterior-sample dictionary, already dataset-axis sliced by
+            :meth:`_subset_posterior_by_dataset`.  Cell-specific entries have
+            shape ``(S, n_cells_total[, ...])``.
+        dataset_indices : jnp.ndarray of int, shape ``(n_cells_total,)``
+            Per-cell dataset assignment for the *parent* (multi-dataset)
+            results object.  ``dataset_indices[c]`` is the leaf index of cell
+            ``c``.
+        dataset_index : int
+            Index of the dataset/leaf to retain.  Cells ``c`` with
+            ``dataset_indices[c] == dataset_index`` are kept, in their
+            original order.
+
+        Returns
+        -------
+        dict of str to jnp.ndarray
+            A new dictionary in which every cell-specific entry has been
+            sliced along its cell axis (axis ``1``) to the
+            ``n_cells_dataset`` cells of ``dataset_index``; all other entries
+            are passed through unchanged.  Returns ``samples`` unchanged when
+            it is ``None`` or contains no cell-specific keys.
+        """
+        # ``None`` guard: nothing to slice for a model without posterior draws.
+        if samples is None:
+            return None
+
+        # Identify which posterior keys are cell-specific, using the same
+        # spec-driven, longest-name-wins matching as the variational path so
+        # the two stay consistent (e.g. both treat ``p_capture`` as per-cell).
+        cell_keys = _build_cell_specific_keys(
+            self.model_config.param_specs or [], samples
+        )
+        if not cell_keys:
+            return samples
+
+        # Boolean keep-mask over the parent's full cell population.
+        mask = jnp.asarray(dataset_indices).reshape(-1) == dataset_index
+
+        new_samples: Dict[str, jnp.ndarray] = {}
+        for key, value in samples.items():
+            # Cell-specific posterior arrays carry the draw axis at position 0
+            # and the cell axis at position 1, so we slice axis 1.  We require
+            # ``ndim >= 2`` (draw axis + cell axis) before slicing; anything
+            # lower cannot be a per-cell posterior array and is left as-is.
+            if (
+                key in cell_keys
+                and hasattr(value, "ndim")
+                and value.ndim >= 2
+            ):
+                new_samples[key] = value[:, mask]
+            else:
+                new_samples[key] = value
+        return new_samples
 
     def _subset_posterior_by_dataset(
         self,

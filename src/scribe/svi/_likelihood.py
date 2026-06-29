@@ -146,15 +146,97 @@ class LikelihoodMixin:
             k: v.without_sample_dim() for k, v in _post_layouts.items()
         }
 
-        # Define function to compute likelihood for a single sample
-        @jit
-        def compute_sample_lik(i):
-            # Extract parameters for this sample
-            params_i = {k: v[i] for k, v in parameter_samples.items()}
-            # For mixture models we need to pass split_components and weights
+        # ------------------------------------------------------------------
+        # Multi-dataset (concatenated / hierarchical) gather setup.
+        #
+        # For a crossed/hierarchical fit the per-dataset canonical parameters
+        # (``p``, ``r``, ``mu``, ``phi``, ...) carry a leaf/dataset axis of
+        # size ``n_datasets`` (e.g. ``p`` has per-draw shape ``(D, G)``).  The
+        # per-cell likelihood expects those parameters to broadcast against
+        # the count matrix ``(n_cells, n_genes)``, which fails because
+        # ``D != n_cells``.  Rather than loop over leaves (which would
+        # recompile the likelihood once per distinct leaf cell-count — the
+        # dominant cost), we ``take`` each cell's leaf-parameters along the
+        # dataset axis *inside* the per-draw function, turning ``(D, G)`` into
+        # ``(n_cells, G)`` and relabelling that axis ``datasets -> cells``.
+        # The likelihood then compiles a SINGLE kernel over the full cell
+        # population and runs under the existing ``vmap``/chunking machinery.
+        from ..core.axis_layout import AxisLayout, CELLS, DATASETS
+
+        _n_datasets = getattr(
+            getattr(self, "model_config", None), "n_datasets", None
+        )
+        _dataset_indices = getattr(self, "_dataset_indices", None)
+        multi_dataset = (
+            _n_datasets is not None
+            and _n_datasets > 1
+            and _dataset_indices is not None
+        )
+        # Map of {param key -> dataset-axis index in the per-draw tensor} for
+        # every parameter that actually carries a dataset axis.  Only these
+        # keys are gathered; per-gene, per-cell, and factor-level parameters
+        # (whose dataset_axis is None) pass through untouched.
+        gather_axis: dict = {}
+        if multi_dataset:
+            dataset_indices = jnp.asarray(_dataset_indices).reshape(-1)
+            gather_axis = {
+                key: layout.dataset_axis
+                for key, layout in draw_layouts.items()
+                if layout.dataset_axis is not None
+            }
+            # After the gather the former dataset axis indexes cells, so the
+            # likelihood must read it as the cell axis.  Relabel the axis name
+            # in place (the axis *position* is unchanged by ``take``).
+            draw_layouts = {
+                key: (
+                    AxisLayout(
+                        axes=tuple(
+                            CELLS if ax == DATASETS else ax
+                            for ax in layout.axes
+                        ),
+                        has_sample_dim=layout.has_sample_dim,
+                    )
+                    if key in gather_axis
+                    else layout
+                )
+                for key, layout in draw_layouts.items()
+            }
+
+        # Per-draw likelihood evaluator.
+        #
+        # IMPORTANT: ``counts`` and the posterior draws are threaded through as
+        # explicit *arguments* (not captured from the enclosing scope).  A
+        # ``@jit`` function captures any concrete array referenced via closure
+        # as a compile-time constant baked into the HLO; for single-cell data
+        # the ``(n_cells, n_genes)`` count matrix is multiple gigabytes, so
+        # capturing it that way makes XLA fold a multi-GB constant on every
+        # compile (huge compile time and memory).  Passing it as an argument
+        # lets JAX trace it as an abstract shape instead, so the kernel is
+        # compiled once, cheaply, and reused across chunks.
+        def _one_draw(params_i, counts_arg):
+            # ``params_i`` holds the canonical parameters for a SINGLE
+            # posterior draw (the leading sample axis is removed by the
+            # enclosing ``vmap``).
+            #
+            # Multi-dataset: gather each cell's leaf-parameters along the
+            # dataset axis so per-leaf ``(D, G)`` tensors become per-cell
+            # ``(n_cells, G)`` tensors that broadcast cleanly against the
+            # counts and the per-cell capture probability.  This replaces a
+            # per-leaf Python loop (which would recompile the likelihood once
+            # per distinct leaf cell-count) with a single compiled kernel.
+            if multi_dataset:
+                params_i = {
+                    k: (
+                        jnp.take(v, dataset_indices, axis=gather_axis[k])
+                        if k in gather_axis
+                        else v
+                    )
+                    for k, v in params_i.items()
+                }
+            # For mixture models we need to pass split_components and weights.
             if is_mixture:
                 return likelihood_fn(
-                    counts,
+                    counts_arg,
                     params_i,
                     draw_layouts,
                     cells_axis=cells_axis,
@@ -166,30 +248,47 @@ class LikelihoodMixin:
                     p_floor=p_floor,
                     dtype=dtype,
                 )
-            else:
-                return likelihood_fn(
-                    counts,
-                    params_i,
-                    draw_layouts,
-                    cells_axis=cells_axis,
-                    return_by=return_by,
-                    r_floor=r_floor,
-                    p_floor=p_floor,
-                    dtype=dtype,
-                )
+            return likelihood_fn(
+                counts_arg,
+                params_i,
+                draw_layouts,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                r_floor=r_floor,
+                p_floor=p_floor,
+                dtype=dtype,
+            )
 
-        # Use chunked vmap to reduce peak memory when requested.
+        # ``vmap`` maps over the leading sample axis of every parameter array
+        # (``in_axes=0`` per dict leaf) while broadcasting the single shared
+        # ``counts`` matrix (``in_axes=None``).  Wrapping the mapped call in
+        # ``jit`` compiles one kernel per chunk shape; ``counts`` enters as a
+        # traced argument, never a captured constant.
+        _draw_in_axes = ({key: 0 for key in parameter_samples}, None)
+
+        @jit
+        def compute_chunk(params_chunk, counts_arg):
+            return vmap(_one_draw, in_axes=_draw_in_axes)(
+                params_chunk, counts_arg
+            )
+
+        # Use chunked evaluation to bound peak memory when requested.  Each
+        # chunk slices the posterior draws along their leading sample axis and
+        # reuses the same compiled kernel.
         if (
             sample_chunk_size is None
             or sample_chunk_size <= 0
             or sample_chunk_size >= n_samples
         ):
-            log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+            log_liks = compute_chunk(parameter_samples, counts)
         else:
             chunks = []
             for start in range(0, n_samples, sample_chunk_size):
                 end = min(start + sample_chunk_size, n_samples)
-                chunks.append(vmap(compute_sample_lik)(jnp.arange(start, end)))
+                params_chunk = {
+                    k: v[start:end] for k, v in parameter_samples.items()
+                }
+                chunks.append(compute_chunk(params_chunk, counts))
             log_liks = jnp.concatenate(chunks, axis=0)
 
         # Handle NaNs if requested
