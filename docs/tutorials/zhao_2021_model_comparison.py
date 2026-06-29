@@ -169,9 +169,13 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
                 scribe.GroupLevel("sample"),
             ],
             # Hierarchy on the EXPRESSION target only -> single shared r_g.
-            expression_dataset_prior={
-                "perturbation": "gaussian",  # fixed-scale contrast
-                "sample": "horseshoe",  # shrink across donors
+            # (Model B adds a matching "dispersion" entry; that is the only
+            #  difference between the two priors dicts.)
+            priors={
+                "mean_expression": {
+                    "perturbation": "gaussian",  # fixed-scale contrast
+                    "sample": "horseshoe",  # shrink across donors
+                },
             },
             early_stopping={
                 "enabled": True,

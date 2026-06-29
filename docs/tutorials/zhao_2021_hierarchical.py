@@ -277,12 +277,22 @@ def _(Path, adata_joint, json, perturbation, pickle, scribe):
                 # 7 donors -> random effect with adaptive shrinkage.
                 scribe.GroupLevel("sample"),
             ],
-            expression_dataset_prior={
-                "perturbation": "gaussian",  # fixed-scale contrast
-                "sample": "horseshoe",  # shrink across donors
+            # Per-factor prior families are declared through the unified
+            # ``priors`` dict, keyed by the canonical target name. A
+            # ``{factor: family}`` value attaches a per-factor (dataset/
+            # condition) hierarchy on that target -- here the gene mean,
+            # ``mean_expression``. The effect *type* (fixed vs random) comes
+            # from the ``GroupLevel`` above; the *family* comes from here.
+            priors={
+                "mean_expression": {
+                    "perturbation": "gaussian",  # fixed-scale contrast
+                    "sample": "horseshoe",  # shrink across donors
+                },
             },
             # (mean_disp samples a single per-gene dispersion r_g and exposes no
-            #  scalar success-probability, so there is no prob_dataset_prior here.)
+            #  scalar success-probability, so there is no probability hierarchy
+            #  here. To give the dispersion the same crossed structure, add a
+            #  ``"dispersion": {"perturbation": ..., "sample": ...}`` entry.)
             early_stopping={
                 "enabled": True,
                 "patience": 1000,

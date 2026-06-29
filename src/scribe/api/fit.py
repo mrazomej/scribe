@@ -513,51 +513,31 @@ def fit(
         Whether to use dataset-specific mixture weights.  ``None``
         (default) enables automatically when ``n_datasets >= 2``.
 
-    expression_dataset_prior : str, default="none"
-        Dataset-level hierarchical prior for expression parameters.
-        Accepted values: ``"none"``, ``"gaussian"``, ``"horseshoe"``,
-        ``"neg"``.
-
-    prob_dataset_prior : str, default="none"
-        Dataset-level hierarchical prior for the probability parameter.
-        Accepted values: ``"none"``, ``"gaussian"``, ``"horseshoe"``,
-        ``"neg"``.
+    Dataset-level hierarchical prior families
+        Declared via the unified ``priors`` dict (NOT as ``fit`` kwargs):
+        a ``{level: family}`` value attaches a per-dataset / per-factor
+        hierarchy on a target, e.g.
+        ``priors={"mean_expression": {"sample": "horseshoe"}}`` for the
+        gene mean, ``"probability"`` for p/phi, ``"zero_inflation"`` for the
+        gate, ``"regime"`` for the two-state regime coordinate. Families:
+        ``"gaussian"``, ``"horseshoe"``, ``"neg"``. See ``priors`` below and
+        ``docs/guide/priors.md``.
 
     prob_dataset_mode : str, default="gene_specific"
         Structure of dataset-level probability hierarchy:
         ``"scalar"``, ``"gene_specific"``, or ``"two_level"``.
-
-    zero_inflation_dataset_prior : str, default="none"
-        Dataset-level hierarchical prior for zero-inflation gate
-        parameters.
-
-    overdispersion_dataset_prior : str, default="none"
-        Dataset-level hierarchical prior for BNB concentration
-        (``kappa_{d,g}``) in multi-dataset mode.
 
     auto_downgrade_single_dataset_hierarchy : bool, default=True
         Automatically downgrade dataset-level hierarchical flags when
         ``dataset_key`` resolves to a single dataset.
 
     Sparsity prior hyperparameters
-    ------------------------------
-    horseshoe_tau0 : float, default=1.0
-        Global shrinkage scale for regularized horseshoe priors.
-
-    horseshoe_slab_df : int, default=4
-        Degrees of freedom for the horseshoe slab component.
-
-    horseshoe_slab_scale : float, default=2.0
-        Scale of the horseshoe slab component.
-
-    neg_u : float, default=1.0
-        Inner Gamma shape parameter for NEG priors.
-
-    neg_a : float, default=1.0
-        Outer Gamma shape parameter for NEG priors.
-
-    neg_tau : float, default=1.0
-        Global rate/scale parameter for NEG priors.
+        Horseshoe (``tau0``, ``slab_df``, ``slab_scale``) and NEG (``u``,
+        ``a``, ``tau``) hyperparameters are no longer ``fit`` kwargs. Pass them
+        inside the family spec in ``priors``, e.g.
+        ``priors={"probability": {"type": "horseshoe", "tau0": 1.0,
+        "slab_df": 4, "slab_scale": 2.0}}`` or
+        ``{"type": "neg", "u": 1.0, "a": 1.0, "tau": 1.0}``.
 
     capture_scaling_prior : str, default="none"
         Hierarchical prior for per-dataset capture scaling
