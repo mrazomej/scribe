@@ -33,6 +33,7 @@ from ._sampling import SamplingMixin
 from ._likelihood import LikelihoodMixin
 from ._normalization import NormalizationMixin
 from ._mixture_analysis import MixtureAnalysisMixin
+from ..viz.registry import VizAccessorMixin
 
 
 # ==============================================================================
@@ -42,6 +43,7 @@ from ._mixture_analysis import MixtureAnalysisMixin
 
 @dataclass
 class ScribeMCMCResults(
+    VizAccessorMixin,
     ParameterExtractionMixin,
     GeneSubsettingMixin,
     ComponentMixin,

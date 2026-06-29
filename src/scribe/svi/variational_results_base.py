@@ -12,8 +12,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ..viz.registry import VizAccessorMixin
 
-class ScribeVariationalResults(ABC):
+
+class ScribeVariationalResults(VizAccessorMixin, ABC):
     """
     Runtime-dispatchable base for variational inference result containers.
 

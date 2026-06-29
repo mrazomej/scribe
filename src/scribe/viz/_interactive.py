@@ -1071,7 +1071,14 @@ def _build_public_params(inner_params):
     return all_pos + kw_filtered + render_kw
 
 
-def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
+def plot_function(
+    *,
+    suffix=None,
+    save_label=None,
+    save_kwargs=None,
+    accessor=True,
+    supports=None,
+):
     """Decorator that automates ``PlotContext`` boilerplate.
 
     The decorated function's *public* signature preserves the standard
@@ -1088,6 +1095,13 @@ def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
       merged into the ``ctx.finalize(…)`` call.  Recognised keys:
       ``suffix``, ``save_label``, ``save_kwargs``, ``filename``.
 
+    When ``accessor`` is ``True`` (the default) the wrapped function is also
+    registered for the object-oriented ``results.viz`` accessor (see
+    :mod:`scribe.viz.registry`), so a results-aware plot becomes available as
+    ``results.viz.<name>(...)`` automatically. Set ``accessor=False`` for
+    plotters whose first positional argument is *not* a results object
+    (e.g. :func:`scribe.viz.ecdf.plot_ecdf`).
+
     Parameters
     ----------
     suffix : str, optional
@@ -1096,6 +1110,12 @@ def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
         Default human-readable label for console save messages.
     save_kwargs : dict, optional
         Default keyword arguments forwarded to ``fig.savefig``.
+    accessor : bool, default True
+        Register the function for the ``results.viz`` accessor.
+    supports : str, optional
+        Category key restricting which results types expose this plot on
+        their ``.viz`` accessor (e.g. ``"de"``). ``None`` means the default
+        ``"inference"`` family. See :mod:`scribe.viz.registry`.
 
     Examples
     --------
@@ -1192,6 +1212,14 @@ def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
             )
 
         wrapper.__signature__ = public_sig
+
+        if accessor:
+            from .registry import VizEntry, register_viz
+
+            params = list(public_sig.parameters)
+            first = params[0] if params else "results"
+            register_viz(VizEntry(fn.__name__, wrapper, supports, first))
+
         return wrapper
 
     return decorator
