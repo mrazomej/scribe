@@ -93,8 +93,8 @@ def plot_w_shrinkage_spectrum(
         raise ValueError(
             "results has no w_prior_diagnostics — this plot requires a "
             "Laplace fit configured with a W-shrinkage strategy "
-            "(via `w_prior=...` on scribe.fit).  LNM-family results "
-            "are not supported in v1."
+            "(via `priors={'loadings': ...}` on scribe.fit).  LNM-family "
+            "results are not supported in v1."
         )
 
     col_norm_key = "column_frobenius_compositional"

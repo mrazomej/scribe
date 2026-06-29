@@ -73,7 +73,7 @@ ECDF); the rest are opt-in via flags or `--all`.
 | **Corner PPC**                       | `--corner-ppc`          | Count-space N×N corner posterior predictive check                                     | ---                                 |
 | **Compositional PPC**                | `--compositional-ppc`   | 1-D compositional posterior predictive check grid                                     | `get_compositional_samples`         |
 | **Compositional corner PPC**         | `--compositional-corner-ppc` | Compositional N×N corner posterior predictive check                            | `get_compositional_samples`         |
-| **W-shrinkage spectrum**             | `--w-shrinkage`         | Per-factor W-perp column-norm shrinkage diagnostic                                    | Laplace fit with `w_prior`          |
+| **W-shrinkage spectrum**             | `--w-shrinkage`         | Per-factor W-perp column-norm shrinkage diagnostic                                    | Laplace fit with `priors={"loadings": ...}` |
 
 Use `--all` to enable every plot at once.
 

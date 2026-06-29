@@ -986,11 +986,12 @@ scribe.viz.plot_w_shrinkage_spectrum(results)
 
 The W-prior strategy spec lives inside the canonical ``priors`` dict
 under the descriptive key ``"loadings"`` (the factor-analysis term for
-``W``).  The internal alias ``"W"`` is also accepted.  The legacy
-top-level ``w_prior=`` kwarg still works for backward compatibility
-but emits a ``DeprecationWarning``; new code should use the priors
-dict form so the API stays uniform across cascade priors, capture
-priors, and parameter overrides.
+``W``).  The internal alias ``"W"`` is also accepted.  This is the
+*only* user-facing route — there is no top-level ``w_prior=`` kwarg —
+so the API stays uniform across cascade priors, capture priors, and
+parameter overrides.  (Internally, ``api.fit`` pops the ``"loadings"``
+entry and threads it down to the Laplace engine as ``w_prior=``; that
+plumbing keyword is unchanged.)
 
 The math (softplus-floor parameterization, (G−1)-dim subspace
 correction, std-vs-variance conventions), the calibration workflow,

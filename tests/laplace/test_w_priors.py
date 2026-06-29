@@ -346,7 +346,7 @@ def test_nbln_fit_with_each_strategy(w_prior):
         result = scribe.fit(
             adata, model="nbln", inference_method="laplace",
             n_steps=20,
-            w_prior=w_prior,
+            priors={"loadings": w_prior},
             laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
             vae_latent_dim=3,
         )
@@ -372,7 +372,7 @@ def test_pln_fit_with_w_prior(w_prior):
         result = scribe.fit(
             adata, model="pln", inference_method="laplace",
             n_steps=20,
-            w_prior=w_prior,
+            priors={"loadings": w_prior},
             laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
             vae_latent_dim=3,
         )
@@ -394,7 +394,7 @@ def test_gene_subsetting_recomputes_w_prior_diagnostics():
         result = scribe.fit(
             adata, model="nbln", inference_method="laplace",
             n_steps=20,
-            w_prior={"type": "horseshoe_columnwise"},
+            priors={"loadings": {"type": "horseshoe_columnwise"}},
             laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
             vae_latent_dim=3,
         )
@@ -431,18 +431,24 @@ def test_w_prior_rejected_for_svi_method():
     with pytest.raises(ValueError, match="w_prior is supported only"):
         scribe.fit(
             adata, model="nbvcp", inference_method="svi",
-            n_steps=10, w_prior={"type": "gaussian"},
+            n_steps=10, priors={"loadings": {"type": "gaussian"}},
         )
 
 
-def test_w_prior_rejected_for_nbvcp_laplace():
-    """w_prior is laplace+pln/nbln only."""
+def test_w_prior_rejected_for_non_pln_nbln_laplace_model():
+    """The loadings prior is laplace + pln/nbln only.  This exercises the
+    *base_model* branch of the scope check: ``lnm`` supports laplace (so it
+    clears the method branch) but is not pln/nbln, so the loadings prior is
+    still rejected.  (The svi test above covers the *method* branch.)
+    """
     import scribe
     adata = _toy_adata()
     with pytest.raises(ValueError, match="w_prior is supported only"):
         scribe.fit(
-            adata, model="nbvcp", inference_method="svi",
-            n_steps=10, w_prior={"type": "gaussian"},
+            adata, model="lnm", inference_method="laplace",
+            n_steps=10, latent_dim=2,
+            priors={"loadings": {"type": "gaussian"}},
+            laplace_config={"n_newton_steps": 1, "newton_max_step": 5.0},
         )
 
 
@@ -456,7 +462,7 @@ def test_w_prior_none_accepted_for_any_model():
         # No exception even though target is nbvcp+svi.
         result = scribe.fit(
             adata, model="nbvcp", inference_method="svi",
-            n_steps=5, w_prior={"type": "none"},
+            n_steps=5, priors={"loadings": {"type": "none"}},
         )
     assert result is not None
 
@@ -474,7 +480,7 @@ def test_plot_w_shrinkage_spectrum_runs():
         result = scribe.fit(
             adata, model="nbln", inference_method="laplace",
             n_steps=20,
-            w_prior={"type": "horseshoe_columnwise"},
+            priors={"loadings": {"type": "horseshoe_columnwise"}},
             laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
             vae_latent_dim=3,
         )
@@ -589,37 +595,6 @@ def test_priors_dict_loadings_combined_with_other_priors():
             laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
         )
     assert result.w_prior_diagnostics["strategy_type"] == "gaussian"
-
-
-def test_legacy_w_prior_kwarg_emits_deprecation_warning(scribe_caplog):
-    """Legacy ``w_prior=`` kwarg works but emits a warning log."""
-    import logging
-
-    import scribe
-
-    adata = _toy_adata()
-    scribe_caplog.set_level(logging.WARNING, logger="scribe")
-    scribe.fit(
-        adata, model="nbln", inference_method="laplace",
-        n_steps=10, latent_dim=3,
-        w_prior={"type": "horseshoe_columnwise"},
-        laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
-    )
-    assert any("w_prior" in record.message for record in scribe_caplog.records)
-
-
-def test_priors_dict_loadings_and_legacy_w_prior_conflict_raises():
-    """Passing both the new dict form and the legacy kwarg is an error."""
-    import scribe
-    adata = _toy_adata()
-    with pytest.raises(ValueError, match="priors.*loadings.*w_prior"):
-        scribe.fit(
-            adata, model="nbln", inference_method="laplace",
-            n_steps=10, latent_dim=3,
-            priors={"loadings": {"type": "gaussian"}},
-            w_prior={"type": "horseshoe_columnwise"},
-            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
-        )
 
 
 def test_normalize_freeze_keys_internal_names_passthrough():

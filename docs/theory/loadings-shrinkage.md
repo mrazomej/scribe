@@ -212,9 +212,9 @@ results = scribe.fit(
 ```
 
 Available types: `"none"` (no-op default), `"gaussian"`,
-`"horseshoe_columnwise"`, `"neg_columnwise"`. The legacy top-level
-`w_prior=` kwarg works for backward compatibility but emits a
-`DeprecationWarning` — new code should use the priors dict form.
+`"horseshoe_columnwise"`, `"neg_columnwise"`. The loadings shrinkage is
+configured exclusively through `priors={"loadings": ...}` — there is no
+top-level `w_prior=` kwarg.
 
 ---
 

@@ -39,8 +39,6 @@ Examples
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-import logging
-
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
@@ -70,8 +68,6 @@ from .stages.model_config_build import build_model_config
 from .stages.inference_config_build import build_inference_config
 from .stages.run_inference import dispatch_inference
 from .stages.result_postprocess import postprocess_results
-
-_log = logging.getLogger(__name__)
 
 
 def fit(
@@ -313,15 +309,6 @@ def fit(
     # See paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
     informative_priors_freeze: Optional[tuple] = None,
-    # DEPRECATED: shrinkage prior on the loadings matrix W.
-    # The preferred API is to pass the strategy spec inside the
-    # ``priors`` dict under the descriptive ``"loadings"`` key:
-    #   priors = {"loadings": {"type": "horseshoe_columnwise",
-    #                          "tau_scale": 1.0}}
-    # This top-level kwarg is retained for backward compatibility and
-    # emits a ``DeprecationWarning`` when used.  Passing both the dict
-    # form and the kwarg raises ``ValueError``.
-    w_prior: Optional[dict] = None,
     # Float64 precision -- defaults to True for MCMC, False for SVI/VAE
     enable_x64: Optional[bool] = None,
     # Power user: explicit configs override above
@@ -427,27 +414,6 @@ def fit(
         log-likelihood integral at additional compute cost.  Ignored by
         non-two-state models.
 
-    expression_prior : str, default="none"
-        Gene-level hierarchical prior for mu (or r) across mixture
-        components.  Per-component means are drawn from a shared
-        gene-level population distribution per gene, providing adaptive
-        shrinkage.  Requires ``unconstrained=True`` and
-        ``n_components >= 2``.  Accepted values: ``"none"``,
-        ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
-
-    prob_prior : str, default="none"
-        Gene-level hierarchical prior for the probability parameter
-        (``p`` in canonical/linked parameterizations, ``phi`` in
-        mean-odds).  Provides adaptive shrinkage across genes and
-        requires ``unconstrained=True``.  Accepted values:
-        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
-
-    zero_inflation_prior : str, default="none"
-        Gene-level hierarchical prior for the zero-inflation gate.
-        Only used for zero-inflated models and requires
-        ``unconstrained=True``.  Accepted values:
-        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
-
     expression_anchor : bool, default=False
         Enable data-informed anchoring prior on the biological mean
         ``mu_g``.  When True, per-gene prior centers are computed from
@@ -457,6 +423,13 @@ def fit(
         Automatically enables ``unconstrained=True``.  For VCP models,
         ``priors.eta_capture`` or ``priors.organism`` must be set so
         that ``nu_bar`` can be estimated.
+
+        This is a prior-*construction* modifier (it sets the prior
+        *center* from the data), not a shrinkage family, so it lives
+        here rather than in ``priors=`` and **composes** with the mean's
+        family/hierarchy — e.g. ``priors={"mean_expression": "horseshoe"}``
+        together with ``expression_anchor=True`` gives an anchored center
+        *with* adaptive gene-level shrinkage.
 
     expression_anchor_sigma : float, default=0.3
         Log-scale standard deviation for the mean anchoring prior.
@@ -469,12 +442,6 @@ def fit(
         standard Negative Binomial.  ``"bnb"`` uses the Beta Negative
         Binomial, adding a per-gene concentration parameter that
         allows heavier-than-NB tails.
-
-    overdispersion_prior : str, default="horseshoe"
-        Hierarchical prior for the BNB concentration parameter
-        (``kappa_g``).  Controls shrinkage toward the NB limit.
-        Only used when ``overdispersion`` is not ``"none"``.
-        Accepted values: ``"horseshoe"``, ``"neg"``.
 
     d_mode : str or None, default=None
         Diagonal residual-noise mode for models that decompose the
@@ -681,6 +648,7 @@ def fit(
         ``probability``      ``p``               NB success probability
         ``odds_ratio``       ``phi``             mean-odds parameter
         ``zero_inflation``   ``gate``            ZI dropout gate (ZINB)
+        ``overdispersion``   ``bnb_concentration``  BNB concentration κ (``overdispersion="bnb"``)
         ``regime``           (two-state coord)   two-state NB↔bursty axis
         ``capture_efficiency`` ``eta_capture``   biology-informed capture anchor
         ``capture_scaling``  ``mu_eta``          per-dataset capture-scaling prior
@@ -933,13 +901,6 @@ def fit(
         ``paper/_diffexp_nbln_robustness.qmd`` and
         ``sec-nbln-cascade-freeze``.
 
-    w_prior : dict, optional
-        **Deprecated.** Legacy alias for the W-loadings shrinkage
-        prior.  Pass it as ``priors={"loadings": {...}}`` instead (see
-        the ``priors`` entry above).  Both routes resolve to the same
-        internal plumbing; passing both raises ``ValueError``.  Emits
-        ``DeprecationWarning`` when used.
-
     Data access, annotations, and initialization
     ---------------------------------------------
     cells_axis : int, default=0
@@ -1098,16 +1059,15 @@ def fit(
     )
 
     # -- Extract the W-prior strategy spec from ``priors`` ------------------
-    # Preferred API: ``priors={"loadings": {"type": "horseshoe_columnwise",
-    # ...}}`` lives alongside other parameter priors instead of as a
-    # top-level kwarg.  Legacy ``w_prior=`` is still accepted but
-    # deprecated.  Both forms point to the same downstream plumbing.
+    # The W-loadings shrinkage strategy is specified alongside every other
+    # parameter prior: ``priors={"loadings": {"type": "horseshoe_columnwise",
+    # ...}}`` (descriptive ``"loadings"`` or internal ``"W"`` key).
     #
     # The W-prior entry is *popped* from the priors dict before the
     # FitContext sees it — downstream stages (build_model_config,
     # normalize_prior_keys, etc.) operate on tuple-shaped entries only.
     _priors_for_ctx = priors
-    _w_prior_from_priors = None
+    _effective_w_prior = None
     if priors is not None:
         # Resolve both the descriptive alias and the internal key.
         if "loadings" in priors and "W" in priors:
@@ -1118,7 +1078,7 @@ def fit(
             )
         for _key in ("loadings", "W"):
             if _key in priors:
-                _w_prior_from_priors = priors[_key]
+                _effective_w_prior = priors[_key]
                 # Build a copy with the entry removed.
                 _priors_for_ctx = {
                     k: v for k, v in priors.items() if k != _key
@@ -1128,28 +1088,6 @@ def fit(
                 if not _priors_for_ctx:
                     _priors_for_ctx = None
                 break
-
-    # Reconcile with the deprecated top-level kwarg.  Two values =
-    # ambiguous; one of either = use it.  ``w_prior`` is the legacy
-    # path and emits a DeprecationWarning when used.
-    if _w_prior_from_priors is not None and w_prior is not None:
-        raise ValueError(
-            "W-shrinkage prior was specified both via "
-            "`priors={'loadings': ...}` (preferred) and the legacy "
-            "`w_prior=` kwarg.  Pass it only via the priors dict; "
-            "`w_prior=` is retained for backward compatibility but "
-            "is deprecated."
-        )
-    if w_prior is not None:
-        _log.warning(
-            "`w_prior=` kwarg is deprecated; pass the W-shrinkage "
-            "prior inside the priors dict as "
-            "`priors={'loadings': {'type': '...', ...}}` instead. "
-            "Both routes resolve to the same internal plumbing."
-        )
-        _effective_w_prior = w_prior
-    else:
-        _effective_w_prior = _w_prior_from_priors
 
     # -- Pack all named arguments into FitContext for stage consumption --------
     ctx = FitContext(
