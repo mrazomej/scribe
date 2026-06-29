@@ -305,7 +305,10 @@ df = de.to_dataframe(tau=np.log(2.0), target_pefp=0.05, metrics="all")
 
 The returned object is a standard `ScribeEmpiricalDEResults`, so `gene_level`,
 `to_dataframe`, lfsr/PEFP, the biological metrics, and the
-`scribe.viz.plot_de_*` plots all work unchanged (including `mode="bio"`).
+`scribe.viz.plot_de_*` plots all work unchanged (including `mode="bio"`). Those
+plots are also reachable through the object-oriented accessor on any DE results
+object — e.g. `de.viz.plot_de_volcano()` — which binds `de` for you (see the
+[Results guide](results.md#visualization)).
 
 Useful keyword arguments:
 
