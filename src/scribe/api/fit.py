@@ -166,6 +166,16 @@ def fit(
     # biophysical rationale, and ``ModelConfig.correlate_other_column``
     # for the per-model wiring status.
     correlate_other_column: bool = False,
+    # Hierarchical gene-gene correlation across donors for the correlation
+    # models (pln / nbln / lnm).  ``None`` (default) fits a single shared
+    # low-rank covariance Σ = W Wᵀ + diag(d).  ``"program_scales"`` shares the
+    # loadings ``W`` across donors while learning a *relative* per-donor
+    # program-activity vector ``s_d`` with a hierarchical sum-to-zero prior,
+    # inducing the donor-specific covariance Σ_d = W diag(s_d²) Wᵀ + diag(d).
+    # Requires a donor grouping (``hierarchy=``/``dataset_key=``, so
+    # ``n_datasets >= 2``).  See ``ModelConfig.correlation_hierarchy`` and
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-hierarchical-correlation.
+    correlation_hierarchy: Optional[str] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
@@ -1118,6 +1128,7 @@ def fit(
             d_mode=d_mode,
             alr_reference_idx=alr_reference_idx,
             correlate_other_column=correlate_other_column,
+            correlation_hierarchy=correlation_hierarchy,
             mixture_params=mixture_params,
             guide_rank=guide_rank,
             joint_params=joint_params,
