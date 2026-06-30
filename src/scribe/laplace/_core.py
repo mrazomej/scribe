@@ -81,6 +81,25 @@ class CoreResultsMixin:
         """
         return self.program_activity
 
+    def get_gene_mean_per_dataset(self):
+        """Return the per-donor frozen gene means ``mu^(d)`` (step 4b).
+
+        Populated only when the hierarchical-marginal cascade froze a
+        per-donor mean (a hierarchical independent-gene SVI source passed
+        via ``informative_priors_from=`` with ``"mu"`` in
+        ``informative_priors_freeze``); ``None`` otherwise.
+
+        Returns
+        -------
+        jnp.ndarray or None
+            Shape ``(n_datasets, G)`` in the NBLN log-rate coordinate.
+            Row ``d`` is dataset ``d``'s per-gene latent prior mean and
+            aligns with the target leaf indexing (``dataset_indices``).
+            :meth:`get_mu` returns the donor-pooled per-gene mean; this
+            method exposes the unpooled per-donor table.
+        """
+        return self.gene_mean_per_dataset
+
     def get_sigma(self) -> jnp.ndarray:
         """Return prior covariance ``Σ = W Wᵀ + diag(d)``.
 

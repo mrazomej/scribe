@@ -213,6 +213,13 @@ class LaplaceRunResult:
     # "diverged on main fit" from "still diverged after rescue".
     pre_rescue_grad_norms: Optional[jnp.ndarray] = None
     rescued_cell_mask: Optional[jnp.ndarray] = None
+    # Per-donor frozen mean table (step 4b).  ``(n_datasets, G)`` log-rate
+    # means when the hierarchical-marginal cascade froze a per-donor
+    # ``mu^(d)``; ``None`` otherwise.  ``globals["mu"]`` is pooled to
+    # ``(G,)`` for the standard accessors (the per-cell means already
+    # live in ``x_loc``), so this field carries the unpooled table for
+    # ``ScribeLaplaceResults.gene_mean_per_dataset``.
+    gene_mean_per_dataset: Optional[jnp.ndarray] = None
 
 
 @dataclass

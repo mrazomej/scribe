@@ -1052,6 +1052,70 @@ nbln_grad_split_batch_percellW = jax.vmap(
     in_axes=(0, 0, 0, None, 0, None, None, 0, 0),
 )
 
+# ---------------------------------------------------------------------
+# Per-cell-W AND per-cell-mu twins (``_percellWmu``)
+# ---------------------------------------------------------------------
+#
+# The per-donor *marginal* cascade (step 4b) freezes a leaf-level mean
+# matrix ``mu`` of shape ``(D, G)`` rather than a single pooled ``(G,)``
+# vector, so each cell ``c`` carries its own prior mean
+# ``mu^{(σ(c))}`` (gathered to a ``(N, G)`` per-cell tensor). The latent
+# prior is ``x_c ~ N(mu^{(σ(c))}, Σ_{σ(c)})``, so the per-cell Newton step
+# and its gradient depend on the per-cell ``mu``.
+#
+# Exactly as for ``W`` above, the underlying *per-cell* functions already
+# accept a single ``(G,)`` ``mu`` -- they are vmapped over the cell axis.
+# So the only change is to flip ``mu``'s ``in_axes`` entry from ``None``
+# (shared/broadcast) to ``0`` (mapped over cells), on top of the per-cell
+# ``W`` flip. The per-cell math is byte-identical; broadcasting a shared
+# ``(G,)`` ``mu`` to ``(N, G)`` and mapping it here reproduces the
+# shared-``mu`` ``_percellW`` result bit-for-bit.
+#
+# The log-det(−H) kernels do NOT depend on ``mu`` (the prior Hessian
+# ``Σ^{-1}`` is ``mu``-independent and the likelihood curvature depends on
+# ``x``, not ``mu``), so the ``_percellW`` log-det twins above are reused
+# verbatim for the per-cell-mu path -- no ``_percellWmu`` log-det variant
+# is needed. (Legacy / absolute-``x`` layout only, mirroring ``_percellW``.)
+
+# No-capture, x-only Newton. Call:
+#   (latent_init, counts, mu, W, d, r, n_newton, damping, max_step)
+#   -> mu idx 2, W idx 3 both mapped over cells.
+laplace_newton_batch_x_only_percellWmu = jax.vmap(
+    laplace_newton_loop_x_only,
+    in_axes=(0, 0, 0, 0, None, None, None, None, None),
+)
+
+# Frozen-eta, x-only-with-offset Newton. Call:
+#   (latent_init, counts, mu, W, d, r, eta_offset, n_newton, damping, max_step)
+laplace_newton_batch_x_only_offset_percellWmu = jax.vmap(
+    laplace_newton_loop_x_only_offset,
+    in_axes=(0, 0, 0, 0, None, None, 0, None, None, None),
+)
+
+# Soft-eta, joint (x, η) Newton. Call:
+#   (latent_init, eta_init, counts, mu, W, d, r, eta_anchor, sigma_eta,
+#    n_newton, damping, max_step)  -> mu idx 3, W idx 4.
+laplace_newton_batch_percellWmu = jax.vmap(
+    laplace_newton_loop,
+    in_axes=(0, 0, 0, 0, 0, None, None, 0, 0, None, None, None),
+)
+
+# Gradient-norm twins. Calls:
+#   x_only:        (x, counts, mu, W, d, r)
+#   x_only_offset: (x, counts, mu, W, d, r, eta_offset)
+#   joint split:   (x, eta, counts, mu, W, d, r, eta_anchor, sigma_eta)
+nbln_grad_x_only_norm_batch_percellWmu = jax.vmap(
+    _nbln_grad_x_only_norm, in_axes=(0, 0, 0, 0, None, None)
+)
+nbln_grad_x_only_offset_norm_batch_percellWmu = jax.vmap(
+    _nbln_grad_x_only_offset_norm,
+    in_axes=(0, 0, 0, 0, None, None, 0),
+)
+nbln_grad_split_batch_percellWmu = jax.vmap(
+    _nbln_grad_split_with_eta,
+    in_axes=(0, 0, 0, 0, 0, None, None, 0, 0),
+)
+
 
 # =====================================================================
 # Decoupled-layout kernels (`_other` excluded from Σ, Commit 2b)

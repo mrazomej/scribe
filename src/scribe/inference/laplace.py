@@ -305,6 +305,9 @@ def _run_laplace_inference(
             mu_scale=mu_scale_val,
             program_activity=program_activity_val,
             program_scale_tau=program_scale_tau_val,
+            gene_mean_per_dataset=getattr(
+                run_result, "gene_mean_per_dataset", None
+            ),
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,

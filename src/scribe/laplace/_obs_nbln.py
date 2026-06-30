@@ -85,6 +85,12 @@ from ._newton_nbln import (
     nbln_grad_split_batch_percellW,
     nbln_grad_x_only_norm_batch_percellW,
     nbln_grad_x_only_offset_norm_batch_percellW,
+    laplace_newton_batch_percellWmu,
+    laplace_newton_batch_x_only_percellWmu,
+    laplace_newton_batch_x_only_offset_percellWmu,
+    nbln_grad_split_batch_percellWmu,
+    nbln_grad_x_only_norm_batch_percellWmu,
+    nbln_grad_x_only_offset_norm_batch_percellWmu,
 )
 from ..models.components.program_scales import (
     program_scales_from_raw,
@@ -338,6 +344,45 @@ class NBLNObservationModel(LaplaceObservationModel):
         self._frozen_params = frozenset(freeze_params)
         self._freeze_values = freeze_values if freeze_values is not None else {}
 
+        # --- Per-donor frozen mu (step 4b) -------------------------------
+        # The hierarchical-marginal cascade freezes a *leaf-level* mean
+        # matrix ``mu`` of shape ``(D, G)`` (one row per dataset/donor)
+        # rather than a single pooled ``(G,)`` vector.  Each cell ``c``
+        # then uses its donor's prior mean ``mu^{(σ(c))}`` via a per-cell
+        # gather on ``self._dataset_indices`` -- the exact mechanism the
+        # correlation hierarchy already uses for the program scales.  We
+        # detect the per-donor layout from the frozen value's rank.
+        self._mu_per_donor = False
+        if "mu" in self._frozen_params:
+            _mu_loc = jnp.asarray(self._freeze_values["mu"]["loc"])
+            if _mu_loc.ndim == 2:
+                # Per-donor mu requires the per-cell donor index AND, in
+                # v1, the correlation hierarchy (so the per-cell-W Newton
+                # path is active and the kernels already vmap over cells).
+                if self._dataset_indices is None:
+                    raise ValueError(
+                        "Per-donor frozen mu has shape "
+                        f"{tuple(_mu_loc.shape)} (D, G) but no "
+                        "dataset_indices were provided; the per-cell mu "
+                        "gather needs the donor assignment of each cell."
+                    )
+                if not self._hier_active:
+                    raise NotImplementedError(
+                        "Per-donor frozen mu (shape (D, G)) is supported "
+                        "in v1 only together with "
+                        'correlation_hierarchy="program_scales" (the '
+                        "per-cell-W Newton path).  Pool the cascade mean "
+                        "to (G,), or enable the correlation hierarchy."
+                    )
+                if int(_mu_loc.shape[0]) != self._n_datasets:
+                    raise ValueError(
+                        "Per-donor frozen mu has "
+                        f"{int(_mu_loc.shape[0])} rows but the fit has "
+                        f"n_datasets={self._n_datasets}; the row order "
+                        "must match the target leaf indexing."
+                    )
+                self._mu_per_donor = True
+
     # --- Identity --------------------------------------------------------
 
     @property
@@ -415,7 +460,10 @@ class NBLNObservationModel(LaplaceObservationModel):
         # `mu` lives in the OBSERVATION-layer axis (G_obs,) under BOTH
         # layouts — it is the prior centre / baseline per-gene log-mean
         # that the NB likelihood consumes for every gene including
-        # `_other`.  Shape is unchanged from today.
+        # `_other`.  Shape is (G_obs,) in the usual case; when the
+        # hierarchical-marginal cascade freezes a per-donor mean it is
+        # (D, G_obs) (one row per dataset), gathered per cell in loss_fn /
+        # final_sweep via ``self._dataset_indices`` (see ``_mu_per_donor``).
         if "mu" in self._frozen_params:
             mu_init = jnp.asarray(
                 self._freeze_values["mu"]["loc"], dtype=jnp.float32
@@ -688,6 +736,14 @@ class NBLNObservationModel(LaplaceObservationModel):
         d_sg = jax.lax.stop_gradient(d)
         r_sg = jax.lax.stop_gradient(r)
 
+        # Per-cell mean for the Newton/grad-norm kernels and the MVN-prior
+        # diff.  Defaults to the shared ``(G,)`` mu; overridden to a
+        # per-cell ``(B, G)`` gather in the per-donor-frozen-mu branch
+        # below.  ``mu_cell_live`` is None unless per-donor (signals the
+        # broadcast path for the MVN diff).
+        mu_newton = mu_sg
+        mu_cell_live = None
+
         # --- Per-donor correlation hierarchy: per-cell effective loadings ----
         # When the hierarchy is active, each cell's prior covariance uses its
         # donor's effective loadings ``W_eff,{σ(c)} = W·diag(s_{σ(c)})``. We
@@ -721,6 +777,25 @@ class NBLNObservationModel(LaplaceObservationModel):
             _gn_x_only = nbln_grad_x_only_norm_batch_percellW
             _gn_x_only_offset = nbln_grad_x_only_offset_norm_batch_percellW
             _gn_joint = nbln_grad_split_batch_percellW
+            # Per-donor frozen mu (step 4b): each cell's latent prior mean
+            # is mu^{(σ(c))}.  Gather to a per-cell ``(B, G)`` tensor and
+            # switch the Newton + grad-norm kernels to their per-cell-mu
+            # twins (the log-det twins above are mu-free and reused as-is).
+            # When mu is pooled, ``mu_newton`` stays the shared ``(G,)``
+            # vector and ``mu_cell_live`` is None (broadcast path below).
+            if self._mu_per_donor:
+                mu_cell_live = mu[ds_batch]          # (B, G), gradient-bearing
+                mu_newton = mu_sg[ds_batch]          # (B, G), stop-grad
+                _nt_x_only = laplace_newton_batch_x_only_percellWmu
+                _nt_x_only_offset = (
+                    laplace_newton_batch_x_only_offset_percellWmu
+                )
+                _nt_joint = laplace_newton_batch_percellWmu
+                _gn_x_only = nbln_grad_x_only_norm_batch_percellWmu
+                _gn_x_only_offset = (
+                    nbln_grad_x_only_offset_norm_batch_percellWmu
+                )
+                _gn_joint = nbln_grad_split_batch_percellWmu
         else:
             W_newton, W_logdet = W_sg, W
             _woodbury_quad = _woodbury_quadform
@@ -781,7 +856,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_new, _gn, _ = _nt_x_only_offset(
                     latent_init_sg,
                     counts_batch,
-                    mu_sg,
+                    mu_newton,
                     W_newton,
                     d_sg,
                     r_sg,
@@ -808,7 +883,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 gn_x = _gn_x_only_offset(
                     x_new,
                     counts_batch,
-                    mu_sg,
+                    mu_newton,
                     W_newton,
                     d_sg,
                     r_sg,
@@ -850,7 +925,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                     latent_init_sg,
                     eta_init_sg,
                     counts_batch,
-                    mu_sg,
+                    mu_newton,
                     W_newton,
                     d_sg,
                     r_sg,
@@ -871,7 +946,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                     x_new,
                     eta_new,
                     counts_batch,
-                    mu_sg,
+                    mu_newton,
                     W_newton,
                     d_sg,
                     r_sg,
@@ -907,7 +982,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_new, _gn, _ = _nt_x_only(
                     latent_init_sg,
                     counts_batch,
-                    mu_sg,
+                    mu_newton,
                     W_newton,
                     d_sg,
                     r_sg,
@@ -921,7 +996,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                     x_new, None, counts_batch, r, W_logdet, d, 1.0
                 )
                 gn_x = _gn_x_only(
-                    x_new, counts_batch, mu_sg, W_newton, d_sg, r_sg
+                    x_new, counts_batch, mu_newton, W_newton, d_sg, r_sg
                 )
             gn_blocks = {"x": gn_x}
 
@@ -979,8 +1054,13 @@ class NBLNObservationModel(LaplaceObservationModel):
             diff = x_new  # x_dev_new, already zero-centred
             G = int(_layout.G_kept)
         else:
-            diff = x_new - mu[None, :]
-            G = mu.shape[0]
+            # ``mu_cell_live`` is a per-cell ``(B, G)`` mean when mu is
+            # frozen per donor; otherwise broadcast the shared ``(G,)``.
+            if mu_cell_live is not None:
+                diff = x_new - mu_cell_live
+            else:
+                diff = x_new - mu[None, :]
+            G = int(mu.shape[-1])
         # ``_woodbury_quad``/``_woodbury_logdet`` + ``W_logdet`` are the shared
         # helpers (+ shared W) when the hierarchy is off, and the per-cell-W
         # twins (+ per-cell W_eff_live) when it is on -- so each cell's MVN
@@ -1097,6 +1177,11 @@ class NBLNObservationModel(LaplaceObservationModel):
         d = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
         r = jax.lax.stop_gradient(self._pos_forward(params_full["r_loc"]))
 
+        # Per-cell mean for the Newton kernels.  Defaults to the shared
+        # ``(G,)`` mu; gathered to a full-data per-cell ``(N, G)`` tensor
+        # when mu is frozen per donor (mirrors ``mu_newton`` in loss_fn).
+        mu_fs = mu
+
         # Per-donor correlation hierarchy: per-cell effective loadings for the
         # full-data final sweep (mirrors loss_fn). All inputs are stop-grad
         # here, so we fold s into a single per-cell ``(N, G, k)`` tensor and
@@ -1114,6 +1199,15 @@ class NBLNObservationModel(LaplaceObservationModel):
             _fs_nt_x_only = laplace_newton_batch_x_only_percellW
             _fs_nt_x_only_offset = laplace_newton_batch_x_only_offset_percellW
             _fs_nt_joint = laplace_newton_batch_percellW
+            # Per-donor frozen mu: gather each cell's prior mean and use
+            # the per-cell-mu Newton twins (mirrors loss_fn).
+            if self._mu_per_donor:
+                mu_fs = mu[_ds_fs]  # (N, G)
+                _fs_nt_x_only = laplace_newton_batch_x_only_percellWmu
+                _fs_nt_x_only_offset = (
+                    laplace_newton_batch_x_only_offset_percellWmu
+                )
+                _fs_nt_joint = laplace_newton_batch_percellWmu
         else:
             W_fs = W
             _fs_nt_x_only = laplace_newton_batch_x_only
@@ -1144,7 +1238,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_final, gn_final, _ = _fs_nt_x_only_offset(
                     latent_loc,
                     count_data,
-                    mu,
+                    mu_fs,
                     W_fs,
                     d,
                     r,
@@ -1171,7 +1265,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                     latent_loc,
                     eta_loc,
                     count_data,
-                    mu,
+                    mu_fs,
                     W_fs,
                     d,
                     r,
@@ -1191,7 +1285,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_final, gn_final, _ = _fs_nt_x_only(
                     latent_loc,
                     count_data,
-                    mu,
+                    mu_fs,
                     W_fs,
                     d,
                     r,
@@ -1714,6 +1808,30 @@ class NBLNObservationModel(LaplaceObservationModel):
             **strategy_diag,
         }
 
+        # --- Per-donor frozen mu: pool for the standard accessors --------
+        # The per-cell solve used each donor's mean ``mu^{(σ(c))}`` (so the
+        # per-cell ``x_loc`` already encodes it).  Every downstream
+        # accessor / PPC path expects a single ``(G,)`` ``globals["mu"]``,
+        # so we pool the ``(D, G)`` frozen table to its per-gene mean and
+        # surface the unpooled table separately on the result.  ``mu`` is
+        # frozen here, so pooling does not perturb any learned quantity.
+        gene_mean_per_dataset = None
+        if self._mu_per_donor:
+            _mu_dg = jnp.asarray(params_full["mu"])  # (D, G)
+            gene_mean_per_dataset = _mu_dg
+            _mu_pooled = jnp.mean(_mu_dg, axis=0)  # (G,)
+            params_full = {**params_full, "mu": _mu_pooled}
+            # Pool the global-uncertainty mu fields to (G,) too: ``mu_loc``
+            # is the per-donor table, ``mu_scale`` a NaN freeze sentinel.
+            if global_uncertainty:
+                global_uncertainty = dict(global_uncertainty)
+                for _k in ("mu_loc", "mu_scale"):
+                    _v = global_uncertainty.get(_k)
+                    if _v is not None and jnp.asarray(_v).ndim == 2:
+                        global_uncertainty[_k] = jnp.mean(
+                            jnp.asarray(_v), axis=0
+                        )
+
         return LaplaceRunResult(
             globals=params_full,
             x_loc=final.latent_loc,
@@ -1744,4 +1862,5 @@ class NBLNObservationModel(LaplaceObservationModel):
                 final, "pre_rescue_grad_norms", None
             ),
             rescued_cell_mask=getattr(final, "rescued_cell_mask", None),
+            gene_mean_per_dataset=gene_mean_per_dataset,
         )

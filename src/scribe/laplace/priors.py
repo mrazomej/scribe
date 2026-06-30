@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -897,6 +897,33 @@ def priors_from_results(
         f"{sorted(samples.keys())}"
     )
 
+    # --- Hierarchical source: pool the dataset axis -------------------
+    # A multi-dataset (hierarchical) SVI source returns per-donor samples
+    # for the gene-level marginals: ``r``/``mu`` come back as ``(S, D, G)``
+    # rather than ``(S, G)``.  The soft cascade is a *population* anchor
+    # (the per-donor structure is consumed by the freeze path), so we
+    # collapse the dataset axis by averaging.  Detect it as the middle dim
+    # of an ``(S, D, G)`` array whose trailing dim is the gene axis.
+    def _pool_dataset_axis(arr: jnp.ndarray, name: str) -> jnp.ndarray:
+        arr = jnp.asarray(arr)
+        if arr.ndim == 3 and int(arr.shape[-1]) == int(target_n_genes):
+            if _subset_active:
+                raise NotImplementedError(
+                    "Subset-aware soft cascade from a hierarchical "
+                    f"(multi-dataset) source is unsupported ({name} carries "
+                    "a per-donor axis); use equal source/target gene panels."
+                )
+            _say(
+                f"  Pooling hierarchical source {name!r} over its "
+                f"{int(arr.shape[1])}-dataset axis for the population prior."
+            )
+            return jnp.mean(arr, axis=1)
+        return arr
+
+    for _pk in ("r", "mu"):
+        if _pk in samples:
+            samples[_pk] = _pool_dataset_axis(samples[_pk], _pk)
+
     # --- Capture-mode detection ---------------------------------------
     capture_mode = _detect_capture_mode(samples)
     _say(f"Detected capture mode: {capture_mode!r}")
@@ -1441,6 +1468,268 @@ def freeze_values_from_results(
     _say(
         f"Built freeze-values bundle: keys={sorted(freeze_values.keys())}, "
         f"requested={list(freeze_params)!r}, identity_method={identity_method!r}."
+    )
+    return freeze_values
+
+
+def freeze_values_hier_from_results(
+    results: Any,
+    target_positive_transform: str,
+    target_n_genes: int,
+    target_n_cells: int,
+    target_leaf_labels: Sequence[str],
+    target_n_datasets: int,
+    target_gene_names: Optional[np.ndarray] = None,
+    target_gene_mask: Optional[np.ndarray] = None,
+    source_counts: Optional[jnp.ndarray] = None,
+    freeze_params: Tuple[str, ...] = ("r", "mu"),
+    map_method: Optional[str] = None,
+    verbose: bool = True,
+) -> Dict[str, Dict[str, jnp.ndarray]]:
+    """Extract a **per-donor** freeze bundle from a hierarchical SVI source.
+
+    The single-dataset :func:`freeze_values_from_results` produces a pooled
+    ``(G,)`` mean ``mu``.  When the cascade source is itself a *hierarchical*
+    (multi-dataset) independent-gene fit — and the NBLN-Laplace target is
+    grouped with the per-donor correlation hierarchy — each dataset has its
+    own leaf-level mean.  This extractor reconstructs the **leaf-level mean
+    matrix** ``mu^(d)`` of shape ``(D, G)`` (one row per target dataset, in
+    the NBLN log-rate coordinate) so the obs model can freeze each cell's
+    prior mean ``mu^{(σ(c))}`` via a per-cell gather (see
+    :class:`NBLNObservationModel` ``_mu_per_donor``).
+
+    A hierarchical SVI fit already exposes its leaf means directly: its
+    ``get_map()["mu"]`` is ``(D_src, G)`` (the additive hierarchy is
+    reconstructed at sample time).  This function aligns the source's leaf
+    rows to the **target** leaf ordering by label, log-transforms the NB
+    mean to the NBLN log-rate, and delegates the pooled ``r`` / per-cell
+    ``eta`` freezes to :func:`freeze_values_from_results` unchanged.
+
+    Parameters
+    ----------
+    results
+        Hierarchical Scribe SVI results object (``model_config`` must carry
+        a ``grouping_spec`` with ``leaf_labels``).
+    target_positive_transform : {"exp", "softplus"}
+        Resolved from the target ``model_config.positive_transform``; used
+        only for the delegated ``r`` coordinate.
+    target_n_genes, target_n_cells : int
+        Target dataset shape — checked against the source.
+    target_leaf_labels : Sequence[str]
+        The target fit's leaf labels in leaf-index order (row ``d`` of the
+        returned ``mu`` corresponds to ``target_leaf_labels[d]``, i.e. to
+        the cells whose ``dataset_indices == d``).
+    target_n_datasets : int
+        Number of target datasets ``D``; must equal
+        ``len(target_leaf_labels)`` and the returned ``mu`` row count.
+    target_gene_names, target_gene_mask : optional
+        Forwarded to gene-identity verification.
+    source_counts : optional
+        Target count matrix, forwarded for amortized-capture SVI sources.
+    freeze_params : Tuple[str, ...], default ("r", "mu")
+        Which parameters to freeze.  ``"mu"`` is extracted per donor here;
+        any of ``{"r", "eta"}`` are delegated to
+        :func:`freeze_values_from_results` (pooled / per-cell as usual).
+    map_method : optional
+        Forwarded to ``get_map`` (Jacobian-corrected MAP selector).
+    verbose : bool
+        Whether to print user-facing progress messages.
+
+    Returns
+    -------
+    Dict[str, Dict[str, jnp.ndarray]]
+        Per-parameter ``{"loc": ...}`` dicts.  ``freeze_values["mu"]["loc"]``
+        is ``(D, G)`` in log-rate coordinates; ``r`` is ``(G,)`` and ``eta``
+        is ``(N,)`` exactly as in the single-dataset extractor.
+
+    Raises
+    ------
+    ValueError
+        On a non-hierarchical source, a source/target leaf-label mismatch,
+        or a mu-shape mismatch.
+    NotImplementedError
+        When the target gene panel is a strict subset of the source
+        (subset-aware aggregation is not defined per donor in v1).
+    """
+
+    def _say(msg: str) -> None:
+        if verbose:
+            logger.info(msg)
+
+    if "mu" not in freeze_params:
+        # Nothing per-donor to do; fall back to the pooled extractor.
+        return freeze_values_from_results(
+            results,
+            target_positive_transform=target_positive_transform,
+            target_n_genes=target_n_genes,
+            target_n_cells=target_n_cells,
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+            source_counts=source_counts,
+            freeze_params=freeze_params,
+            map_method=map_method,
+            verbose=verbose,
+        )
+
+    target_leaf_labels = [str(x) for x in target_leaf_labels]
+    if len(target_leaf_labels) != int(target_n_datasets):
+        raise ValueError(
+            f"target_leaf_labels has {len(target_leaf_labels)} entries but "
+            f"target_n_datasets={int(target_n_datasets)}."
+        )
+
+    # --- Gene identity: per-donor mu requires equal gene panels in v1 ----
+    strict_var_name_verified, identity_method, subset_info = (
+        _check_gene_identity(
+            results=results,
+            target_n_genes=int(target_n_genes),
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+        )
+    )
+    if subset_info.is_subset and not subset_info.is_equal:
+        raise NotImplementedError(
+            "Per-donor mu cascade requires equal source/target gene panels; "
+            "subset-aware aggregation of the trailing '_other' column is not "
+            "defined per donor in v1.  Use matching gene panels, or pool the "
+            "cascade mean to (G,)."
+        )
+    _say(
+        f"Hierarchical per-donor mu cascade: gene identity via "
+        f"{identity_method!r}."
+    )
+
+    # --- Source leaf labels (the row order of the source mu) -------------
+    src_mc = getattr(results, "model_config", None)
+    src_gs = getattr(src_mc, "grouping_spec", None)
+    if src_gs is None or getattr(src_gs, "leaf_labels", None) is None:
+        raise ValueError(
+            "freeze_values_hier_from_results requires a hierarchical SVI "
+            "source (model_config.grouping_spec.leaf_labels), but none was "
+            "found.  Use freeze_values_from_results for a pooled source."
+        )
+    src_labels = [str(x) for x in src_gs.leaf_labels]
+
+    # --- Amortized-capture-aware get_map() (mirrors the pooled path) -----
+    _map_kwargs = {} if map_method is None else {"map_method": map_method}
+    if _is_amortized_capture(results):
+        svi_source_counts = getattr(results, "_original_counts", None)
+        if svi_source_counts is None:
+            svi_source_counts = getattr(results, "counts", None)
+        if svi_source_counts is not None:
+            counts_for_encoder = svi_source_counts
+        elif strict_var_name_verified and source_counts is not None:
+            counts_for_encoder = source_counts
+        else:
+            raise ValueError(
+                "Hierarchical SVI source uses amortized capture but its "
+                "encoder training counts could not be reconstructed for "
+                "get_map(); store counts on the SVI result or pass "
+                "source_counts with strict var-name identity."
+            )
+        map_dict = results.get_map(
+            counts=counts_for_encoder, verbose=False, **_map_kwargs
+        )
+    else:
+        map_dict = results.get_map(verbose=False, **_map_kwargs)
+
+    if "mu" not in map_dict:
+        raise ValueError(
+            "freeze_params requests 'mu' but the SVI source's get_map() "
+            f"has no 'mu' key.  Available keys: {sorted(map_dict.keys())}."
+        )
+    mu_src = jnp.asarray(map_dict["mu"])
+    if mu_src.ndim != 2:
+        raise ValueError(
+            f"Hierarchical per-donor mu cascade expected a 2-D (D, G) source "
+            f"mu MAP, got shape {tuple(mu_src.shape)}.  A 1-D source mu means "
+            "the SVI fit is not hierarchical on the mean — use "
+            "freeze_values_from_results."
+        )
+    if int(mu_src.shape[0]) != len(src_labels):
+        raise ValueError(
+            f"Source mu has {int(mu_src.shape[0])} rows but the source "
+            f"grouping has {len(src_labels)} leaves; cannot align."
+        )
+    if int(mu_src.shape[1]) != int(target_n_genes):
+        raise ValueError(
+            f"Source mu has {int(mu_src.shape[1])} genes but the target "
+            f"expects {int(target_n_genes)} (equal panels required)."
+        )
+
+    # --- Align source leaf rows to the target leaf ordering by label -----
+    try:
+        perm = [src_labels.index(lbl) for lbl in target_leaf_labels]
+    except ValueError as exc:
+        missing = [lbl for lbl in target_leaf_labels if lbl not in src_labels]
+        raise ValueError(
+            "Target leaf label(s) absent from the hierarchical SVI source: "
+            f"{missing}.  Source leaves: {src_labels}; target leaves: "
+            f"{target_leaf_labels}.  Per-donor mu freeze needs the source to "
+            "cover every target dataset (matching labels)."
+        ) from exc
+    mu_aligned = mu_src[jnp.asarray(perm, dtype=jnp.int32)]  # (D_tgt, G)
+    # NB mean (positive) -> NBLN log-rate (real), same map as the pooled path.
+    mu_log = jnp.log(jnp.maximum(mu_aligned, 1e-8))
+
+    freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
+
+    # --- r: pool a per-donor (D, G) dispersion to a shared (G,) ----------
+    # NBLN shares the dispersion ``r`` across datasets (see the hierarchy
+    # section of paper/_nb_lognormal.qmd), so a hierarchical source's
+    # per-donor ``r`` is pooled by averaging over donors before the freeze.
+    # A 1-D source ``r`` (pooled-dispersion fit) passes through unchanged.
+    if "r" in freeze_params:
+        if "r" not in map_dict:
+            raise ValueError(
+                "freeze_params requests 'r' but the SVI source's get_map() "
+                f"has no 'r' key.  Available keys: {sorted(map_dict.keys())}."
+            )
+        r_pos = jnp.asarray(map_dict["r"])
+        if r_pos.ndim == 2:
+            if int(r_pos.shape[-1]) != int(target_n_genes):
+                raise ValueError(
+                    f"Source per-donor r has shape {tuple(r_pos.shape)}; "
+                    f"expected (D, {int(target_n_genes)})."
+                )
+            _say(
+                f"  Pooling per-donor r over {int(r_pos.shape[0])} donors "
+                "-> shared (G,)."
+            )
+            r_pos = jnp.mean(r_pos, axis=0)
+        if r_pos.ndim != 1 or int(r_pos.shape[0]) != int(target_n_genes):
+            raise ValueError(
+                f"Source r MAP has shape {tuple(jnp.shape(r_pos))}; expected "
+                f"({int(target_n_genes)},)."
+            )
+        pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+        freeze_values["r"] = {"loc": pos_inverse(jnp.maximum(r_pos, 1e-8))}
+
+    # --- eta: per-cell capture, no dataset axis -> delegate unchanged ----
+    if "eta" in freeze_params:
+        eta_fv = freeze_values_from_results(
+            results,
+            target_positive_transform=target_positive_transform,
+            target_n_genes=target_n_genes,
+            target_n_cells=target_n_cells,
+            target_gene_names=target_gene_names,
+            target_gene_mask=target_gene_mask,
+            source_counts=source_counts,
+            freeze_params=("eta",),
+            map_method=map_method,
+            verbose=verbose,
+        )
+        freeze_values["eta"] = eta_fv["eta"]
+
+    freeze_values["mu"] = {"loc": mu_log}
+    _say(
+        f"  Extracted per-donor mu freeze value (D={int(target_n_datasets)}, "
+        f"G={int(target_n_genes)}, transform='log'); aligned source leaves "
+        f"{src_labels} -> target order {target_leaf_labels}."
+    )
+    _say(
+        f"Built per-donor freeze bundle: keys={sorted(freeze_values.keys())}, "
+        f"requested={list(freeze_params)!r}."
     )
     return freeze_values
 
