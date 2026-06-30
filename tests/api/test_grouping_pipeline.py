@@ -179,6 +179,48 @@ def test_unified_priors_route_into_flat_plumbing():
     assert ctx.priors == {"dispersion": (2.0, 0.5)}
 
 
+def test_unified_priors_interaction_slope_routes_into_grouping():
+    # Regression guard for the random-slope path: the unified `priors` dict must
+    # accept an INTERACTION key (the ":"-joined operands) and route its family
+    # onto the interaction factor. Before interaction names were registered as
+    # declared levels, this raised "not a declared grouping level", so a random
+    # slope on the mean (perturbation:sample) was unreachable via the public API.
+    from scribe import GroupLevel
+
+    sample = ["D1", "D1", "D2", "D2"]
+    treatment = ["control", "drug", "control", "drug"]
+    adata = _make_adata(sample, treatment)
+    ctx = FitContext(
+        counts=adata,
+        kwargs=dict(
+            hierarchy=[
+                GroupLevel(name="treatment", effect_type="fixed"),
+                GroupLevel(name="sample"),
+            ],
+            interactions=[("treatment", "sample")],
+        ),
+        priors={
+            "mean_expression": {
+                "treatment": "gaussian",
+                "sample": "horseshoe",
+                "treatment:sample": "horseshoe",  # per-donor random slope
+            },
+        },
+    )
+    process_data_and_datasets(ctx)
+
+    by_name = {f.name: f for f in ctx.grouping_spec.factors}
+    # The interaction factor exists and carries the slope's mean-expression
+    # family (so the factory builds the horseshoe-shrunk mu interaction effect).
+    assert "treatment:sample" in by_name
+    inter = by_name["treatment:sample"]
+    assert inter.kind == "interaction"
+    assert inter.family("expression") == "horseshoe"
+    # Base factors still resolve unchanged (no regression).
+    assert by_name["treatment"].family("expression") == "gaussian"
+    assert by_name["sample"].family("expression") == "horseshoe"
+
+
 def test_unified_priors_dispersion_routes_into_grouping():
     sample = ["D1", "D1", "D2", "D2"]
     treatment = ["control", "drug", "control", "drug"]

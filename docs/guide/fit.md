@@ -810,7 +810,7 @@ results = scribe.fit(
 |----------|------|-------|
 | `dataset_key=["treatment", "sample"]` | list of columns | crossed factors, all random |
 | `hierarchy=[GroupLevel(...), ...]` | structured | per-factor `effect_type` (`"random"` \| `"fixed"`), `nested_in`, `fixed_scale` |
-| `interactions=[("treatment", "sample")]` | list of tuples | add an interaction (random) effect between factors |
+| `interactions=[("treatment", "sample")]` | list of tuples | add an interaction (random) effect between factors; set its prior family with the `":"`-joined key in `priors` (e.g. `priors={"mean_expression": {"treatment:sample": "horseshoe"}}`) for a random slope on the mean |
 | `priors={"mean_expression": {factor: family}}` | `{level: family}` dict | per-factor prior family; add a `"base"` key for the gene-level prior |
 
 `GroupLevel(name, nested_in=None, effect_type="random", fixed_scale=None)`. Only

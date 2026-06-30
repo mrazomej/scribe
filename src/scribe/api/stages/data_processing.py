@@ -102,6 +102,15 @@ def process_data_and_datasets(ctx: FitContext) -> None:
         _decl_levels.extend(dataset_key)
     elif isinstance(dataset_key, str):
         _decl_levels.append(dataset_key)
+    # Interaction factors are valid hierarchy levels too: their canonical name is
+    # the ``":"``-joined operands (e.g. ``"perturbation:sample"``), and the
+    # downstream resolver (``resolve_dataset_prior_dict``) already sees the full
+    # factor-name set including interactions. Register those names here so the
+    # unified ``priors`` dict can carry a per-interaction family (a random slope)
+    # rather than rejecting the key as an unknown level.
+    if interactions:
+        for _ops in interactions:
+            _decl_levels.append(":".join(_ops))
     _decl_levels = tuple(dict.fromkeys(_decl_levels))
 
     # The capture-scaling hierarchy FAMILY lives in the unified priors dict
