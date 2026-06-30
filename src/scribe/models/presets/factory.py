@@ -70,6 +70,7 @@ from ..components.vae_components import (
     LNMGaussianEncoder,
     MultiHeadDecoder,
 )
+from ..components.covariate_embedding import CovariateSpec
 from ..config import GuideFamilyConfig, ModelConfig
 from ..config.enums import HierarchicalPriorType, InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
@@ -448,6 +449,34 @@ def _create_vae_model(
         encoder_kwargs["standardize_std"] = jnp.asarray(
             _stand_std, dtype=jnp.float32
         )
+
+    # Leaf-covariate conditioning for the per-donor correlation hierarchy
+    # (NB-LogNormal Rung 1).  When the per-donor program-activity hierarchy is
+    # active, the per-leaf prior ``z_c ~ N(0, diag(s_{leaf}^2))`` makes the
+    # true posterior leaf-dependent, so we condition the (amortized, shared)
+    # ENCODER on the leaf index through a small learned embedding.  This closes
+    # the amortization-gap mis-specification a leaf-blind encoder would incur.
+    #
+    # The DECODER is deliberately left leaf-free: feeding the leaf to the
+    # decoder would let it absorb between-leaf program-activity differences,
+    # competing with ``s_d`` and breaking the Rung-1 / common-principal-
+    # components identifiability (the donor effect must live solely in ``s_d``,
+    # not in a leaf-specific decoding map).  See
+    # ``scribe.models.components.program_scales`` and
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-hierarchical-correlation.
+    if (
+        getattr(model_config, "correlation_hierarchy", None) == "program_scales"
+        and (model_config.n_datasets or 0) >= 2
+    ):
+        _n_leaves = int(model_config.n_datasets)
+        encoder_kwargs["covariate_specs"] = [
+            CovariateSpec(
+                name="leaf",
+                num_categories=_n_leaves,
+                embedding_dim=min(8, _n_leaves),
+            )
+        ]
+
     encoder = encoder_cls(**encoder_kwargs)
 
     # 3. Build decoder (LNM may override hidden dims to () for a linear map).

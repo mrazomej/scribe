@@ -50,6 +50,7 @@ def _setup_grouped_amortized_latent(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray],
     batch_idx: Optional[jnp.ndarray],
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Run VAE encoder, build guide dist from latent_spec, sample z.
 
@@ -60,6 +61,35 @@ def _setup_grouped_amortized_latent(
     When ``counts`` is ``None`` (e.g. prior predictive sampling or
     posterior parameter extraction without observed data), the encoder
     is bypassed and ``z`` is sampled from the latent prior instead.
+
+    Leaf-covariate conditioning
+    ---------------------------
+    When the encoder was built with ``covariate_specs`` (the per-donor
+    correlation hierarchy, NB-LogNormal Rung 1) and ``dataset_indices`` is
+    provided, the per-cell leaf index is gathered for the current batch and
+    passed to the encoder as a categorical covariate. The encoder embeds it
+    and concatenates it to its hidden representation, so the amortized
+    posterior ``q(z_c)`` can adapt to each leaf's prior. Only the *encoder*
+    receives this covariate; the decoder is left leaf-free by design.
+
+    Parameters
+    ----------
+    guide : VAELatentGuide
+        Guide carrying the encoder + latent spec.
+    dims : dict
+        Dimension sizes (needs ``"n_genes"``).
+    model_config : ModelConfig
+        Model configuration.
+    counts : Optional[jnp.ndarray]
+        Full count matrix (subset by ``batch_idx``), or ``None`` for the
+        prior-fallback path.
+    batch_idx : Optional[jnp.ndarray]
+        Mini-batch cell indices; ``None`` for full-data.
+    dataset_indices : Optional[jnp.ndarray], default=None
+        Per-cell leaf/donor index, gathered to the batch and fed to the
+        encoder as the ``"leaf"`` covariate when the encoder is
+        covariate-aware. ``None`` for non-grouped fits (encoder runs without
+        a covariate, exactly as before).
     """
     if guide.encoder is None or guide.latent_spec is None:
         raise ValueError(
@@ -71,13 +101,31 @@ def _setup_grouped_amortized_latent(
         return numpyro.sample(guide.latent_spec.sample_site, prior_dist)
 
     n_genes = dims["n_genes"]
-    net = flax_module(
-        "vae_encoder",
-        guide.encoder,
-        input_shape=(n_genes,),
-    )
     data = counts if batch_idx is None else counts[batch_idx]
-    loc, log_scale = net(data)
+
+    # Build the per-batch leaf covariate only when the encoder was constructed
+    # covariate-aware (hierarchy active) AND we have the per-cell leaf indices.
+    cov_specs = getattr(guide.encoder, "covariate_specs", None)
+    covariates = None
+    if cov_specs and dataset_indices is not None:
+        leaf = (
+            dataset_indices
+            if batch_idx is None
+            else dataset_indices[batch_idx]
+        )
+        # Single categorical covariate keyed by the spec's name ("leaf").
+        covariates = {cov_specs[0].name: leaf}
+
+    if covariates is not None:
+        # Initialize the encoder (incl. the covariate embedding tables) with
+        # the real (data, covariates) so the embedding params are created,
+        # then apply with the same signature.
+        net = flax_module("vae_encoder", guide.encoder, data, covariates)
+        loc, log_scale = net(data, covariates)
+    else:
+        net = flax_module("vae_encoder", guide.encoder, input_shape=(n_genes,))
+        loc, log_scale = net(data)
+
     var_params = {"loc": loc, "log_scale": log_scale}
     guide_dist = guide.latent_spec.make_guide_dist(var_params)
     return numpyro.sample(guide.latent_spec.sample_site, guide_dist)

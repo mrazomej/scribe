@@ -360,6 +360,7 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=None,
+                                dataset_indices=dataset_indices,
                             )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()
@@ -385,6 +386,7 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=idx,
+                                dataset_indices=dataset_indices,
                             )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()
