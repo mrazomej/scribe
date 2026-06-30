@@ -1151,16 +1151,19 @@ analogue.
 
 **Caveats.**
 
-- **Layout.** The correlation hierarchy (`s_d`) runs on **both layouts**:
-  the legacy (`correlate_other_column=True`) and decoupled
-  (`correlate_other_column=False` with a pooled `_other` column) paths each
-  have per-cell-`W` Newton/log-det/grad twins (`*_percellW` /
-  `*_decoupled_percellW`).  The **per-donor `μ^(d)` cascade**, however, needs
-  equal source/target gene panels, so it is supported on the legacy layout
-  only — freezing per-donor `μ^(d)` together with `gene_coverage<1` (which
-  pools genes into `_other`, the decoupled trigger) raises a clear
-  `NotImplementedError`.  Pool the cascade mean to `(G,)`, or keep the full
-  gene panel, to combine per-donor means with the decoupled layout.
+- **Layout.** The correlation hierarchy (`s_d`) AND the per-donor `μ^(d)`
+  cascade run on **both layouts**: the legacy (`correlate_other_column=True`)
+  and decoupled (`correlate_other_column=False`, `_other` excluded from `W`)
+  paths each have per-cell-`W`/`mu` Newton/log-det/grad twins (`*_percellW` /
+  `*_percellWmu` and their `*_decoupled_*` counterparts).  The per-donor
+  `μ^(d)` cascade's only requirement is **equal source/target gene panels** —
+  the extractor aligns source leaf means to target genes, so the SVI source
+  and the Laplace target must share the same gene set.  In practice that means
+  using the **same `gene_coverage`** on both (so they pool the same genes into
+  the same `_other` column); the `_other` *mean* is then frozen like any gene
+  while staying out of `W` under decoupling.  Mismatched panels (e.g. a
+  full-panel source against a `gene_coverage<1` target) raise a clear
+  `NotImplementedError` — pool the cascade mean to `(G,)` or match the panels.
 - **Few datasets.** With small `n_datasets`, `τ_s` is weakly identified
   (generic to hierarchical models with few groups); the hierarchy still
   provides adaptive shrinkage but cannot resolve rich between-donor

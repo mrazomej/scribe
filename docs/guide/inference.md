@@ -370,7 +370,7 @@ results = scribe.fit(
 | `informative_priors_from` | `None` | Cascade source for NBLN (Phase-1 soft cascade) — see [NBLN workflow](#nbln-cascade--freeze--shrinkage-workflow) below |
 | `informative_priors_freeze` | `("r", "eta")` | Cascade freeze parameters for NBLN (Phase-2). Accepts either internal short names (`"r"`, `"mu"`, `"eta"`) or their descriptive aliases (`"dispersion"`, `"expression"`/`"mean_expression"`, `"capture_efficiency"`). Both forms work identically. |
 | `priors={"loadings": ...}` | `None` | Loadings-matrix shrinkage strategy spec for PLN/NBLN (Phase-3) |
-| `correlation_hierarchy` | `None` | `"program_scales"` for grouped fits: share \(W\) across datasets, learn per-dataset activity \(s_d\). Requires `dataset_key`/`hierarchy` with \(\ge 2\) datasets and (v1) the legacy layout `correlate_other_column=True`. See [hierarchical correlation](#hierarchical-gene-gene-correlation-across-datasets) below |
+| `correlation_hierarchy` | `None` | `"program_scales"` for grouped fits: share \(W\) across datasets, learn per-dataset activity \(s_d\). Requires `dataset_key`/`hierarchy` with \(\ge 2\) datasets; runs on both the legacy and decoupled (`correlate_other_column=False`) layouts. See [hierarchical correlation](#hierarchical-gene-gene-correlation-across-datasets) below |
 
 ### Laplace configuration
 

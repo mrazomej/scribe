@@ -598,7 +598,15 @@ class NBLNObservationModel(LaplaceObservationModel):
             if _layout.decoupled:
                 kept_idx_jnp = jnp.asarray(_layout.kept_idx)
                 _log_u_kept = jnp.log(count_data[:, kept_idx_jnp] + 1.0)
-                _mu_kept = mu_init[kept_idx_jnp]
+                # ``mu_init`` is ``(G_obs,)`` normally, or ``(D, G_obs)`` for
+                # the per-donor marginal cascade.  This is only the Newton
+                # STARTING point (the solve refines with each cell's true
+                # ``mu^{(σ(c))}``), so a donor-pooled mean is sufficient and
+                # avoids gathering the wrong axis.
+                _mu_obs = (
+                    mu_init if mu_init.ndim == 1 else jnp.mean(mu_init, axis=0)
+                )
+                _mu_kept = _mu_obs[kept_idx_jnp]
                 _base = _log_u_kept - _mu_kept[None, :]
                 if _with_eta_offset is not None:
                     _base = _base + _with_eta_offset[:, None]

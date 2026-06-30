@@ -215,15 +215,93 @@ def test_e2e_per_donor_mu_cascade():
     assert s is not None and np.asarray(s).shape == (D, 2)
 
 
-def test_per_donor_mu_decoupled_subset_unsupported():
-    """Per-donor mu freeze on the decoupled (gene-subset) layout fails clearly.
+def _sparse_multi_donor_adata(seed=0, N=300, G=14, D=3, n_sparse=3):
+    """Multi-donor counts with a few low-coverage genes (pooled by gene_coverage).
 
-    The decoupled layout exists only when low-coverage genes are pooled into
-    an ``_other`` column — i.e. the target panel is a strict subset of the
-    source.  Per-donor ``mu^(d)`` reconstruction has no per-donor ``_other``
-    aggregation rule in v1, so the cascade must raise a clear error rather
-    than mis-align genes.  (The correlation hierarchy ``s_d`` itself DOES run
-    on the decoupled layout — see test_decoupled_layout_hierarchy_runs.)
+    The last ``n_sparse`` genes are made sparse (~5% of cells expressing) so a
+    ``gene_coverage < 1`` filter pools them into the trailing ``_other`` column
+    — the condition that triggers the decoupled layout.
+    """
+    rng = np.random.default_rng(seed)
+    W = rng.normal(size=(G, 2)) * 0.4
+    donor = rng.integers(0, D, size=N)
+    donor_base = rng.normal(size=(D, G)) * 0.5 + 1.2
+    z = rng.normal(size=(N, 2))
+    counts = rng.poisson(np.exp(donor_base[donor] + z @ W.T)).astype(np.float32)
+    counts[:, -n_sparse:] = counts[:, -n_sparse:] * (
+        rng.random((N, n_sparse)) < 0.05
+    )
+    adata = ad.AnnData(counts)
+    adata.obs["donor"] = donor.astype(str)
+    return adata
+
+
+def test_e2e_per_donor_mu_cascade_decoupled_equal_panels():
+    """Per-donor mu cascade on the DECOUPLED layout with matching gene panels.
+
+    The decoupled layout (``correlate_other_column=False``) keeps the pooled
+    ``_other`` pseudo-gene OUT of the low-rank covariance ``W`` — the
+    biologically-correct choice (``W`` should not waste capacity correlating an
+    aggregate).  The per-donor ``mu^(d)`` cascade needs the SVI source and the
+    Laplace target to share a gene panel; using the SAME ``gene_coverage`` on
+    both makes the panels equal (same kept genes + same ``_other``), so the
+    cascade succeeds while the covariance stays decoupled.  This is the
+    equal-panel companion to ``test_per_donor_mu_panel_mismatch_unsupported``.
+    """
+    adata = _sparse_multi_donor_adata(seed=5)
+    D = adata.obs["donor"].nunique()
+    GC = 0.8  # pools the sparse genes into `_other`
+    svi = scribe.fit(
+        adata,
+        model="nbvcp",
+        parameterization="standard",
+        unconstrained=True,
+        dataset_key="donor",
+        priors={"mean_expression": {"donor": "gaussian"}},
+        inference_method="svi",
+        n_steps=300,
+        seed=0,
+        gene_coverage=GC,
+    )
+    res = scribe.fit(
+        adata,
+        model="nbln",
+        inference_method="laplace",
+        correlation_hierarchy="program_scales",
+        correlate_other_column=False,   # DECOUPLED: `_other` excluded from W
+        gene_coverage=GC,               # MATCH the source -> equal panels
+        dataset_key="donor",
+        informative_priors_from=svi,
+        informative_priors_freeze=("r", "mu"),
+        latent_dim=2,
+        n_steps=150,
+        seed=0,
+    )
+    # Decoupled layout is active.
+    assert res.axis_layout.decoupled
+    # Per-donor mu^(d) on the full observation axis (kept genes + `_other`).
+    per_donor = np.asarray(res.get_gene_mean_per_dataset())
+    g_obs = per_donor.shape[1]
+    assert per_donor.shape[0] == D
+    # `_other` is EXCLUDED from W: W lives on the kept-gene axis (G_kept < G_obs).
+    g_kept = np.asarray(res.get_W()).shape[0]
+    assert g_kept < g_obs, (g_kept, g_obs)
+    # The correlation hierarchy still fits per-leaf program activity.
+    s = res.get_program_activity()
+    assert s is not None and np.asarray(s).shape == (D, 2)
+
+
+def test_per_donor_mu_panel_mismatch_unsupported():
+    """Per-donor mu freeze fails clearly when source/target panels differ.
+
+    The per-donor ``mu^(d)`` extractor aligns source leaf means to target genes
+    and requires EQUAL gene panels.  Here the SVI source uses the full panel
+    while the Laplace target pools genes with ``gene_coverage=0.5`` (a strict
+    subset + ``_other``), so there is no per-gene correspondence — the cascade
+    must raise a clear error rather than mis-align.  This is a PANEL-MISMATCH
+    constraint, NOT a layout one: with matching ``gene_coverage`` the same
+    decoupled fit succeeds (see
+    ``test_e2e_per_donor_mu_cascade_decoupled_equal_panels``).
     """
     adata = _multi_donor_adata(seed=5)
     svi = scribe.fit(
@@ -243,8 +321,8 @@ def test_per_donor_mu_decoupled_subset_unsupported():
             model="nbln",
             inference_method="laplace",
             correlation_hierarchy="program_scales",
-            correlate_other_column=False,   # decoupled when `_other` present
-            gene_coverage=0.5,              # pools genes into `_other` (subset)
+            correlate_other_column=False,
+            gene_coverage=0.5,              # subset panel != full-panel source
             dataset_key="donor",
             informative_priors_from=svi,
             informative_priors_freeze=("r", "mu"),
