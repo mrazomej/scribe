@@ -1546,6 +1546,46 @@ map_legacy = results.get_map(map_method="transform")
 - **Core**: Uses normalization and preprocessing utilities
 - **Viz**: Results can be visualized using the visualization module
 
+## Hierarchical gene-gene correlation (correlation models)
+
+The correlation models (`pln` / `nbln` / `lnm`) fit a low-rank latent
+covariance `Σ = W Wᵀ + diag(d)` via the amortized VAE path. On a grouped
+(multi-donor) fit, the SVI path supports a **per-donor program-activity
+hierarchy** — first-class, not a disposable pre-check for Laplace:
+
+```python
+results = scribe.fit(
+    adata, model="nbln", inference_method="vae",
+    parameterization="count_lognormal",
+    hierarchy=[scribe.GroupLevel("perturbation"), scribe.GroupLevel("sample")],
+    correlation_hierarchy="program_scales",   # per-donor program activity s_d
+    latent_dim=16, n_steps=30_000,
+)
+```
+
+What it does:
+
+- The shared decoder `W` defines the regulatory programs; each leaf
+  (donor / donor×condition) gets a relative activity vector `s_d` with a
+  hierarchical, sum-to-zero, non-centered prior (one scalar between-leaf
+  scale `τ_s`). The K-dim VAE latent prior becomes leaf-specific,
+  `z_c ~ Normal(0, diag(s_{σ(c)}²))`, so the shared decoder *induces* the
+  donor-specific log-rate covariance `W diag(s_d²) Wᵀ + diag(d)`.
+- The `s_d` sampling lives in `models/components/program_scales.py`
+  (`sample_program_scales` + the matching mean-field `guide_program_scales`),
+  the **same** sum-to-zero gauge transform the Laplace path uses.
+- **Leaf-covariate encoder.** When the hierarchy is active, the (shared)
+  encoder is conditioned on the leaf index via a learned embedding so the
+  amortized posterior can adapt to each leaf's prior. The **decoder stays
+  leaf-free** by design — feeding the leaf to the decoder would let it
+  absorb between-leaf program activity and break the identifiability that
+  makes `s_d` interpretable.
+
+The theory (gauge, identifiability, the `W_eff = W·diag(s_d)` collapse) is in
+[`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+§`sec-nbln-hierarchical-correlation`; the exact-inference counterpart is the
+Laplace path documented in [`../laplace/README.md`](../laplace/README.md).
+
 ## Dependencies
 
 - **NumPyro**: Core SVI implementation and probabilistic programming

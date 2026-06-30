@@ -2812,6 +2812,199 @@ diagonal $d_\text{other}$ term, restoring overdispersion at the cost
 of giving the pooled aggregate a biophysically meaningless row in
 $\underline{\underline{W}}$.
 
+## Hierarchical gene-gene correlation across datasets {#sec-nbln-hierarchical-correlation}
+
+The low-rank covariance of @sec-nbln-low-rank is a *single* global
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ shared by every
+cell. When the data span several **datasets**—donors, conditions, or batches,
+the grouped setting of @sec-hierarchical-datasets—a single covariance forces
+one regulatory-correlation structure on all of them. The multi-dataset
+framework of @sec-hierarchical-datasets hierarchically links *marginal*
+parameters (the per-gene mean $\tilde\mu_g$, the dispersion $r_g$); here we
+develop the analogous hierarchy for the *correlation* itself.
+
+The biological premise is **common regulatory programs with dataset-specific
+activity**: the columns of $\underline{\underline{W}}$—the $K$ regulatory
+modules of @sec-nbln-low-rank—are the same set of programs in every dataset,
+but each dataset engages them to a different degree. This is the single-cell
+analogue of Flury's *common principal components* model, and it is what lets a
+panel of donors *inform one another's* correlation structure rather than each
+being estimated in isolation.
+
+### The model {#sec-nbln-hier-model}
+
+Let $\sigma(c) \in \{1, \ldots, D\}$ be the (observed, fixed) dataset
+assignment of cell $c$, as in @eq-hdata-assignment. Each dataset $d$ carries a
+vector of **relative program activities**
+$\underline{s}_d \in \mathbb{R}_{>0}^{K}$, and the per-cell latent regulatory
+state is drawn from a dataset-specific covariance:
+
+$$
+\underline{z}_c \sim
+\mathcal{N}\!\left(\underline{0},\ \underline{\underline{\Sigma}}_{\sigma(c)}\right),
+\qquad
+\underline{\underline{\Sigma}}_d =
+\underline{\underline{W}}\,\text{diag}(\underline{s}_d^{\,2})\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d}).
+$${#eq-nbln-hier-sigma}
+
+The loadings $\underline{\underline{W}}$, the residual diagonal
+$\underline{d}$, and (following the empirical stability of $r_g$ noted in
+@sec-nbln-compromise) the dispersion $\underline{r}$ are **shared** across
+datasets; only $\underline{s}_d$ varies. Setting $\underline{s}_d =
+\underline{1}$ for all $d$ recovers the single global
+$\underline{\underline{\Sigma}}$ of @eq-nbln-low-rank, so this is a strict
+generalization.
+
+Writing $s_{d,k}$ for the activity of program $k$ in dataset $d$, the
+covariance contribution of program $k$ is scaled by $s_{d,k}^2$: a dataset with
+$s_{d,k} > 1$ shows *more* cell-to-cell covariation along regulatory module
+$k$ than the population, and $s_{d,k} < 1$ less. The shared
+$\text{diag}(\underline{d})$ keeps the gene-intrinsic residual noise common
+across datasets, so all between-dataset differences in correlation are carried
+by the $K$ program activities.
+
+### Hierarchical prior with a sum-to-zero gauge {#sec-nbln-hier-prior}
+
+We place a hierarchical, non-centered prior on the log-activities, mirroring
+the NCP construction of @eq-hdata-mu-ncp but on the $D \times K$ activity grid:
+
+$$
+\log s_{d,k} = \tau_s\,\tilde\varepsilon_{d,k},
+\qquad
+\tilde\varepsilon_{\cdot,k} = \varepsilon_{\cdot,k}
+   - \frac{1}{D}\sum_{d'} \varepsilon_{d',k},
+\qquad
+\varepsilon_{d,k} \sim \mathcal{N}(0, 1),
+$${#eq-nbln-hier-ncp}
+
+with a single shared scale $\tau_s \sim \text{Softplus}(\mathcal{N}(\mu_\tau,
+\sigma_\tau))$ governing the magnitude of between-dataset program-activity
+variation (the direct analogue of $\tau_\mu$ in @eq-hdata-tau-prior). The
+centering of $\varepsilon_{\cdot,k}$ enforces the **sum-to-zero constraint**
+
+$$
+\frac{1}{D}\sum_{d=1}^{D} \log s_{d,k} = 0
+\quad\Longleftrightarrow\quad
+\prod_{d=1}^{D} s_{d,k} = 1
+\qquad \text{for every program } k,
+$${#eq-nbln-hier-gauge}
+
+so each program's activities have geometric mean $1$ across datasets:
+$\underline{s}_d$ is purely *relative* activity, and the absolute scale of
+program $k$ lives entirely in the column norm
+$\lVert \underline{\underline{W}}_{:,k} \rVert$. As shown next, this constraint
+is not cosmetic—it is what makes the parameterization identifiable.
+
+### Identifiability: rotation and scale gauges {#sec-nbln-hier-identifiability}
+
+@sec-nbln-low-rank noted that the single-dataset $\underline{\underline{W}}$ is
+identified only up to an orthogonal rotation. The hierarchical model has *two*
+gauge freedoms, and the datasets and the constraint @eq-nbln-hier-gauge
+between them fix both.
+
+**Rotation gauge.** $\underline{\underline{\Sigma}}_d$ is invariant under
+$\underline{\underline{W}} \mapsto \underline{\underline{W}}\,
+\underline{\underline{R}}$ for $\underline{\underline{R}} \in \mathcal{O}(K)$
+only if $\underline{\underline{R}}\,\text{diag}(\underline{s}_d^{\,2})\,
+\underline{\underline{R}}^\top = \text{diag}(\underline{s}_d^{\,2})$
+*simultaneously for all $d$*. When the datasets' activity profiles are
+**sufficiently distinct** (the diagonal matrices $\text{diag}(\underline{s}_d^{\,2})$
+have, jointly, no repeated structure), the only $\underline{\underline{R}}$
+satisfying this is a signed permutation. Thus dataset heterogeneity
+*generically breaks the rotation gauge*—the very non-identifiability that
+afflicts the single-dataset model. This is the Flury common-principal-components
+identifiability result: shared eigenvectors become identifiable precisely
+because different groups weight them differently.
+
+**Scale gauge.** Independently of rotation, $\underline{\underline{\Sigma}}_d$
+is invariant under the per-column rescaling
+
+$$
+\underline{\underline{W}}_{:,k} \mapsto a_k\,\underline{\underline{W}}_{:,k},
+\qquad
+s_{d,k} \mapsto s_{d,k}/a_k
+\qquad (a_k > 0),
+$${#eq-nbln-hier-scale-gauge}
+
+for any positive $a_1, \ldots, a_K$, since
+$(a_k s_{d,k}/a_k)^2 = s_{d,k}^2$. Dataset heterogeneity does **not** break
+this gauge. The sum-to-zero constraint @eq-nbln-hier-gauge does: under
+@eq-nbln-hier-scale-gauge the constraint shifts by $-\log a_k$, so enforcing
+$\frac{1}{D}\sum_d \log s_{d,k} = 0$ forces $a_k = 1$. Centering the
+log-activities therefore removes the scale gauge exactly, pinning the column
+magnitude to $\underline{\underline{W}}$ and leaving $\underline{s}_d$ as
+identified relative activity.
+
+**Residual gauges.** Column sign ($\underline{\underline{W}}_{:,k} \mapsto
+-\underline{\underline{W}}_{:,k}$) and column permutation remain, exactly as
+for the single-dataset $\underline{\underline{W}}$; they are resolved at
+interpretation time (e.g. by ordering programs by variance and fixing a sign
+convention) and do not affect $\underline{\underline{\Sigma}}_d$, the
+likelihood, or any downstream gauge-invariant quantity. The rigid
+translation gauge between $\log\tilde\mu_g$ and $z_{cg}$ (@sec-nbln-low-rank)
+is unchanged by the hierarchy and is handled by the same zero-mean prior and
+gene-centered projection.
+
+### Preserved low-rank structure {#sec-nbln-hier-collapse}
+
+The hierarchy adds no new linear-algebra cost. Define the **effective
+loadings** of dataset $d$ by scaling each column of $\underline{\underline{W}}$
+by the corresponding activity,
+
+$$
+\underline{\underline{W}}_{\text{eff},d}
+  = \underline{\underline{W}}\,\text{diag}(\underline{s}_d),
+$${#eq-nbln-hier-weff}
+
+so that, since
+$\text{diag}(\underline{s}_d)\,\text{diag}(\underline{s}_d) =
+\text{diag}(\underline{s}_d^{\,2})$,
+
+$$
+\underline{\underline{\Sigma}}_d =
+\underline{\underline{W}}_{\text{eff},d}\,
+\underline{\underline{W}}_{\text{eff},d}^\top + \text{diag}(\underline{d}).
+$${#eq-nbln-hier-collapse}
+
+Each $\underline{\underline{\Sigma}}_d$ is therefore *exactly* the
+low-rank-plus-diagonal form of @eq-nbln-low-rank, with
+$\underline{\underline{W}}_{\text{eff},d}$ in place of
+$\underline{\underline{W}}$ and the *same* diagonal $\underline{d}$. Every
+result derived for the single-dataset model carries over verbatim per cell:
+the Woodbury inverse @eq-nbln-woodbury and log-determinant @eq-nbln-logdet, the
+KL term @eq-nbln-kl, and the per-cell Newton/Laplace machinery of
+@sec-nbln-elbo all apply with $\underline{\underline{W}}_{\text{eff},\sigma(c)}$
+substituted for $\underline{\underline{W}}$. The cost of inference is unchanged
+up to the trivial column scaling @eq-nbln-hier-weff; the activities
+$\underline{s}_d$ enter the objective only through the per-cell prior quadratic
+form and the log-determinant of $\underline{\underline{\Sigma}}_{\sigma(c)}$,
+which is precisely how they receive their gradient.
+
+### Relationship to the marginal hierarchy {#sec-nbln-hier-relationship}
+
+The multi-dataset construction of @sec-hierarchical-datasets and the
+correlation hierarchy here are complementary and compose. The former links the
+*marginal* per-gene parameters—the mean $\tilde\mu_g^{(d)}$ and, optionally,
+the dispersion $r_g^{(d)}$—through log-additive dataset effects, capturing how
+much each gene's *expression level* shifts between datasets. The latter links
+the *second-order* structure—how genes co-vary—through the program activities
+$\underline{s}_d$, capturing how much each regulatory *module* shifts. A joint
+model can carry both: dataset-specific marginals from the additive hierarchy of
+@eq-hdata-mu-ncp on top of dataset-specific correlation from
+@eq-nbln-hier-sigma, with the shared $\underline{\underline{W}}$ and the
+sum-to-zero gauge ensuring the program activities remain interpretable as
+relative engagement of a common regulatory architecture.
+
+A practical caveat inherited from any hierarchical model with few groups
+(@sec-hierarchical-datasets): with a small number of datasets $D$, the
+between-dataset scale $\tau_s$ is weakly identified, and the $K$ relative
+activities per dataset cannot resolve fine differences in correlation
+eigenstructure. The model is most informative in exactly the regime the
+hierarchy is designed for—pooling strength across datasets that share a
+regulatory architecture while letting their program usage differ.
+
 ## Mathematical summary {#sec-nbln-summary}
 
 We collect the key results of this section.

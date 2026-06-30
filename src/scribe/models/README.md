@@ -117,6 +117,17 @@ levels and want total counts to emerge from shared gene-gene correlations
 rather than a separate NB. Use LNM when compositional DE in ALR/CLR
 coordinates is the primary goal.
 
+**Hierarchical gene-gene correlation across donors**: For grouped
+(multi-dataset) fits of the correlation models, the
+`correlation_hierarchy="program_scales"` option keeps the regulatory programs
+(columns of `W`) shared across donors while learning a relative per-donor
+program-activity vector `s_d` (so `Σ_d = W diag(s_d²) Wᵀ + diag(d)`). Supported
+on both the SVI/VAE path and the Laplace path. See
+[`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+§`sec-nbln-hierarchical-correlation` for the theory and
+[`../laplace/README.md`](../laplace/README.md) /
+[`../svi/README.md`](../svi/README.md) for usage.
+
 ## Key Concepts
 
 ### Immutability

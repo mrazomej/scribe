@@ -1461,6 +1461,27 @@ $${#eq-hdata-mf-summary}
 Setting $F = 1$ reduces every expression in this section to the single-dataset hierarchy of
 @sec-hdata-generative.
 
+## Hierarchy on the gene-gene correlation {#sec-hdata-correlation}
+
+Everything in this section hierarchically links **marginal** parameters across
+datasets—the per-gene mean expression $\mu_g^{(d)}$ and, optionally, the
+dispersion $r_g^{(d)}$ and the success probability $p_g^{(d)}$. For the
+gene-gene correlation models (the Negative Binomial-LogNormal of
+@sec-nb-lognormal and its Poisson-LogNormal and Logistic-Normal-Multinomial
+relatives), there is a complementary, *second-order* hierarchy: the per-cell
+latent regulatory state $\underline{z}_c$ carries a low-rank covariance
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ whose columns are
+shared **regulatory programs**, and one can let each dataset engage those
+programs with its own activity. That construction—common loadings
+$\underline{\underline{W}}$ with dataset-specific relative program activities
+$\underline{s}_d$, a sum-to-zero gauge that makes them identifiable, and the
+Flury common-principal-components argument by which dataset heterogeneity
+*breaks* the rotation gauge—is developed in
+@sec-nbln-hierarchical-correlation. The two hierarchies compose: dataset-specific
+marginals from this section on top of dataset-specific correlation from
+@sec-nbln-hierarchical-correlation.
+
 ## Mathematical summary {#sec-hdata-summary}
 
 We collect the key mathematical results of this section for reference.

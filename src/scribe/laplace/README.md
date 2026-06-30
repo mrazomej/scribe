@@ -1066,6 +1066,75 @@ for cross-dataset transfer.
   scope validation, so the explicit no-op config is universally
   accepted (useful for parameterized testing).
 
+## Per-donor correlation hierarchy (`correlation_hierarchy`)
+
+NBLN-Laplace can fit a **hierarchical gene-gene correlation across
+datasets** (donors / conditions / batches): the low-rank loadings `W`
+(the regulatory programs) are shared, while each dataset `d` gets its
+own *relative* program-activity vector `s_d`, inducing a donor-specific
+covariance
+
+```text
+Σ_d = W diag(s_d²) Wᵀ + diag(d)        # d here is the residual diagonal
+```
+
+Enable it on a grouped fit:
+
+```python
+results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",   # turn on the hierarchy
+    correlate_other_column=True,              # legacy layout (see caveat)
+    dataset_key="donor",                       # or hierarchy=[GroupLevel("donor")]
+    latent_dim=16, n_steps=50_000,
+)
+s = results.get_program_activity()   # (n_datasets, K) relative activity s_d
+tau = results.program_scale_tau      # scalar between-dataset scale τ_s
+```
+
+The math (sum-to-zero gauge, the `W_eff = W·diag(s_d)` collapse, the
+common-principal-components identifiability) is documented in
+[`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+§`sec-nbln-hierarchical-correlation`.
+
+How it works internally:
+
+- **`s_d` globals.** Two extra optax globals — `program_scale_raw`
+  `(n_datasets, K)` and a scalar `program_scale_tau_raw` — are added to
+  the params dict in `_obs_nbln.init_state`, initialized at `s = 1`
+  (no between-donor difference). `loss_fn` rebuilds `s` via the shared
+  `program_scales_from_raw` (sum-to-zero centering + softplus + exp), the
+  same transform the SVI path uses, so the gauge has one definition.
+- **Per-cell `W_eff`.** Each cell's donor index (carried on `aux_data`
+  so the minibatch slicer gathers it) selects
+  `W_eff = W·diag(s_{σ(c)})`, which feeds the `_percellW` Newton /
+  log-det / grad-norm twins in `_newton_nbln`. These are the standard
+  per-cell kernels with `W`'s vmap axis mapped over cells; the shared-`W`
+  path is bit-equal when the hierarchy is off.
+- **Gradient on `s_d`.** The activities enter the loss only through the
+  live-`W` terms — the MVN-prior quadratic form / log-det of
+  `Σ_{σ(c)}` and the Laplace `log det(-H)` correction — which is how they
+  are learned. The NCP raw + τ_s softplus-Normal hyperprior are added to
+  `global_prior_lp`.
+
+**Recommended cascade.** As with any NBLN-Laplace fit on low-count data,
+freeze the marginals from a well-identified upstream fit. The
+hierarchy-aware cascade (freezing per-donor `μ^(d)` + pooled `r` from an
+independent-gene *hierarchical* SVI fit) is the robust path for real
+data; see the cascade sections above for the single-dataset analogue.
+
+**Caveats.**
+
+- **Layout.** v1 supports the **legacy layout only**
+  (`correlate_other_column=True`, or any fit with no pooled `_other`
+  column). With `correlate_other_column=False` *and* a pooled `_other`
+  column the fit raises `NotImplementedError` — the decoupled
+  deviation-form per-cell-`W` kernels are a follow-up.
+- **Few datasets.** With small `n_datasets`, `τ_s` is weakly identified
+  (generic to hierarchical models with few groups); the hierarchy still
+  provides adaptive shrinkage but cannot resolve rich between-donor
+  eigenstructure.
+
 ## Jacobian-corrected MAP (`map_method`)
 
 The Laplace approximation stores the posterior as a Gaussian in
