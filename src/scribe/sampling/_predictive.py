@@ -8,6 +8,35 @@ from numpyro.infer import Predictive
 from numpyro.handlers import block, condition
 
 
+def _as_site_set(
+    value: Optional[Union[str, List[str]]],
+) -> Optional[set]:
+    """Normalise a site specifier to a set of site names.
+
+    A bare string is treated as a *single* site name, NOT iterated into its
+    characters — ``set("mu")`` would wrongly yield ``{"m", "u"}``. This is the
+    canonical normaliser shared with :mod:`scribe.svi._posterior_policy` (which
+    imports it from here to respect the ``svi -> sampling`` layering).
+
+    Parameters
+    ----------
+    value : str, list of str, or None
+        ``None`` to mean "no filter" (keep everything); a single site name as a
+        ``str``; or any iterable of site names.
+
+    Returns
+    -------
+    set of str or None
+        ``None`` when *value* is ``None``; ``{value}`` for a ``str``; otherwise
+        ``set(value)``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {value}
+    return {str(v) for v in value}
+
+
 def sample_variational_posterior(
     guide: Callable,
     params: Dict,
@@ -80,6 +109,22 @@ def sample_variational_posterior(
 
     # Combine samples from guide and model
     posterior_samples.update(model_samples)
+
+    # Context-aware site selection. When a keep-set is requested, drop every
+    # site not in it from the MERGED dict. This is a POST-MERGE filter: NumPyro
+    # still computes every deterministic site during the model replay regardless
+    # of ``return_sites`` (it filters post-trace), so this bounds the *stored*
+    # posterior footprint that downstream consumers carry — not the transient
+    # draw-time peak (use ``batch_size`` for that). Filtering here (rather than
+    # via each inner ``Predictive``) is required because the guide pass and model
+    # replay are separate ``Predictive`` calls: only the merged dict sees both
+    # the guide-pass sites (``*_raw``, ``eta_capture``) and the model-pass
+    # deterministics (``r``, ``mu``, ``p_capture``, ``*_effect``, ...).
+    keep = _as_site_set(return_sites)
+    if keep is not None:
+        posterior_samples = {
+            k: v for k, v in posterior_samples.items() if k in keep
+        }
     return posterior_samples
 
 

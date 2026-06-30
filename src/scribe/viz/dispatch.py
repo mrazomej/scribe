@@ -173,9 +173,18 @@ def _get_predictive_samples_for_plot(
     )
     previous_posterior_samples = results.posterior_samples
     previous_predictive_samples = results.predictive_samples
+    # Snapshot the site-aware cache flags too, so they are restored in lock-step
+    # with posterior_samples below. Without this, a prior DE call that narrowed
+    # this result (``_posterior_is_full=False``) would leave the flag stale while
+    # we stash a FRESH FULL draw, and get_predictive_samples' full-cache guard
+    # would raise falsely.
+    previous_is_full = getattr(results, "_posterior_is_full", True)
+    previous_sites = getattr(results, "_posterior_sites", None)
     predictive_samples = None
     try:
-        results.posterior_samples = posterior_samples
+        # A fresh FULL draw (no purpose): mark the cache full via the choke-point
+        # so the get_predictive_samples full-cache guard does not misfire.
+        results._set_posterior_cache(posterior_samples, is_full=True)
         # Forward ``counts`` so LNM-family results trigger
         # conditional PPC (per-cell ``u_T`` fixed at observed
         # library size). For non-LNM models this kwarg is ignored
@@ -188,11 +197,15 @@ def _get_predictive_samples_for_plot(
         )
     finally:
         if store_samples:
-            results.posterior_samples = posterior_samples
+            results._set_posterior_cache(posterior_samples, is_full=True)
             if predictive_samples is not None:
                 results.predictive_samples = predictive_samples
         else:
-            results.posterior_samples = previous_posterior_samples
+            results._set_posterior_cache(
+                previous_posterior_samples,
+                is_full=previous_is_full,
+                sites=previous_sites,
+            )
             results.predictive_samples = previous_predictive_samples
 
     return np.array(predictive_samples)

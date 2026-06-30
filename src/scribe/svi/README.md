@@ -1586,6 +1586,48 @@ The theory (gauge, identifiability, the `W_eff = W·diag(s_d)` collapse) is in
 §`sec-nbln-hierarchical-correlation`; the exact-inference counterpart is the
 Laplace path documented in [`../laplace/README.md`](../laplace/README.md).
 
+## Context-aware posterior sampling (`purpose` / `return_sites`)
+
+`get_posterior_samples()` accepts two opt-in, mutually-complementary arguments
+for selecting *which* posterior sites to keep (both default `None` → keep
+everything, fully back-compatible):
+
+- `purpose`: a named policy resolved by `_posterior_policy.resolve_keep_set`.
+  `"ppc"` / `"all"` (or `None`) keep every site. `"de_paired"` keeps only the
+  empirical-DE concentration/mean contract `{r, p, mu, phi}` (+ `mixing_weights`
+  for mixtures), dropping the per-cell capture (`eta_capture`/`p_capture`/...)
+  and per-factor effect (`*_effect`) tensors DE never reads — the sites that
+  otherwise dominate memory at large `n_samples`. `"de_effect"` keeps a factor's
+  effect/scale site(s) and is DE-internal (it needs a factor name).
+- `return_sites`: an explicit keep-set of *internal* site names (the low-level
+  escape hatch); wins over `purpose`. A bare `str` is one site name.
+
+Narrowing is an **NB-family** optimisation. The DE layer gates it with
+`scribe.de._factors._supports_de_narrowing` (an allowlist of NB roots
+`{nbdm, zinb, nbvcp, zinbvcp, bnb}`); other families bypass narrowing and keep
+the full draw.
+
+### Site-aware cache + the full-cache guard
+
+A narrowed draw stores `_posterior_is_full = False` and `_posterior_sites`
+(the requested keep-set) on the results object; a full draw sets
+`_posterior_is_full = True` / `_posterior_sites = None`. These flags are
+**propagated, not reset**, through every child-view constructor (`get_dataset`,
+`get_component`, gene-subset, `concat`) — resetting them would let a generative
+consumer on a child view silently read a missing site as absent.
+
+Full-generative consumers (those that replay/reconstruct the full model and read
+technical sites) **must not** read a narrowed cache, because NumPyro would
+silently re-sample the missing latents from the prior. They call the shared
+guard `_require_full_posterior_cache(method=...)`, which raises a clear error on
+a narrowed cache: `get_predictive_samples`, `get_posterior_ppc_samples`,
+`get_ppc_samples_biological`, `get_map_ppc_samples_biological`,
+`denoise_counts_posterior`. `get_ppc_samples` instead **re-draws** a full
+posterior (its job is to regenerate). MAP-only consumers
+(`get_map_ppc_samples`, `denoise_counts_map`) read point estimates, not the
+posterior cache, and are unaffected. DE / compositional / normalization
+consumers read only `{r, p, mu, phi}` and work correctly on a narrowed cache.
+
 ## Dependencies
 
 - **NumPyro**: Core SVI implementation and probabilistic programming

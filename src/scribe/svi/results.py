@@ -129,6 +129,21 @@ class ScribeSVIResults(
     n_components: Optional[int] = None
     denoised_counts: Optional[jnp.ndarray] = None
 
+    # Context-aware posterior cache bookkeeping (see _posterior_policy +
+    # _sampling_posterior_predictive.get_posterior_samples). ``_posterior_is_full``
+    # is True when ``posterior_samples`` holds every model site (a normal/full
+    # draw, or no cache yet); it is set False when a narrowed keep-set was stored
+    # (e.g. a ``purpose="de_paired"`` DE draw that drops capture / per-factor
+    # effect sites). ``_posterior_sites`` records the *requested* keep-set
+    # (frozenset of internal site names) for that draw, or None when full. Full-
+    # generative consumers (PPC, denoising, MAP-predictive) must NOT read a
+    # narrowed cache (NumPyro would silently re-sample the missing latents from
+    # the prior); they guard via ``_require_full_posterior_cache``. These MUST be
+    # propagated (not reset) through child-view constructors (get_dataset,
+    # get_component, gene-subset, concat).
+    _posterior_is_full: bool = True
+    _posterior_sites: Optional[frozenset] = None
+
     # Per-dataset cell counts for multi-dataset models.  Set during
     # inference when ``dataset_indices`` is available.  Used by
     # ``get_dataset(d)`` to set the correct ``n_cells`` on the returned
@@ -638,6 +653,23 @@ class ScribeSVIResults(
             else:
                 concat_layouts[key] = layout
 
+        # Site-aware cache metadata for the concatenated result. Full only if
+        # every input was full. Preserve the narrowed keep-set only when all
+        # inputs share the SAME one (so site-aware reuse still works); a
+        # mixed/None set falls back to None, which forces a safe redraw.
+        _in_full = [
+            getattr(res, "_posterior_is_full", True) for res in aligned_results
+        ]
+        _in_sites = [
+            getattr(res, "_posterior_sites", None) for res in aligned_results
+        ]
+        _concat_is_full = all(_in_full)
+        _concat_sites = (
+            _in_sites[0]
+            if _in_sites and all(s == _in_sites[0] for s in _in_sites)
+            else None
+        )
+
         combined = cls(
             params=params,
             loss_history=loss_history,
@@ -656,6 +688,8 @@ class ScribeSVIResults(
             n_components=first.n_components,
             param_layouts=concat_layouts,
             denoised_counts=None,
+            _posterior_is_full=_concat_is_full,
+            _posterior_sites=_concat_sites,
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
             _original_n_genes=_merge_original_n_genes(aligned_results),
@@ -804,6 +838,10 @@ def _reorder_svi_result_genes(
         n_components=result.n_components,
         param_layouts=getattr(result, "param_layouts", None),
         denoised_counts=None,
+        # Propagate (do not reset) the cache-fullness flags so a gene-subset of a
+        # narrowed cache stays narrowed (generative consumers must re-draw).
+        _posterior_is_full=getattr(result, "_posterior_is_full", True),
+        _posterior_sites=getattr(result, "_posterior_sites", None),
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),
         _original_n_genes=getattr(result, "_original_n_genes", None),

@@ -2,7 +2,7 @@
 Posterior and constrained predictive sampling mixin for SVI results.
 """
 
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 import numpy as np
 import jax.numpy as jnp
@@ -11,6 +11,7 @@ import logging
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 from ..core.posterior_matrix import posterior_samples_to_matrix
+from ._posterior_policy import resolve_keep_set, _as_site_set
 
 _log = logging.getLogger(__name__)
 
@@ -259,6 +260,85 @@ def _concat_posterior_chunks(
 class PosteriorPredictiveSamplingMixin:
     """Mixin providing posterior and constrained predictive sampling methods."""
 
+    def _require_full_posterior_cache(self, *, method: str) -> None:
+        """Guard: full-generative consumers must not read a narrowed cache.
+
+        A context-aware DE draw (``purpose="de_*"``) stores only the sites DE
+        reads, dropping per-cell capture and per-factor effect tensors. If a
+        consumer that replays / reconstructs the full generative model — PPC,
+        denoising, MAP-predictive, capture-reading log-likelihood — were to read
+        such a cache, the missing technical sites would be silently treated as
+        absent (e.g. ``"p_capture" in posterior_samples`` is False), so a VCP
+        model would be denoised/predicted as if capture-free, producing wrong
+        output with no error. This raises instead, directing the caller to
+        refresh the cache.
+
+        Defined on this mixin (which is in the MRO of the concrete results
+        class) so the denoising / MAP / biological mixins can call it too.
+
+        This is a no-op for the common case: a full draw, or no cache yet
+        (``posterior_samples is None`` — the consumer draws a fresh full cache).
+        It therefore never fires for existing callers that do not narrow.
+
+        Parameters
+        ----------
+        method : str
+            Name of the calling method, used in the error message.
+
+        Raises
+        ------
+        RuntimeError
+            If ``posterior_samples`` is present but was narrowed for DE
+            (``_posterior_is_full`` is False).
+        """
+        if self.posterior_samples is not None and not getattr(
+            self, "_posterior_is_full", True
+        ):
+            kept = getattr(self, "_posterior_sites", None)
+            kept_str = sorted(kept) if kept is not None else "<unknown>"
+            raise RuntimeError(
+                f"{method} requires a full posterior cache, but the stored "
+                "posterior_samples were narrowed for differential expression "
+                f"(sites kept: {kept_str}); the dropped capture / effect sites "
+                "would otherwise be read as absent. Call get_posterior_samples() "
+                "or get_ppc_samples() to refresh the full posterior first."
+            )
+
+    def _set_posterior_cache(
+        self,
+        samples: Optional[Dict],
+        *,
+        is_full: bool,
+        sites: Optional[set] = None,
+    ) -> None:
+        """Assign ``posterior_samples`` and its cache-fullness flags together.
+
+        Single choke-point that keeps ``posterior_samples`` and its site-aware
+        metadata (``_posterior_is_full`` / ``_posterior_sites``) in lock-step, so
+        a later full-generative consumer's ``_require_full_posterior_cache``
+        guard (and DE's site-aware cache reuse in ``_ensure_posterior_draw``)
+        always read flags consistent with the sites actually cached. ANY code
+        that assigns ``self.posterior_samples`` directly should route through
+        this instead — assigning the field on its own silently desyncs the flags
+        (e.g. stashing a fresh full draw onto a previously DE-narrowed result
+        would otherwise leave ``_posterior_is_full`` False and trip the guard).
+
+        Parameters
+        ----------
+        samples : dict or None
+            The posterior-sample dict to cache; ``None`` clears the cache.
+        is_full : bool
+            Whether ``samples`` holds every model site (``True``) or a narrowed
+            keep-set (``False``). A cleared (``None``) or externally-supplied
+            full draw is ``True``.
+        sites : set of str, optional
+            The requested keep-set for a narrowed draw (stored as a frozenset);
+            ``None`` for a full draw.
+        """
+        self.posterior_samples = samples
+        self._posterior_is_full = bool(is_full)
+        self._posterior_sites = None if sites is None else frozenset(sites)
+
     def _is_concatenated_multi_dataset(self) -> bool:
         """Check if this results object was produced by concatenating
         independent single-dataset fits.
@@ -288,6 +368,8 @@ class PosteriorPredictiveSamplingMixin:
         convert_to_numpy: bool = False,
         counts: Optional[jnp.ndarray] = None,
         descriptive_names: bool = False,
+        purpose: Optional[str] = None,
+        return_sites: Optional[Union[str, List[str]]] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution.
 
@@ -343,6 +425,26 @@ class PosteriorPredictiveSamplingMixin:
             ``p``, ``mu``, ``phi``, ``gate``, ...) to user-friendly
             descriptive names (``dispersion``, ``prob``, ``expression``,
             ``odds``, ``zero_inflation``, ...).
+        purpose : str or None, optional
+            Context-aware site-selection policy resolved by
+            :func:`scribe.svi._posterior_policy.resolve_keep_set`. ``None``
+            (default) keeps every site (back-compat). ``"ppc"`` / ``"all"``
+            also keep everything. ``"de_paired"`` keeps only the
+            empirical-DE concentration/mean sites (``{r, p, mu, phi}`` +
+            ``mixing_weights`` for mixtures), dropping the per-cell capture and
+            per-factor effect tensors that DE does not read. ``"de_effect"`` is
+            DE-internal (it needs a factor name, supplied by the DE layer via
+            ``return_sites``). Narrowing is an **NB-family** optimisation;
+            non-NB callers must not request a ``de_*`` purpose (see
+            :func:`scribe.de._factors._supports_de_narrowing`).
+        return_sites : str, list of str, or None, optional
+            Explicit keep-set of *internal* site names (the low-level escape
+            hatch); wins over ``purpose``. A bare ``str`` is a single site name.
+            When a narrowed keep-set is stored (``store_samples=True``), the
+            result is flagged via ``_posterior_is_full=False`` so full-generative
+            consumers (PPC, denoising, MAP-predictive) re-draw rather than read a
+            site missing from the cache (which NumPyro would silently sample from
+            the prior).
 
         Returns
         -------
@@ -366,6 +468,16 @@ class PosteriorPredictiveSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
+        # Resolve the context-aware keep-set ONCE. ``None`` means keep every
+        # site (back-compat default; also correct for PPC). A narrowed keep-set
+        # drops sites a given consumer does not read (capture / per-factor effect
+        # tensors for DE), bounding the *stored* posterior footprint. The set is
+        # threaded into every draw path below and recorded on the result so the
+        # cache is site-aware (see ``_posterior_is_full`` / ``_posterior_sites``).
+        keep = resolve_keep_set(
+            self.model_config, purpose=purpose, return_sites=return_sites
+        )
+
         # A single full-cell-width draw of ``draw_n`` posterior samples.
         # Concatenated multi-dataset results cannot run ``Predictive`` on the
         # stacked params (the guide was built for single-dataset models), so
@@ -380,12 +492,14 @@ class PosteriorPredictiveSamplingMixin:
                     n_samples=draw_n,
                     batch_size=None,
                     counts=counts,
+                    return_sites=keep,
                 )
             return self._get_posterior_samples_standard(
                 rng_key=draw_key,
                 n_samples=draw_n,
                 batch_size=None,
                 counts=counts,
+                return_sites=keep,
             )
 
         # ``batch_size`` bounds peak device memory by chunking the *sample*
@@ -424,7 +538,16 @@ class PosteriorPredictiveSamplingMixin:
             posterior_samples = _convert_to_numpy(posterior_samples)
 
         if store_samples:
-            self.posterior_samples = posterior_samples
+            # Record cache fullness (via the single choke-point) for site-aware
+            # reuse (`_ensure_posterior_draw`) and the full-cache guard
+            # (`_require_full_posterior_cache`). We store the *requested* keep-set
+            # (intent), not the actual present keys: a parameterization may not
+            # emit every requested name (e.g. no ``phi``), and comparing
+            # actual-vs-requested would wrongly fail a superset reuse check
+            # forever. ``keep is None`` => full draw (every site present).
+            self._set_posterior_cache(
+                posterior_samples, is_full=keep is None, sites=keep
+            )
 
         from ..models.config.parameter_mapping import rename_dict_keys
 
@@ -582,8 +705,15 @@ class PosteriorPredictiveSamplingMixin:
         n_samples: int,
         batch_size: Optional[int],
         counts: Optional[jnp.ndarray],
+        return_sites: Optional[set] = None,
     ) -> Dict:
-        """Standard posterior sampling via NumPyro Predictive."""
+        """Standard posterior sampling via NumPyro Predictive.
+
+        ``return_sites`` (when not ``None``) is a keep-set: the standard path
+        forwards it to ``sample_variational_posterior`` (which filters the merged
+        guide+model dict), and the VAE prior-path applies the same post-merge
+        filter explicitly.
+        """
         model, guide = self._model_and_guide()
 
         # VAE generative prior-path: with no counts, a VAE samples z from the
@@ -731,6 +861,14 @@ class PosteriorPredictiveSamplingMixin:
                 exclude_deterministic=False,
             )
             posterior_samples = predictive(rng_key, **model_args)
+            # Context-aware site selection for the VAE prior-path (which does not
+            # route through sample_variational_posterior). Same post-merge filter
+            # semantics: drop sites not in the keep-set from the stored dict.
+            _keep = _as_site_set(return_sites)
+            if _keep is not None:
+                posterior_samples = {
+                    k: v for k, v in posterior_samples.items() if k in _keep
+                }
         else:
             posterior_samples = sample_variational_posterior(
                 guide,
@@ -740,6 +878,7 @@ class PosteriorPredictiveSamplingMixin:
                 rng_key=rng_key,
                 n_samples=n_samples,
                 counts=counts,
+                return_sites=return_sites,
             )
 
         # Slice full-dim flow samples down to the gene subset.
@@ -764,6 +903,7 @@ class PosteriorPredictiveSamplingMixin:
         n_samples: int,
         batch_size: Optional[int],
         counts: Optional[jnp.ndarray],
+        return_sites: Optional[set] = None,
     ) -> Dict:
         """Posterior sampling for concatenated multi-dataset results.
 
@@ -771,6 +911,11 @@ class PosteriorPredictiveSamplingMixin:
         views where ``Predictive`` works, then re-stacks promoted
         keys along the dataset axis and concatenates cell-specific
         keys along the cell axis.
+
+        ``return_sites`` (a keep-set or ``None``) is forwarded to each
+        per-dataset draw so narrowing is consistent across datasets; the
+        cell-specific concat branch simply does not fire for keys dropped by the
+        keep-set (e.g. capture sites under a ``de_paired`` draw).
         """
         n_datasets = self.model_config.n_datasets
         ds_indices = getattr(self, "_dataset_indices", None)
@@ -797,6 +942,7 @@ class PosteriorPredictiveSamplingMixin:
                 batch_size=batch_size,
                 store_samples=False,
                 counts=ds_counts,
+                return_sites=return_sites,
             )
             per_dataset_samples.append(ds_samples)
 
@@ -853,6 +999,10 @@ class PosteriorPredictiveSamplingMixin:
             Array of predictive count samples; shape
             ``(n_samples, n_cells, n_genes)``.
         """
+        # A narrowed (DE) cache is missing the technical sites this generative
+        # replay needs; NumPyro would silently re-sample them from the prior.
+        self._require_full_posterior_cache(method="get_predictive_samples")
+
         from ..models.config import GuideFamilyConfig
         from ..models.model_registry import get_model_and_guide
 
@@ -1024,8 +1174,13 @@ class PosteriorPredictiveSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
-        # Check if we need to resample parameters
-        need_params = self.posterior_samples is None
+        # Check if we need to resample parameters. Besides "no cache", we also
+        # redraw when the cache was NARROWED for DE (purpose=de_*): PPC needs the
+        # full generative model (capture included), and unlike the low-level
+        # consumers PPC's job is to (re)generate, so a redraw is the friendly fix.
+        need_params = self.posterior_samples is None or not getattr(
+            self, "_posterior_is_full", True
+        )
 
         # Generate posterior samples if needed
         if need_params:

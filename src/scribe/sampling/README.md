@@ -138,3 +138,21 @@ be re-initialized during replay, producing incorrect predictive samples.
      flow prior (`FlowDistribution(flow, N(0, I))`).
    - For non-LNM VAEs without a flow prior, SCRIBE emits a warning that
      `z` is sampled from the uninformative `N(0, I)` prior.
+
+## Context-aware site selection (`return_sites`)
+
+`sample_variational_posterior(..., return_sites=...)` filters the **merged**
+guide+model posterior dict down to a requested keep-set. This is a *post-merge*
+filter: NumPyro still computes every deterministic site during the model replay
+(its own `return_sites` filters post-trace), so this bounds the **stored**
+posterior footprint that downstream consumers carry — not the transient
+draw-time peak (use `batch_size` for that). It is applied at the merge layer
+because the guide pass and the model replay are separate `Predictive` calls;
+only the merged dict sees both guide sites (`*_raw`, `eta_capture`) and model
+deterministics (`r`, `mu`, `p_capture`, `*_effect`, ...).
+
+`return_sites` accepts a single site name (`str`) or an iterable. The shared
+normalizer `_as_site_set` treats a bare string as one site name (`"mu"` →
+`{"mu"}`, never `set("mu")` = `{"m","u"}`) and is the single source of truth
+re-used by `scribe.svi._posterior_policy`. `None` (default) keeps every site,
+so existing callers are unaffected.

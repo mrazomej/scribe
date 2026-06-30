@@ -521,9 +521,10 @@ class MixtureAnalysisMixin:
             )
 
         # Invalidate cached posterior samples — they were drawn from the
-        # old guide and must be regenerated.
+        # old guide and must be regenerated.  Route through the choke-point so
+        # the site-aware cache flags reset to the "no cache" state in lock-step.
         if self.posterior_samples is not None:
-            self.posterior_samples = None
+            self._set_posterior_cache(None, is_full=True)
 
         self._mixing_weights_replaced = True
 

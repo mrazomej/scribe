@@ -375,6 +375,11 @@ class MapPredictiveSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
+        # A narrowed (DE) cache lacks the technical sites (capture / gate) this
+        # generative reconstruction reads; reject rather than treat them as
+        # absent. A None cache is fine — it is drawn full below.
+        self._require_full_posterior_cache(method="get_posterior_ppc_samples")
+
         # ---- 1. Draw or reuse posterior parameters ----
         if self.posterior_samples is None:
             key_post, rng_key = random.split(rng_key)

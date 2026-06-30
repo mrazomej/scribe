@@ -24,7 +24,24 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+from ._extract import has_compositional_marginal
+
 _log = logging.getLogger(__name__)
+
+
+# NB-family base-model roots whose empirical DE consumes the {r, p, mu, phi}
+# posterior contract. Context-aware narrowing is an ALLOWLIST: any family NOT
+# listed here (including future ones) bypasses narrowing and keeps today's
+# full-cache draw. See _supports_de_narrowing.
+_NB_FAMILY_ROOTS = frozenset({"nbdm", "zinb", "nbvcp", "zinbvcp", "bnb"})
+
+# Explicit deny-set (defense-in-depth) for families that lack a compositional
+# marginal yet are not NB {r,p} models (two-state), plus the marginal families
+# (already caught by has_compositional_marginal — listed for clarity).
+_DE_NARROWING_DENY = frozenset({
+    "twostate", "twostatevcp", "twostate_ln_rate", "twostate_ln_logit",
+    "nbln", "pln", "lnm", "lnmvcp",
+})
 
 
 # ------------------------------------------------------------------------------
@@ -34,6 +51,49 @@ _log = logging.getLogger(__name__)
 
 def _grouping_spec(results):
     return getattr(getattr(results, "model_config", None), "grouping_spec", None)
+
+
+def _supports_de_narrowing(results) -> bool:
+    """Whether context-aware posterior narrowing applies to ``results``.
+
+    Narrowing the posterior draw to the DE keep-set ``{r, p, mu, phi}``
+    (``purpose="de_paired"``) or to a factor's effect site
+    (``purpose="de_effect"``) is an **NB-family** optimisation: those keep-sets
+    are the empirical-DE input contract only for Negative-Binomial-family
+    models. Other families either drive DE from a fitted compositional marginal
+    (LNM / PLN / NBLN / TSLN) or use a different concentration contract
+    (two-state: ``alpha`` / ``beta`` / ``r_hat``), so applying the NB keep-set
+    would drop sites their DE needs. Those families therefore **bypass**
+    narrowing and keep the full-cache draw (identical to today's behaviour).
+
+    The predicate is an explicit ALLOWLIST: only recognised NB-family roots
+    return ``True``, so any unrecognised / future family is conservatively not
+    narrowed until deliberately added (and tested). ``has_compositional_marginal``
+    and an explicit deny-set provide defense-in-depth, evaluated first.
+
+    Parameters
+    ----------
+    results
+        A fitted results object exposing ``model_config``.
+
+    Returns
+    -------
+    bool
+        ``True`` iff ``results`` is an NB-family fit eligible for DE narrowing.
+    """
+    # Defense-in-depth, first: marginal-driven families (LNM/PLN/NBLN/TSLN)
+    # never read the NB posterior {r,p} path.
+    if has_compositional_marginal(results):
+        return False
+    cfg = getattr(results, "model_config", None)
+    if cfg is None:
+        return False
+    bm = getattr(cfg, "base_model", None)
+    bm_str = str(getattr(bm, "value", bm) or "").lower()
+    if bm_str in _DE_NARROWING_DENY:
+        return False
+    # Final decision: explicit NB-family allowlist on the base-model root.
+    return bm_str.split("_")[0] in _NB_FAMILY_ROOTS
 
 
 def _resolve_pairs(
@@ -149,17 +209,46 @@ def _pair_weights(
     return w / total
 
 
-def _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy):
+def _ensure_posterior_draw(
+    results,
+    n_samples,
+    batch_size,
+    convert_to_numpy,
+    *,
+    purpose=None,
+    return_sites=None,
+):
     """Make ``results.posterior_samples`` available, honouring ``n_samples``.
 
-    Reuses cached draws when their count already matches the request (so a second
-    ``compare_groups`` call with the same ``n_samples`` does not re-sample a large
-    posterior — the dominant cost). Otherwise draws, offloading to host RAM by
-    default for large ``n_samples`` and chunking with ``batch_size`` to bound
-    memory. Shared by both estimands; a no-op for results without sampling.
+    Reuses cached draws when their count already matches the request **and** the
+    cached site-set covers what this call needs (so a second ``compare_groups``
+    call with the same ``n_samples`` does not re-sample a large posterior — the
+    dominant cost). Otherwise draws, offloading to host RAM by default for large
+    ``n_samples`` and chunking with ``batch_size`` to bound memory. Shared by
+    both estimands; a no-op for results without sampling.
+
+    ``purpose`` / ``return_sites`` request a context-aware narrowed draw (e.g.
+    ``purpose="de_paired"`` keeps only ``{r, p, mu, phi}``). They are forwarded
+    to ``get_posterior_samples`` and used to validate cache reuse: a cache is
+    reusable only when it is *full* or its requested keep-set is a superset of
+    this call's keep-set (otherwise a narrower prior draw — e.g. a ``de_effect``
+    draw — would be wrongly reused for a ``de_paired`` call that needs ``r``).
     """
     if not hasattr(results, "get_posterior_samples"):
         return
+
+    # Local import to avoid a de -> svi import cycle at module load.
+    from ..svi._posterior_policy import resolve_keep_set
+
+    # Requested keep-set (intent) for this draw; None => full draw.
+    requested = None
+    if purpose is not None or return_sites is not None:
+        requested = resolve_keep_set(
+            getattr(results, "model_config", None),
+            purpose=purpose,
+            return_sites=return_sites,
+        )
+
     _cached = getattr(results, "posterior_samples", None)
     _cached_n = None
     if _cached:
@@ -167,10 +256,20 @@ def _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy):
             _cached_n = int(next(iter(_cached.values())).shape[0])
         except (StopIteration, AttributeError, IndexError, TypeError):
             _cached_n = None
-    if _cached is not None and not (
-        n_samples is not None and _cached_n != int(n_samples)
-    ):
+    # Cache is site-sufficient if it is full (covers any request) or its stored
+    # requested keep-set already contains everything this call needs.
+    _cached_full = getattr(results, "_posterior_is_full", True)
+    _cached_sites = getattr(results, "_posterior_sites", None)
+    if requested is None:
+        _sites_ok = bool(_cached_full)
+    else:
+        _sites_ok = bool(_cached_full) or (
+            _cached_sites is not None and set(requested) <= set(_cached_sites)
+        )
+    _count_ok = not (n_samples is not None and _cached_n != int(n_samples))
+    if _cached is not None and _count_ok and _sites_ok:
         return
+
     _to_numpy = (
         bool(convert_to_numpy)
         if convert_to_numpy is not None
@@ -181,13 +280,17 @@ def _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy):
         kw["n_samples"] = int(n_samples)
     if batch_size is not None:
         kw["batch_size"] = int(batch_size)
+    if purpose is not None:
+        kw["purpose"] = purpose
+    if return_sites is not None:
+        kw["return_sites"] = return_sites
     try:
         results.get_posterior_samples(**kw)
     except TypeError:
         warnings.warn(
-            "n_samples / batch_size / convert_to_numpy are not supported by "
-            "this results type (e.g. MCMC, whose posterior sample count is "
-            "fixed at fit time); using its default samples.",
+            "n_samples / batch_size / convert_to_numpy / purpose are not "
+            "supported by this results type (e.g. MCMC, whose posterior sample "
+            "count is fixed at fit time); using its default samples.",
             stacklevel=2,
         )
         if getattr(results, "posterior_samples", None) is None:
@@ -218,7 +321,26 @@ def _compare_groups_effect(
     """
     from .results import ScribeEmpiricalDEResults
 
-    _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy)
+    # Context-aware narrowing for the "effect" estimand: keep only the factor's
+    # effect (+ scale) site(s). NB-family only — other families bypass narrowing
+    # (full cache, current behaviour). The keep-set is pre-resolved here because
+    # it depends on ``factor_name``.
+    _eff_return_sites = None
+    if _supports_de_narrowing(results):
+        from ..svi._posterior_policy import resolve_keep_set
+
+        _eff_return_sites = resolve_keep_set(
+            getattr(results, "model_config", None),
+            purpose="de_effect",
+            factor_name=factor_name,
+        )
+    _ensure_posterior_draw(
+        results,
+        n_samples,
+        batch_size,
+        convert_to_numpy,
+        return_sites=_eff_return_sites,
+    )
 
     fx = results.get_factor_effect(factor_name)
     if level_A not in fx.levels or level_B not in fx.levels:
@@ -445,7 +567,21 @@ def compare_groups(
     # sets N in the returned delta_samples (N = n_samples x n_samples_dirichlet);
     # the default get_posterior_samples count is only 100, so expose n_samples to
     # raise it.
-    _ensure_posterior_draw(results, n_samples, batch_size, convert_to_numpy)
+    #
+    # Context-aware narrowing: for NB-family fits, draw only the DE keep-set
+    # ({r, p, mu, phi}, + mixing_weights for mixtures) — dropping the per-cell
+    # capture and per-factor effect tensors DE never reads, which is what
+    # otherwise blows up memory at large n_samples. Non-NB families bypass
+    # (full draw, current behaviour). The mixture-weight site is included
+    # automatically by the policy when the model is a mixture.
+    _purpose = "de_paired" if _supports_de_narrowing(results) else None
+    _ensure_posterior_draw(
+        results,
+        n_samples,
+        batch_size,
+        convert_to_numpy,
+        purpose=_purpose,
+    )
 
     working = results
     if component is not None:

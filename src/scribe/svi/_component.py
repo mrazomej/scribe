@@ -632,6 +632,11 @@ class ComponentMixin:
         if ds_idx is not None:
             subset._dataset_indices = ds_idx
 
+        # Propagate (do not reset) cache-fullness so a component slice of a
+        # narrowed cache stays narrowed (generative consumers must re-draw).
+        subset._posterior_is_full = getattr(self, "_posterior_is_full", True)
+        subset._posterior_sites = getattr(self, "_posterior_sites", None)
+
         return subset
 
     # --------------------------------------------------------------------------
@@ -697,5 +702,10 @@ class ComponentMixin:
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             subset._dataset_indices = ds_idx
+
+        # Propagate (do not reset) cache-fullness so a multi-component slice of a
+        # narrowed cache stays narrowed (generative consumers must re-draw).
+        subset._posterior_is_full = getattr(self, "_posterior_is_full", True)
+        subset._posterior_sites = getattr(self, "_posterior_sites", None)
 
         return subset

@@ -336,6 +336,12 @@ class DatasetMixin:
             _original_n_genes=getattr(self, "_original_n_genes", None),
             _total_count_max=getattr(self, "_total_count_max", None),
             _dataset_indices=child_dataset_indices,
+            # Propagate (do not reset) cache-fullness: the child carries the
+            # parent's leaf-sliced posterior_samples, so a narrowed parent yields
+            # a narrowed child. Resetting to full=True here would let a generative
+            # consumer on the leaf view silently read prior-sampled capture.
+            _posterior_is_full=getattr(self, "_posterior_is_full", True),
+            _posterior_sites=getattr(self, "_posterior_sites", None),
         )
 
     # ------------------------------------------------------------------

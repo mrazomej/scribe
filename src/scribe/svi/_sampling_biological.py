@@ -108,6 +108,11 @@ class BiologicalSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
+        # A narrowed (DE) cache lacks the technical sites this biological PPC
+        # reads; reject rather than treat them as absent. A None cache is fine —
+        # it is drawn full below.
+        self._require_full_posterior_cache(method="get_ppc_samples_biological")
+
         # Ensure we have posterior samples
         if self.posterior_samples is None:
             key_post, rng_key = random.split(rng_key)
@@ -329,6 +334,13 @@ class BiologicalSamplingMixin:
         """
         if rng_key is None:
             rng_key = random.PRNGKey(42)
+
+        # A narrowed (DE) cache lacks the technical sites this biological PPC
+        # reads; reject rather than treat them as absent. A None cache is fine —
+        # it is drawn full below.
+        self._require_full_posterior_cache(
+            method="get_map_ppc_samples_biological"
+        )
 
         # Ensure posterior samples exist.
         if self.posterior_samples is None:

@@ -127,7 +127,12 @@ def _dataset_cell_view(results, leaf):
     view.params = new_params
     view.n_cells = int(mask.sum())
     view._dataset_indices = jnp.asarray(di[mask])  # all == leaf
-    view.posterior_samples = None
+    # Clear the cache via the choke-point so the site-aware flags reset in
+    # lock-step (a shallow copy inherits the parent's possibly-narrowed flags).
+    if hasattr(view, "_set_posterior_cache"):
+        view._set_posterior_cache(None, is_full=True)
+    else:  # non-SVI view (no site-aware cache): plain clear
+        view.posterior_samples = None
     view.predictive_samples = None
     return view, mask
 
