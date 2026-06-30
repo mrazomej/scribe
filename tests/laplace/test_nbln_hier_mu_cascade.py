@@ -215,6 +215,45 @@ def test_e2e_per_donor_mu_cascade():
     assert s is not None and np.asarray(s).shape == (D, 2)
 
 
+def test_per_donor_mu_decoupled_subset_unsupported():
+    """Per-donor mu freeze on the decoupled (gene-subset) layout fails clearly.
+
+    The decoupled layout exists only when low-coverage genes are pooled into
+    an ``_other`` column — i.e. the target panel is a strict subset of the
+    source.  Per-donor ``mu^(d)`` reconstruction has no per-donor ``_other``
+    aggregation rule in v1, so the cascade must raise a clear error rather
+    than mis-align genes.  (The correlation hierarchy ``s_d`` itself DOES run
+    on the decoupled layout — see test_decoupled_layout_hierarchy_runs.)
+    """
+    adata = _multi_donor_adata(seed=5)
+    svi = scribe.fit(
+        adata,
+        model="nbvcp",
+        parameterization="standard",
+        unconstrained=True,
+        dataset_key="donor",
+        priors={"mean_expression": {"donor": "gaussian"}},
+        inference_method="svi",
+        n_steps=150,
+        seed=0,
+    )
+    with pytest.raises((NotImplementedError, Exception), match="equal"):
+        scribe.fit(
+            adata,
+            model="nbln",
+            inference_method="laplace",
+            correlation_hierarchy="program_scales",
+            correlate_other_column=False,   # decoupled when `_other` present
+            gene_coverage=0.5,              # pools genes into `_other` (subset)
+            dataset_key="donor",
+            informative_priors_from=svi,
+            informative_priors_freeze=("r", "mu"),
+            latent_dim=2,
+            n_steps=50,
+            seed=0,
+        )
+
+
 def test_e2e_per_donor_mu_requires_hierarchy():
     """Freezing per-donor mu without the correlation hierarchy fails fast."""
     adata = _multi_donor_adata(seed=3)

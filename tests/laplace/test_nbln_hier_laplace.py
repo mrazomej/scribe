@@ -9,9 +9,9 @@ data:
   with the sum-to-zero gauge holding on the *fitted* values;
 - the hierarchy is correctly inert (``program_activity is None``) for a plain
   NBLN-Laplace fit, so the default path is unchanged;
-- the unsupported decoupled layout (``correlate_other_column=False`` with a
-  pooled ``_other`` column) raises a clear ``NotImplementedError`` rather than
-  silently ignoring the hierarchy.
+- the **decoupled** layout (``correlate_other_column=False`` with a pooled
+  ``_other`` column) also supports the hierarchy (step 6): the per-cell-W
+  ``*_decoupled_percellW`` Newton twins run end-to-end and surface ``s_d``.
 
 The per-cell-W Newton kernels themselves are unit-tested in
 ``test_nbln_percellW_newton.py``; here we test the full Laplace integration.
@@ -85,23 +85,28 @@ def test_plain_nbln_laplace_has_no_program_activity():
     assert res.program_scale_tau is None
 
 
-def test_decoupled_layout_hierarchy_raises():
-    """correlation_hierarchy on the decoupled layout fails fast (not silent)."""
+def test_decoupled_layout_hierarchy_runs():
+    """correlation_hierarchy on the decoupled layout runs end-to-end (step 6)."""
     adata = _multi_donor_adata(seed=2)
-    with pytest.raises((NotImplementedError, Exception)) as excinfo:
-        scribe.fit(
-            adata,
-            model="nbln",
-            inference_method="laplace",
-            correlation_hierarchy="program_scales",
-            correlate_other_column=False,  # decoupled when _other present
-            gene_coverage=0.5,  # pools low-coverage genes into `_other`
-            dataset_key="donor",
-            latent_dim=3,
-            n_steps=20,
-            seed=0,
-        )
-    # The actionable message names the offending flag.
-    assert "correlate_other_column" in str(excinfo.value) or isinstance(
-        excinfo.value, NotImplementedError
+    D = adata.obs["donor"].nunique()
+    K = 3
+    res = scribe.fit(
+        adata,
+        model="nbln",
+        inference_method="laplace",
+        correlation_hierarchy="program_scales",
+        correlate_other_column=False,  # decoupled when _other present
+        gene_coverage=0.5,  # pools low-coverage genes into `_other`
+        dataset_key="donor",
+        latent_dim=K,
+        n_steps=150,
+        seed=0,
     )
+    # The decoupled per-cell-W twins ran and surfaced a gauge-respecting s_d.
+    s = res.get_program_activity()
+    assert s is not None
+    s = np.asarray(s)
+    assert s.shape == (D, K)
+    assert np.all(s > 0.0)
+    assert res.program_scale_tau is not None and res.program_scale_tau > 0.0
+    np.testing.assert_allclose(np.log(s).mean(axis=0), 0.0, atol=1e-4)

@@ -91,6 +91,26 @@ from ._newton_nbln import (
     nbln_grad_split_batch_percellWmu,
     nbln_grad_x_only_norm_batch_percellWmu,
     nbln_grad_x_only_offset_norm_batch_percellWmu,
+    # decoupled per-cell-W (correlation hierarchy)
+    laplace_newton_batch_decoupled_percellW,
+    laplace_newton_batch_x_only_decoupled_percellW,
+    laplace_newton_batch_x_only_offset_decoupled_percellW,
+    laplace_log_det_neg_H_batch_decoupled_percellW,
+    laplace_log_det_neg_H_batch_x_only_decoupled_percellW,
+    laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellW,
+    nbln_grad_split_batch_decoupled_percellW,
+    nbln_grad_x_only_norm_batch_decoupled_percellW,
+    nbln_grad_x_only_offset_norm_batch_decoupled_percellW,
+    # decoupled per-cell-W AND per-cell-mu (per-donor marginal cascade)
+    laplace_newton_batch_decoupled_percellWmu,
+    laplace_newton_batch_x_only_decoupled_percellWmu,
+    laplace_newton_batch_x_only_offset_decoupled_percellWmu,
+    laplace_log_det_neg_H_batch_decoupled_percellWmu,
+    laplace_log_det_neg_H_batch_x_only_decoupled_percellWmu,
+    laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellWmu,
+    nbln_grad_split_batch_decoupled_percellWmu,
+    nbln_grad_x_only_norm_batch_decoupled_percellWmu,
+    nbln_grad_x_only_offset_norm_batch_decoupled_percellWmu,
 )
 from ..models.components.program_scales import (
     program_scales_from_raw,
@@ -437,17 +457,11 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
-        # Per-donor correlation hierarchy: legacy-layout only for now. The
-        # decoupled (correlate_other_column=False) deviation-form kernels get
-        # their own per-cell-W twins in a follow-up; until then, fail fast with
-        # an actionable message rather than silently ignoring the hierarchy.
-        if self._hier_active and _layout.decoupled:
-            raise NotImplementedError(
-                "correlation_hierarchy='program_scales' is not yet supported "
-                "for the decoupled layout (correlate_other_column=False). "
-                "Pass correlate_other_column=True to use the per-donor "
-                "correlation hierarchy for now."
-            )
+        # Per-donor correlation hierarchy: supported on BOTH layouts.  The
+        # decoupled (correlate_other_column=False) deviation-form kernels have
+        # their own per-cell-W / per-cell-mu twins (``*_decoupled_percellW`` /
+        # ``*_decoupled_percellWmu`` in ``_newton_nbln``), selected in
+        # ``loss_fn`` / ``final_sweep`` exactly as on the legacy layout.
 
         # Commit 2b: the decoupled path is now fully implemented.  No
         # early guard here — init proceeds for both layouts.  The
@@ -777,10 +791,30 @@ class NBLNObservationModel(LaplaceObservationModel):
             _gn_x_only = nbln_grad_x_only_norm_batch_percellW
             _gn_x_only_offset = nbln_grad_x_only_offset_norm_batch_percellW
             _gn_joint = nbln_grad_split_batch_percellW
+            # Decoupled-layout per-cell-W twins (step 6).
+            _dec_nt_x_only = laplace_newton_batch_x_only_decoupled_percellW
+            _dec_nt_x_only_offset = (
+                laplace_newton_batch_x_only_offset_decoupled_percellW
+            )
+            _dec_nt_joint = laplace_newton_batch_decoupled_percellW
+            _dec_ld_x_only = (
+                laplace_log_det_neg_H_batch_x_only_decoupled_percellW
+            )
+            _dec_ld_x_only_offset = (
+                laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellW
+            )
+            _dec_ld_joint = laplace_log_det_neg_H_batch_decoupled_percellW
+            _dec_gn_x_only = nbln_grad_x_only_norm_batch_decoupled_percellW
+            _dec_gn_x_only_offset = (
+                nbln_grad_x_only_offset_norm_batch_decoupled_percellW
+            )
+            _dec_gn_joint = nbln_grad_split_batch_decoupled_percellW
             # Per-donor frozen mu (step 4b): each cell's latent prior mean
             # is mu^{(σ(c))}.  Gather to a per-cell ``(B, G)`` tensor and
             # switch the Newton + grad-norm kernels to their per-cell-mu
-            # twins (the log-det twins above are mu-free and reused as-is).
+            # twins.  On the legacy layout the log-det is mu-free (reused
+            # as-is); on the decoupled layout the log-det/grad DO consume mu
+            # (log_rate = μ + x_dev), so they switch to per-cell-mu twins too.
             # When mu is pooled, ``mu_newton`` stays the shared ``(G,)``
             # vector and ``mu_cell_live`` is None (broadcast path below).
             if self._mu_per_donor:
@@ -796,6 +830,28 @@ class NBLNObservationModel(LaplaceObservationModel):
                     nbln_grad_x_only_offset_norm_batch_percellWmu
                 )
                 _gn_joint = nbln_grad_split_batch_percellWmu
+                # Decoupled per-cell-W AND per-cell-mu twins.
+                _dec_nt_x_only = (
+                    laplace_newton_batch_x_only_decoupled_percellWmu
+                )
+                _dec_nt_x_only_offset = (
+                    laplace_newton_batch_x_only_offset_decoupled_percellWmu
+                )
+                _dec_nt_joint = laplace_newton_batch_decoupled_percellWmu
+                _dec_ld_x_only = (
+                    laplace_log_det_neg_H_batch_x_only_decoupled_percellWmu
+                )
+                _dec_ld_x_only_offset = (
+                    laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellWmu
+                )
+                _dec_ld_joint = laplace_log_det_neg_H_batch_decoupled_percellWmu
+                _dec_gn_x_only = (
+                    nbln_grad_x_only_norm_batch_decoupled_percellWmu
+                )
+                _dec_gn_x_only_offset = (
+                    nbln_grad_x_only_offset_norm_batch_decoupled_percellWmu
+                )
+                _dec_gn_joint = nbln_grad_split_batch_decoupled_percellWmu
         else:
             W_newton, W_logdet = W_sg, W
             _woodbury_quad = _woodbury_quadform
@@ -809,6 +865,23 @@ class NBLNObservationModel(LaplaceObservationModel):
             _gn_x_only = nbln_grad_x_only_norm_batch
             _gn_x_only_offset = nbln_grad_x_only_offset_norm_batch
             _gn_joint = nbln_grad_split_batch
+            # Shared-W decoupled kernels (current behaviour; bit-equal).
+            _dec_nt_x_only = laplace_newton_batch_x_only_decoupled
+            _dec_nt_x_only_offset = laplace_newton_batch_x_only_offset_decoupled
+            _dec_nt_joint = laplace_newton_batch_decoupled
+            _dec_ld_x_only = laplace_log_det_neg_H_batch_x_only_decoupled
+            _dec_ld_x_only_offset = (
+                laplace_log_det_neg_H_batch_x_only_offset_decoupled
+            )
+            _dec_ld_joint = laplace_log_det_neg_H_batch_decoupled
+            _dec_gn_x_only = nbln_grad_x_only_norm_batch_decoupled
+            _dec_gn_x_only_offset = nbln_grad_x_only_offset_norm_batch_decoupled
+            _dec_gn_joint = nbln_grad_split_batch_decoupled
+
+        # Per-cell mean fed to the decoupled log-det / grad kernels (which
+        # consume μ via ``log_rate = μ + x_dev``): the per-cell ``(B, G)``
+        # gather when mu is frozen per donor, else the shared live ``(G,)``.
+        mu_logdet_dec = mu_cell_live if mu_cell_live is not None else mu
 
         # --- Four-way Newton dispatch (Round-4 R5-2) ---
         # 1. Frozen eta: x-only Newton with offset = freeze value.
@@ -826,11 +899,14 @@ class NBLNObservationModel(LaplaceObservationModel):
             eta_offset_batch = aux_batch["eta_frozen"]
             eta_offset_sg = jax.lax.stop_gradient(eta_offset_batch)
             if _is_decoupled:
-                x_new, _gn, _ = laplace_newton_batch_x_only_offset_decoupled(
+                # ``_dec_*`` + ``W_newton``/``W_logdet``/``mu_*`` are the
+                # shared-W decoupled kernels when the hierarchy is off and
+                # the per-cell-W (+ per-cell-mu) decoupled twins when it is on.
+                x_new, _gn, _ = _dec_nt_x_only_offset(
                     latent_init_sg,
                     counts_batch,
-                    mu_sg,
-                    W_sg,
+                    mu_newton,
+                    W_newton,
                     d_sg,
                     r_sg,
                     eta_offset_sg,
@@ -841,12 +917,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = eta_offset_batch
-                log_det = laplace_log_det_neg_H_batch_x_only_offset_decoupled(
-                    x_new, eta_offset_batch, counts_batch, r, W, d, mu,
-                    _kept_idx_j,
+                log_det = _dec_ld_x_only_offset(
+                    x_new, eta_offset_batch, counts_batch, r, W_logdet, d,
+                    mu_logdet_dec, _kept_idx_j,
                 )
-                gn_x = nbln_grad_x_only_offset_norm_batch_decoupled(
-                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                gn_x = _dec_gn_x_only_offset(
+                    x_new, counts_batch, mu_newton, W_newton, d_sg, r_sg,
                     eta_offset_sg, _kept_idx_j,
                 )
             else:
@@ -895,12 +971,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
             sigma_eta_sg = jax.lax.stop_gradient(sigma_eta_batch)
             if _is_decoupled:
-                x_new, eta_new, _gn, _ = laplace_newton_batch_decoupled(
+                x_new, eta_new, _gn, _ = _dec_nt_joint(
                     latent_init_sg,
                     eta_init_sg,
                     counts_batch,
-                    mu_sg,
-                    W_sg,
+                    mu_newton,
+                    W_newton,
                     d_sg,
                     r_sg,
                     _kept_idx_j,
@@ -912,13 +988,13 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = jax.lax.stop_gradient(eta_new)
-                log_det = laplace_log_det_neg_H_batch_decoupled(
-                    x_new, eta_new, counts_batch, r, W, d, mu,
-                    _kept_idx_j, sigma_eta_batch,
+                log_det = _dec_ld_joint(
+                    x_new, eta_new, counts_batch, r, W_logdet, d,
+                    mu_logdet_dec, _kept_idx_j, sigma_eta_batch,
                 )
-                gn_x, gn_eta = nbln_grad_split_batch_decoupled(
-                    x_new, eta_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
-                    _kept_idx_j, eta_anchor_sg, sigma_eta_sg,
+                gn_x, gn_eta = _dec_gn_joint(
+                    x_new, eta_new, counts_batch, mu_newton, W_newton, d_sg,
+                    r_sg, _kept_idx_j, eta_anchor_sg, sigma_eta_sg,
                 )
             else:
                 x_new, eta_new, _gn, _ = _nt_joint(
@@ -956,11 +1032,11 @@ class NBLNObservationModel(LaplaceObservationModel):
             gn_blocks = {"x": gn_x, "η": gn_eta}
         else:
             if _is_decoupled:
-                x_new, _gn, _ = laplace_newton_batch_x_only_decoupled(
+                x_new, _gn, _ = _dec_nt_x_only(
                     latent_init_sg,
                     counts_batch,
-                    mu_sg,
-                    W_sg,
+                    mu_newton,
+                    W_newton,
                     d_sg,
                     r_sg,
                     _kept_idx_j,
@@ -970,12 +1046,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = eta_init  # placeholder
-                log_det = laplace_log_det_neg_H_batch_x_only_decoupled(
-                    x_new, None, counts_batch, r, W, d, mu,
+                log_det = _dec_ld_x_only(
+                    x_new, None, counts_batch, r, W_logdet, d, mu_logdet_dec,
                     _kept_idx_j, 1.0,
                 )
-                gn_x = nbln_grad_x_only_norm_batch_decoupled(
-                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                gn_x = _dec_gn_x_only(
+                    x_new, counts_batch, mu_newton, W_newton, d_sg, r_sg,
                     _kept_idx_j,
                 )
             else:
@@ -1006,17 +1082,23 @@ class NBLNObservationModel(LaplaceObservationModel):
         # the full ``(N, G_obs)`` log_mean via μ + x_dev for kept genes
         # and μ for ``_other``.
         if _is_decoupled:
-            # Per-cell base = μ broadcast across cells, minus η when
-            # capture is active (frozen-η or soft-η); η is None on the
-            # no-capture path.
+            # Per-cell base = μ minus η when capture is active (frozen-η or
+            # soft-η); η is None on the no-capture path.  ``mu_logdet_dec``
+            # is the per-cell ``(B, G_obs)`` mean when mu is frozen per donor
+            # and the shared ``(G_obs,)`` mean otherwise.
+            _mu_base = (
+                mu_logdet_dec
+                if mu_logdet_dec.ndim == 2
+                else mu_logdet_dec[None, :]
+            )
             if self.uses_capture or self.freezes_eta:
                 _eta_sub = (
                     eta_new[:, None] if eta_new.ndim == 1 else eta_new
                 )  # (N, 1)
-                base = mu[None, :] - _eta_sub  # (N, G_obs)
+                base = _mu_base - _eta_sub  # (N, G_obs)
             else:
                 base = jnp.broadcast_to(
-                    mu[None, :], (x_new.shape[0], mu.shape[0])
+                    _mu_base, (x_new.shape[0], int(mu.shape[-1]))
                 )
             # Scatter x_dev contribution at kept positions.
             log_mean = base.at[:, _kept_idx_j].add(x_new)
@@ -1199,6 +1281,11 @@ class NBLNObservationModel(LaplaceObservationModel):
             _fs_nt_x_only = laplace_newton_batch_x_only_percellW
             _fs_nt_x_only_offset = laplace_newton_batch_x_only_offset_percellW
             _fs_nt_joint = laplace_newton_batch_percellW
+            _fs_dec_nt_x_only = laplace_newton_batch_x_only_decoupled_percellW
+            _fs_dec_nt_x_only_offset = (
+                laplace_newton_batch_x_only_offset_decoupled_percellW
+            )
+            _fs_dec_nt_joint = laplace_newton_batch_decoupled_percellW
             # Per-donor frozen mu: gather each cell's prior mean and use
             # the per-cell-mu Newton twins (mirrors loss_fn).
             if self._mu_per_donor:
@@ -1208,11 +1295,23 @@ class NBLNObservationModel(LaplaceObservationModel):
                     laplace_newton_batch_x_only_offset_percellWmu
                 )
                 _fs_nt_joint = laplace_newton_batch_percellWmu
+                _fs_dec_nt_x_only = (
+                    laplace_newton_batch_x_only_decoupled_percellWmu
+                )
+                _fs_dec_nt_x_only_offset = (
+                    laplace_newton_batch_x_only_offset_decoupled_percellWmu
+                )
+                _fs_dec_nt_joint = laplace_newton_batch_decoupled_percellWmu
         else:
             W_fs = W
             _fs_nt_x_only = laplace_newton_batch_x_only
             _fs_nt_x_only_offset = laplace_newton_batch_x_only_offset
             _fs_nt_joint = laplace_newton_batch
+            _fs_dec_nt_x_only = laplace_newton_batch_x_only_decoupled
+            _fs_dec_nt_x_only_offset = (
+                laplace_newton_batch_x_only_offset_decoupled
+            )
+            _fs_dec_nt_joint = laplace_newton_batch_decoupled
 
         # Decoupled-layout branch (Commit 2b): the final sweep mirrors
         # ``loss_fn``'s four-way Newton dispatch but lives on the kept
@@ -1228,11 +1327,9 @@ class NBLNObservationModel(LaplaceObservationModel):
             # x-only Newton with fixed per-cell offset from aux_data.
             eta_offset = aux_data["eta_frozen"]
             if _is_decoupled:
-                x_final, gn_final, _ = (
-                    laplace_newton_batch_x_only_offset_decoupled(
-                        latent_loc, count_data, mu, W, d, r, eta_offset,
-                        _kept_idx_j, n_newton, damping, self._max_step,
-                    )
+                x_final, gn_final, _ = _fs_dec_nt_x_only_offset(
+                    latent_loc, count_data, mu_fs, W_fs, d, r, eta_offset,
+                    _kept_idx_j, n_newton, damping, self._max_step,
                 )
             else:
                 x_final, gn_final, _ = _fs_nt_x_only_offset(
@@ -1253,12 +1350,10 @@ class NBLNObservationModel(LaplaceObservationModel):
         elif self.uses_capture:
             sigma_eta_full = aux_data["eta_scale"]
             if _is_decoupled:
-                x_final, eta_final, gn_final, _ = (
-                    laplace_newton_batch_decoupled(
-                        latent_loc, eta_loc, count_data, mu, W, d, r,
-                        _kept_idx_j, eta_anchor, sigma_eta_full, n_newton,
-                        damping, self._max_step,
-                    )
+                x_final, eta_final, gn_final, _ = _fs_dec_nt_joint(
+                    latent_loc, eta_loc, count_data, mu_fs, W_fs, d, r,
+                    _kept_idx_j, eta_anchor, sigma_eta_full, n_newton,
+                    damping, self._max_step,
                 )
             else:
                 x_final, eta_final, gn_final, _ = _fs_nt_joint(
@@ -1277,8 +1372,8 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
         else:
             if _is_decoupled:
-                x_final, gn_final, _ = laplace_newton_batch_x_only_decoupled(
-                    latent_loc, count_data, mu, W, d, r, _kept_idx_j,
+                x_final, gn_final, _ = _fs_dec_nt_x_only(
+                    latent_loc, count_data, mu_fs, W_fs, d, r, _kept_idx_j,
                     n_newton, damping, self._max_step,
                 )
             else:
@@ -1385,11 +1480,17 @@ class NBLNObservationModel(LaplaceObservationModel):
         # formula is unchanged.
         if _is_decoupled:
             _kept_idx_j = jnp.asarray(_layout.kept_idx, dtype=jnp.int32)
-            # Base = μ broadcast across cells minus η when capture is on.
-            if self.uses_capture and eta_loc is not None:
-                _base = mu[None, :] - eta_loc[:, None]
+            # Per-cell mean: gather μ^{(σ(c))} when mu is frozen per donor
+            # (shape (D, G_obs)), else the shared (G_obs,).
+            if self._mu_per_donor and "dataset_indices" in aux_data:
+                _mu_rows = mu[aux_data["dataset_indices"]]  # (N, G_obs)
             else:
-                _base = jnp.broadcast_to(mu[None, :], (N, G))
+                _mu_rows = mu[None, :]  # (1, G_obs)
+            # Base = μ across cells minus η when capture is on.
+            if self.uses_capture and eta_loc is not None:
+                _base = _mu_rows - eta_loc[:, None]
+            else:
+                _base = jnp.broadcast_to(_mu_rows, (N, G))
             # Scatter ``x_dev`` at kept positions; ``_other`` retains μ − η.
             log_rate_all = _base.at[:, _kept_idx_j].add(latent_loc)
         else:

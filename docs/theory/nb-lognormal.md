@@ -395,12 +395,13 @@ import scribe
 results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
     correlation_hierarchy="program_scales",   # shared W, per-donor s_d
-    correlate_other_column=True,              # legacy layout (v1)
     dataset_key="donor",                       # or hierarchy=[GroupLevel("donor")]
     informative_priors_from=hier_svi_source,   # freeze marginals (recommended)
     informative_priors_freeze=("r",),          # pool dispersion across donors
     latent_dim=16, n_steps=50_000,
 )
+# The s_d hierarchy runs on both the legacy and decoupled
+# (correlate_other_column=False) Laplace layouts.
 s   = results.get_program_activity()   # (D, K) relative per-donor activity s_d
 tau = results.program_scale_tau        # scalar between-dataset scale τ_s
 ```

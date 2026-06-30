@@ -540,8 +540,7 @@ with `correlation_hierarchy="program_scales"` and a grouping:
 laplace_results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
     correlation_hierarchy="program_scales",     # shared W, per-donor s_d
-    correlate_other_column=True,                # v1 requires the legacy layout
-    dataset_key="donor",                         # >= 2 datasets
+    dataset_key="donor",                         # >= 2 datasets (legacy or decoupled)
     informative_priors_from=svi_results,         # cascade composes with the hierarchy
     informative_priors_freeze=("r",),            # pool dispersion across donors
     latent_dim=16, n_steps=20_000,

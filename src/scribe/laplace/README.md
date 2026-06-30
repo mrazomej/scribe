@@ -1151,11 +1151,16 @@ analogue.
 
 **Caveats.**
 
-- **Layout.** v1 supports the **legacy layout only**
-  (`correlate_other_column=True`, or any fit with no pooled `_other`
-  column). With `correlate_other_column=False` *and* a pooled `_other`
-  column the fit raises `NotImplementedError` — the decoupled
-  deviation-form per-cell-`W` kernels are a follow-up.
+- **Layout.** The correlation hierarchy (`s_d`) runs on **both layouts**:
+  the legacy (`correlate_other_column=True`) and decoupled
+  (`correlate_other_column=False` with a pooled `_other` column) paths each
+  have per-cell-`W` Newton/log-det/grad twins (`*_percellW` /
+  `*_decoupled_percellW`).  The **per-donor `μ^(d)` cascade**, however, needs
+  equal source/target gene panels, so it is supported on the legacy layout
+  only — freezing per-donor `μ^(d)` together with `gene_coverage<1` (which
+  pools genes into `_other`, the decoupled trigger) raises a clear
+  `NotImplementedError`.  Pool the cascade mean to `(G,)`, or keep the full
+  gene panel, to combine per-donor means with the decoupled layout.
 - **Few datasets.** With small `n_datasets`, `τ_s` is weakly identified
   (generic to hierarchical models with few groups); the hierarchy still
   provides adaptive shrinkage but cannot resolve rich between-donor

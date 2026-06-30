@@ -902,17 +902,14 @@ def priors_from_results(
     # for the gene-level marginals: ``r``/``mu`` come back as ``(S, D, G)``
     # rather than ``(S, G)``.  The soft cascade is a *population* anchor
     # (the per-donor structure is consumed by the freeze path), so we
-    # collapse the dataset axis by averaging.  Detect it as the middle dim
-    # of an ``(S, D, G)`` array whose trailing dim is the gene axis.
+    # collapse the dataset axis by averaging.  For the NBLN cascade scope
+    # (non-mixture sources) a 3-D per-gene sample tensor is unambiguously
+    # ``(S, D, G)`` — the middle axis is the dataset axis — so we pool it
+    # regardless of whether a gene subset is active (pooling first, then the
+    # subset aggregation below operates on the population ``(S, G)``).
     def _pool_dataset_axis(arr: jnp.ndarray, name: str) -> jnp.ndarray:
         arr = jnp.asarray(arr)
-        if arr.ndim == 3 and int(arr.shape[-1]) == int(target_n_genes):
-            if _subset_active:
-                raise NotImplementedError(
-                    "Subset-aware soft cascade from a hierarchical "
-                    f"(multi-dataset) source is unsupported ({name} carries "
-                    "a per-donor axis); use equal source/target gene panels."
-                )
+        if arr.ndim == 3:
             _say(
                 f"  Pooling hierarchical source {name!r} over its "
                 f"{int(arr.shape[1])}-dataset axis for the population prior."

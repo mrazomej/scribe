@@ -1751,3 +1751,98 @@ nbln_grad_x_only_offset_norm_batch_decoupled = jax.vmap(
     _nbln_grad_x_only_offset_norm_decoupled,
     in_axes=(0, 0, None, None, None, None, 0, None),
 )
+
+
+# =====================================================================
+# Decoupled per-cell-W / per-cell-mu twins (per-donor hierarchy, step 6)
+# =====================================================================
+#
+# The per-donor correlation hierarchy (and its per-donor marginal cascade)
+# on the DECOUPLED layout.  Same in_axes-flip recipe as the legacy
+# ``_percellW`` / ``_percellWmu`` twins above: the per-cell functions are
+# unchanged; we only map ``W`` (and, for ``_percellWmu``, ``mu``) over the
+# cell axis instead of broadcasting them.
+#
+# IMPORTANT difference from the legacy twins: under decoupling the per-cell
+# log-rate is reconstructed as ``log_rate = mu + x_dev`` (kept genes), so the
+# decoupled log-det AND grad kernels both consume ``mu`` (they evaluate the
+# NB curvature/gradient at the MAP).  Hence the ``_percellWmu`` decoupled
+# family needs log-det twins too — unlike the legacy ``_percellWmu`` set,
+# where ``x`` is the absolute log-rate and the log-det is mu-free.
+# ``d`` stays shared across donors throughout.
+
+# --- per-cell-W, shared-mu (correlation hierarchy) ---
+laplace_newton_batch_x_only_decoupled_percellW = jax.vmap(
+    laplace_newton_loop_x_only_decoupled,
+    in_axes=(0, 0, None, 0, None, None, None, None, None, None),
+)
+laplace_newton_batch_x_only_offset_decoupled_percellW = jax.vmap(
+    laplace_newton_loop_x_only_offset_decoupled,
+    in_axes=(0, 0, None, 0, None, None, 0, None, None, None, None),
+)
+laplace_newton_batch_decoupled_percellW = jax.vmap(
+    laplace_newton_loop_decoupled,
+    in_axes=(0, 0, 0, None, 0, None, None, None, 0, 0, None, None, None),
+)
+laplace_log_det_neg_H_batch_x_only_decoupled_percellW = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, None, 0, None, 0, None, None, None, None),
+)
+laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellW = jax.vmap(
+    laplace_log_det_neg_H_x_only_offset_decoupled,
+    in_axes=(0, 0, 0, None, 0, None, None, None),
+)
+laplace_log_det_neg_H_batch_decoupled_percellW = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, 0, 0, None, 0, None, None, None, 0),
+)
+nbln_grad_x_only_norm_batch_decoupled_percellW = jax.vmap(
+    _nbln_grad_x_only_norm_decoupled,
+    in_axes=(0, 0, None, 0, None, None, None),
+)
+nbln_grad_x_only_offset_norm_batch_decoupled_percellW = jax.vmap(
+    _nbln_grad_x_only_offset_norm_decoupled,
+    in_axes=(0, 0, None, 0, None, None, 0, None),
+)
+nbln_grad_split_batch_decoupled_percellW = jax.vmap(
+    _nbln_grad_split_decoupled_with_eta,
+    in_axes=(0, 0, 0, None, 0, None, None, None, 0, 0),
+)
+
+# --- per-cell-W AND per-cell-mu (per-donor marginal cascade) ---
+laplace_newton_batch_x_only_decoupled_percellWmu = jax.vmap(
+    laplace_newton_loop_x_only_decoupled,
+    in_axes=(0, 0, 0, 0, None, None, None, None, None, None),
+)
+laplace_newton_batch_x_only_offset_decoupled_percellWmu = jax.vmap(
+    laplace_newton_loop_x_only_offset_decoupled,
+    in_axes=(0, 0, 0, 0, None, None, 0, None, None, None, None),
+)
+laplace_newton_batch_decoupled_percellWmu = jax.vmap(
+    laplace_newton_loop_decoupled,
+    in_axes=(0, 0, 0, 0, 0, None, None, None, 0, 0, None, None, None),
+)
+laplace_log_det_neg_H_batch_x_only_decoupled_percellWmu = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, None, 0, None, 0, None, 0, None, None),
+)
+laplace_log_det_neg_H_batch_x_only_offset_decoupled_percellWmu = jax.vmap(
+    laplace_log_det_neg_H_x_only_offset_decoupled,
+    in_axes=(0, 0, 0, None, 0, None, 0, None),
+)
+laplace_log_det_neg_H_batch_decoupled_percellWmu = jax.vmap(
+    laplace_log_det_neg_H_decoupled,
+    in_axes=(0, 0, 0, None, 0, None, 0, None, 0),
+)
+nbln_grad_x_only_norm_batch_decoupled_percellWmu = jax.vmap(
+    _nbln_grad_x_only_norm_decoupled,
+    in_axes=(0, 0, 0, 0, None, None, None),
+)
+nbln_grad_x_only_offset_norm_batch_decoupled_percellWmu = jax.vmap(
+    _nbln_grad_x_only_offset_norm_decoupled,
+    in_axes=(0, 0, 0, 0, None, None, 0, None),
+)
+nbln_grad_split_batch_decoupled_percellWmu = jax.vmap(
+    _nbln_grad_split_decoupled_with_eta,
+    in_axes=(0, 0, 0, 0, 0, None, None, None, 0, 0),
+)

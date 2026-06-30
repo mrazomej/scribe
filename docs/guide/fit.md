@@ -843,7 +843,6 @@ hierarchical gene-gene correlation. Turn it on with the structural kwarg
 results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
     correlation_hierarchy="program_scales",   # shared W, per-donor s_d
-    correlate_other_column=True,              # legacy layout (v1)
     dataset_key="donor",
     informative_priors_from=hier_svi_source,   # freeze marginals (recommended)
     informative_priors_freeze=("r",),          # pool dispersion across donors
@@ -852,8 +851,8 @@ results = scribe.fit(
 s = results.get_program_activity()   # (D, K) relative per-donor activity s_d
 ```
 
-Supported on both the SVI/VAE and Laplace paths. The Laplace path v1
-requires the legacy layout (`correlate_other_column=True`). See
+Supported on both the SVI/VAE and Laplace paths, and (for Laplace) on both
+the legacy and decoupled (`correlate_other_column=False`) layouts. See
 [Theory: NB Log-Normal > Hierarchical gene-gene correlation across
 datasets](../theory/nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets)
 for the model and identifiability.
