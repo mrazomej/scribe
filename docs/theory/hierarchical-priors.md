@@ -405,6 +405,26 @@ variables. This enables **paired** CLR-difference differential expression
 between datasets, where the comparison accounts for the posterior
 correlation introduced by the shared hierarchy.
 
+### Hierarchy on the gene-gene correlation
+
+The constructions above link the *marginal* (per-gene) parameters across
+datasets. The [correlation models](nb-lognormal.md) (NBLN / PLN / LNM)
+admit an analogous hierarchy on the *correlation* structure itself: the
+low-rank regulatory programs (columns of \(\underline{\underline{W}}\)) are
+**shared** across datasets, while each dataset \(d\) gets a *relative*
+program-activity vector \(\underline{s}_d\) under the same non-centered,
+sum-to-zero construction used here for \(\mu\). The induced covariance is
+\(\underline{\underline{\Sigma}}_d = \underline{\underline{W}}\,
+\text{diag}(\underline{s}_d^{\,2})\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d})\). Because the shared loadings are weighted
+differently by each dataset, the otherwise-unidentifiable rotation of
+\(\underline{\underline{W}}\) becomes identifiable (Flury common principal
+components). Enable it with `correlation_hierarchy="program_scales"` on a
+grouped correlation-model fit. See [NB Log-Normal → Hierarchical gene-gene
+correlation across datasets](nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets)
+for the model, the effective-loadings collapse, and the full gauge
+analysis.
+
 ### Crossed and nested designs: multiple grouping factors
 
 A single `dataset_key` flattens cells onto **one** grouping axis. Real

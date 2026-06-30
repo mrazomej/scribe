@@ -263,6 +263,177 @@ the strategy catalog (`gaussian`, `horseshoe_columnwise`,
 
 ---
 
+## Hierarchical gene-gene correlation across datasets
+
+Everything above describes a *single* global covariance
+\(\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})\) shared by
+every cell. When the data span several **datasets** — donors, conditions,
+or batches (the grouped setting of
+[Hierarchical Priors → Multiple datasets](hierarchical-priors.md#extension-to-multiple-datasets))
+— one covariance forces a single regulatory-correlation structure on all
+of them. SCRIBE's multi-dataset machinery already links the *marginal*
+parameters (\(\mu_g\), \(r_g\)) across datasets; the
+`correlation_hierarchy="program_scales"` option adds the analogous
+hierarchy for the *correlation* itself.
+
+The biological premise is **common regulatory programs with
+dataset-specific activity**: the columns of \(\underline{\underline{W}}\)
+(the \(K\) regulatory modules) are the same set of programs in every
+dataset, but each dataset engages them to a different degree. This is the
+single-cell analogue of Flury's *common principal components* model — it
+lets a panel of donors *inform one another's* correlation structure rather
+than each being estimated in isolation, which a single-donor fit can never
+do.
+
+### The model
+
+Let \(\sigma(c) \in \{1, \ldots, D\}\) be the (observed, fixed) dataset of
+cell \(c\). Each dataset \(d\) carries a vector of **relative program
+activities** \(\underline{s}_d \in \mathbb{R}_{>0}^K\), and the per-cell
+latent regulatory state is drawn from a dataset-specific covariance:
+
+\[
+\underline{z}_c \sim
+\mathcal{N}(\underline{0},\ \underline{\underline{\Sigma}}_{\sigma(c)}),
+\qquad
+\underline{\underline{\Sigma}}_d =
+\underline{\underline{W}}\,\text{diag}(\underline{s}_d^{\,2})\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d}).
+\]
+
+The loadings \(\underline{\underline{W}}\), the residual diagonal
+\(\underline{d}\), and the dispersion \(\underline{r}\) (empirically stable
+across conditions) are **shared**; only \(\underline{s}_d\) varies. Setting
+\(\underline{s}_d = \underline{1}\) for all \(d\) recovers the single
+global \(\underline{\underline{\Sigma}}\) exactly, so this is a strict
+generalization. A program with \(s_{d,k} > 1\) shows *more* cell-to-cell
+covariation along module \(k\) in dataset \(d\) than the population;
+\(s_{d,k} < 1\), less.
+
+### Hierarchical prior and the sum-to-zero gauge
+
+A non-centered hierarchical prior on the log-activities mirrors the
+multi-dataset \(\mu\) construction, but on the \(D \times K\) activity
+grid:
+
+\[
+\log s_{d,k} = \tau_s\,\tilde\varepsilon_{d,k},
+\qquad
+\tilde\varepsilon_{\cdot,k} = \varepsilon_{\cdot,k}
+   - \frac{1}{D}\sum_{d'} \varepsilon_{d',k},
+\qquad
+\varepsilon_{d,k} \sim \mathcal{N}(0,1),
+\]
+
+with a single shared scale \(\tau_s \sim \text{Softplus}(\mathcal{N})\).
+Centering \(\varepsilon_{\cdot,k}\) enforces a **sum-to-zero constraint**
+\(\frac{1}{D}\sum_d \log s_{d,k} = 0\) (equivalently
+\(\prod_d s_{d,k} = 1\)) for every program: each program's activities have
+geometric mean 1, so \(\underline{s}_d\) is purely *relative* activity and
+the absolute magnitude of program \(k\) lives in the column norm
+\(\lVert \underline{\underline{W}}_{:,k} \rVert\). This is not cosmetic —
+it is what makes the parameterization identifiable.
+
+### Identifiability: two gauges, both fixed
+
+The single-dataset \(\underline{\underline{W}}\) is identified only up to
+an orthogonal rotation. The hierarchical model has *two* gauge freedoms,
+and the datasets plus the sum-to-zero constraint fix both:
+
+- **Rotation gauge.** \(\underline{\underline{\Sigma}}_d\) is
+  rotation-invariant (\(\underline{\underline{W}} \mapsto
+  \underline{\underline{W}}\,\underline{\underline{R}}\)) only if
+  \(\underline{\underline{R}}\) commutes with
+  \(\text{diag}(\underline{s}_d^{\,2})\) *for every* \(d\) simultaneously.
+  When the datasets' activity profiles are sufficiently distinct, the only
+  such \(\underline{\underline{R}}\) is a signed permutation — so **dataset
+  heterogeneity generically breaks the rotation gauge** (the Flury
+  common-principal-components result). The very non-identifiability that
+  afflicts a single dataset is resolved by having several.
+- **Scale gauge.** Independently, the per-column rescaling
+  \(\underline{\underline{W}}_{:,k} \mapsto a_k
+  \underline{\underline{W}}_{:,k},\ s_{d,k} \mapsto s_{d,k}/a_k\) leaves
+  \(\underline{\underline{\Sigma}}_d\) unchanged. Dataset heterogeneity
+  does **not** break this — but the sum-to-zero constraint does: it forces
+  \(a_k = 1\), pinning column magnitude to \(\underline{\underline{W}}\).
+
+Column **sign and permutation** always remain (resolved at interpretation
+time, exactly as for any \(\underline{\underline{W}}\)), and the per-cell
+rigid-translation gauge is unchanged by the hierarchy.
+
+### The effective-loadings collapse: no extra inference cost
+
+The hierarchy adds no new linear algebra. Define the **effective
+loadings** of dataset \(d\), \(\underline{\underline{W}}_{\text{eff},d} =
+\underline{\underline{W}}\,\text{diag}(\underline{s}_d)\). Then
+
+\[
+\underline{\underline{\Sigma}}_d =
+\underline{\underline{W}}_{\text{eff},d}\,
+\underline{\underline{W}}_{\text{eff},d}^\top + \text{diag}(\underline{d})
+\]
+
+is *exactly* the low-rank-plus-diagonal form, with
+\(\underline{\underline{W}}_{\text{eff},d}\) in place of
+\(\underline{\underline{W}}\) and the same \(\underline{d}\). Every
+single-dataset result — the Woodbury inverse, the log-determinant, the
+per-cell Newton/Laplace solve — carries over verbatim, with each cell using
+its dataset's \(\underline{\underline{W}}_{\text{eff},\sigma(c)}\).
+Internally this is a per-cell loadings gather plus a `vmap` over the
+existing kernels; the shared-\(\underline{\underline{W}}\) path is
+bit-identical when the hierarchy is off. The activities \(\underline{s}_d\)
+receive their gradient only through the per-cell prior quadratic form and
+the log-determinant of \(\underline{\underline{\Sigma}}_{\sigma(c)}\).
+
+### Usage
+
+```python
+import scribe
+
+# Hierarchical correlation across donors (Laplace path)
+results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",   # shared W, per-donor s_d
+    correlate_other_column=True,              # legacy layout (v1)
+    dataset_key="donor",                       # or hierarchy=[GroupLevel("donor")]
+    informative_priors_from=hier_svi_source,   # freeze marginals (recommended)
+    informative_priors_freeze=("r",),          # pool dispersion across donors
+    latent_dim=16, n_steps=50_000,
+)
+s   = results.get_program_activity()   # (D, K) relative per-donor activity s_d
+tau = results.program_scale_tau        # scalar between-dataset scale τ_s
+```
+
+The same `correlation_hierarchy="program_scales"` flag works on the
+SVI/VAE path (per-donor variance on the \(K\)-dim latent), useful as a fast
+structure check. As always for low-count NBLN-Laplace, anchoring the
+marginals from a well-identified upstream fit (the
+[cascade + freeze](#svi-cascade-freeze-for-the-gauge) workflow) is the
+robust path on real data — and it **composes** with the correlation
+hierarchy: freeze \(\underline{r}\) (and \(\underline{\eta}\)) from an
+independent-gene fit while the \(\underline{s}_d\) hierarchy learns on top.
+
+!!! info "Relationship to the marginal hierarchy"
+    The [multi-dataset hierarchy](hierarchical-priors.md#extension-to-multiple-datasets)
+    links *first-order* structure — how much each gene's expression level
+    \(\mu_g^{(d)}\) shifts between datasets. The correlation hierarchy links
+    *second-order* structure — how much each regulatory module's activity
+    \(s_{d,k}\) shifts. They are complementary and compose: a joint model
+    can carry dataset-specific marginals *and* dataset-specific correlation
+    over a shared \(\underline{\underline{W}}\).
+
+!!! warning "Few-dataset regime"
+    With a small number of datasets \(D\) (e.g. a 7-donor panel), the
+    between-dataset scale \(\tau_s\) is weakly identified and the \(K\)
+    activities per dataset cannot resolve fine differences in correlation
+    eigenstructure. This is the expected partial-pooling regime: the
+    hierarchy shares strength across datasets that share a regulatory
+    architecture while letting their program usage differ — it does not
+    manufacture between-donor structure the data do not support.
+
+---
+
 ## Comparison with PLN and LNM
 
 | Property              | LNM                                              | PLN                                | NBLN                                                     |

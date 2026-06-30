@@ -370,6 +370,12 @@ recovery, cascade-frozen fits with adaptive rank selection.
   and benign — the prior shrinks `W_⟂` much faster than `W_∥`, so
   the ratio climbs by design; inspect absolute norms instead.
   See [Loadings Shrinkage](../theory/loadings-shrinkage.md#gauge-contamination-diagnostic-in-the-shrinkage-regime).
+- [**Hierarchical correlation across datasets**](../theory/nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets):
+  for grouped (multi-donor / multi-condition) fits, add
+  `correlation_hierarchy="program_scales"` to share the regulatory
+  programs \(\underline{\underline{W}}\) across datasets while learning a
+  per-dataset relative activity \(\underline{s}_d\) —
+  `results.get_program_activity()` returns the `(D, K)` activities.
 
 **See also:** [Theory: NB Log-Normal](../theory/nb-lognormal.md) and
 [Theory: Loadings Shrinkage](../theory/loadings-shrinkage.md).

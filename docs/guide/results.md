@@ -602,6 +602,8 @@ losses = results.loss_history
 | `results.z_loc` | Per-cell MAP composition latents (LNM with `d_mode='low_rank'`) |
 | `results.y_alr_loc` | Per-cell MAP ALR logits (LNM with `d_mode='learned'`) |
 | `results.p_capture_loc` | Per-cell MAP capture probabilities |
+| `results.get_program_activity()` | `(D, K)` relative per-dataset program activities \(s_d\) (only when fit with `correlation_hierarchy="program_scales"`; else `None`) |
+| `results.program_scale_tau` | Scalar between-dataset activity scale \(\tau_s\) (hierarchical correlation fits) |
 
 ### Model-dispatching behavior
 
