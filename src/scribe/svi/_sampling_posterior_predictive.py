@@ -197,6 +197,65 @@ def _convert_to_numpy(samples: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _split_index_ranges(total: int, chunk_size: int) -> List[tuple]:
+    """Split ``[0, total)`` into contiguous half-open ``(start, stop)`` ranges.
+
+    Parameters
+    ----------
+    total : int
+        Length of the axis to partition (assumed > 0).
+    chunk_size : int
+        Maximum width of each range (must be > 0); the final range is shorter
+        when ``total`` is not an exact multiple of ``chunk_size``.
+
+    Returns
+    -------
+    list of tuple
+        ``(start, stop)`` ranges that exactly tile ``[0, total)``.
+    """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be > 0, got {chunk_size}.")
+    return [
+        (start, min(start + chunk_size, total))
+        for start in range(0, total, chunk_size)
+    ]
+
+
+def _concat_posterior_chunks(
+    chunks: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Concatenate per-chunk posterior dicts along the sample axis (axis 0).
+
+    Used by the sample-batched posterior draw: each chunk holds a disjoint
+    block of posterior samples but identical keys and identical non-sample
+    axes, so array values are concatenated along axis 0 to reassemble the
+    full ``n_samples`` draw.  Non-array (or zero-dim) entries are taken from
+    the first chunk unchanged.  Inputs are expected to already be host
+    (NumPy) arrays so the concatenation never re-occupies device memory.
+
+    Parameters
+    ----------
+    chunks : list of dict
+        Per-chunk posterior-samples dicts, in sample order. Must be non-empty.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A single dict whose array values span every chunk's samples.
+    """
+    if len(chunks) == 1:
+        return chunks[0]
+    merged: Dict[str, Any] = {}
+    for key, value in chunks[0].items():
+        if getattr(value, "ndim", 0) >= 1:
+            merged[key] = np.concatenate(
+                [chunk[key] for chunk in chunks], axis=0
+            )
+        else:
+            merged[key] = value
+    return merged
+
+
 class PosteriorPredictiveSamplingMixin:
     """Mixin providing posterior and constrained predictive sampling methods."""
 
@@ -246,7 +305,14 @@ class PosteriorPredictiveSamplingMixin:
         n_samples : int, optional
             Number of posterior samples to generate (default: 100)
         batch_size : Optional[int], optional
-            Batch size for memory-efficient sampling (default: None)
+            If set, cap peak device memory by drawing the posterior in chunks
+            of ``batch_size`` samples along the *sample* axis, offloading each
+            chunk to host and concatenating. Device memory then stays bounded
+            by one chunk regardless of ``n_samples``. The cell plate is never
+            subsampled, so cell-specific tensors (e.g. ``p_capture``) keep
+            their full ``n_cells`` width; a batched draw is returned as NumPy
+            arrays (host accumulation makes ``convert_to_numpy`` redundant).
+            Default: None (a single draw of all ``n_samples`` at once).
         store_samples : bool, optional
             Whether to store samples in self.posterior_samples (default: True)
         convert_to_numpy : bool, optional
@@ -300,23 +366,50 @@ class PosteriorPredictiveSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
-        # Concatenated multi-dataset results: Predictive cannot run
-        # on the stacked params because the guide was built for
-        # single-dataset models.  Decompose into per-dataset sampling.
-        if self._is_concatenated_multi_dataset():
-            posterior_samples = self._get_posterior_samples_per_dataset(
-                rng_key=rng_key,
-                n_samples=n_samples,
-                batch_size=batch_size,
+        # A single full-cell-width draw of ``draw_n`` posterior samples.
+        # Concatenated multi-dataset results cannot run ``Predictive`` on the
+        # stacked params (the guide was built for single-dataset models), so
+        # they decompose into per-dataset sampling; jointly hierarchical
+        # multi-dataset models use the standard path directly.  ``batch_size``
+        # is intentionally NOT forwarded here — it is a *sample-axis* memory
+        # control handled below, not a cell-plate subsample.
+        def _draw_full_width(draw_key, draw_n):
+            if self._is_concatenated_multi_dataset():
+                return self._get_posterior_samples_per_dataset(
+                    rng_key=draw_key,
+                    n_samples=draw_n,
+                    batch_size=None,
+                    counts=counts,
+                )
+            return self._get_posterior_samples_standard(
+                rng_key=draw_key,
+                n_samples=draw_n,
+                batch_size=None,
                 counts=counts,
             )
+
+        # ``batch_size`` bounds peak device memory by chunking the *sample*
+        # axis: each chunk draws up to ``batch_size`` samples at full cell width
+        # and is offloaded to host before the next chunk is drawn, so the device
+        # only ever holds one chunk's worth of draws regardless of
+        # ``n_samples``.  Chunking the sample axis (rather than the cell axis)
+        # shrinks *every* posterior tensor uniformly -- including the gene- and
+        # dataset-level tensors that have no cell axis and dominate memory -- and
+        # never subsamples the cell plate, so cell-specific tensors (e.g.
+        # ``p_capture``) are returned at full ``n_cells`` width.  Each chunk uses
+        # an independent rng subkey so the pooled draws are distinct samples.
+        if batch_size is not None and int(batch_size) < int(n_samples):
+            ranges = _split_index_ranges(int(n_samples), int(batch_size))
+            subkeys = random.split(rng_key, len(ranges))
+            chunks = [
+                _convert_to_numpy(
+                    _draw_full_width(subkey, int(stop - start))
+                )
+                for (start, stop), subkey in zip(ranges, subkeys)
+            ]
+            posterior_samples = _concat_posterior_chunks(chunks)
         else:
-            posterior_samples = self._get_posterior_samples_standard(
-                rng_key=rng_key,
-                n_samples=n_samples,
-                batch_size=batch_size,
-                counts=counts,
-            )
+            posterior_samples = _draw_full_width(rng_key, int(n_samples))
 
         # Single-leaf multi-factor view (from get_dataset on a multi-factor
         # fit): the model reconstructs a size-1 dataset axis; squeeze it so the

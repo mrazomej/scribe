@@ -3607,6 +3607,17 @@ class TestBatchedPosteriorMultiDataset:
         )
         return anndata.AnnData(X=x, obs=obs)
 
+    @staticmethod
+    def _assert_cell_posterior_width(samples, n_cells: int):
+        """Assert that cell-specific capture posterior spans all cells."""
+        key = None
+        if "p_capture" in samples:
+            key = "p_capture"
+        elif "phi_capture" in samples:
+            key = "phi_capture"
+        assert key is not None, "Expected p_capture or phi_capture in samples."
+        assert samples[key].shape[1] == n_cells
+
     def test_batched_posterior_nbvcp_multi_dataset(self):
         """nbvcp + 2 datasets + batched posterior sampling works."""
         import scribe
@@ -3630,6 +3641,7 @@ class TestBatchedPosteriorMultiDataset:
         )
         assert isinstance(samples, dict)
         assert "r" in samples or "mu" in samples
+        self._assert_cell_posterior_width(samples, result.n_cells)
 
     def test_batched_posterior_zinbvcp_multi_dataset(self):
         """zinbvcp + 2 datasets + batched posterior sampling works."""
@@ -3654,6 +3666,7 @@ class TestBatchedPosteriorMultiDataset:
         assert isinstance(samples, dict)
         assert "r" in samples or "mu" in samples
         assert "gate" in samples
+        self._assert_cell_posterior_width(samples, result.n_cells)
 
     def test_batched_posterior_nbvcp_mix_multi_dataset(self):
         """nbvcp mixture + 2 datasets + batched posterior sampling works.
@@ -3685,6 +3698,13 @@ class TestBatchedPosteriorMultiDataset:
         assert isinstance(samples, dict)
         assert "r" in samples or "mu" in samples
         assert "mixing_weights" in samples or "mixing_concentrations" in samples
+        self._assert_cell_posterior_width(samples, result.n_cells)
+
+        # Regress the original failure path: after batched posterior sampling,
+        # a leaf view must be able to slice cell-specific posterior keys.
+        ds0 = result.get_dataset(0)
+        assert ds0.posterior_samples is not None
+        self._assert_cell_posterior_width(ds0.posterior_samples, ds0.n_cells)
 
 
 # ==============================================================================
