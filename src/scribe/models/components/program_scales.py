@@ -77,6 +77,39 @@ _DEFAULT_TAU_LOC = -2.0
 _DEFAULT_TAU_SCALE = 0.5
 
 
+def program_scales_from_raw(
+    raw: jnp.ndarray, tau_raw: jnp.ndarray
+) -> jnp.ndarray:
+    """Map NCP raw effects + unconstrained ``tau`` to constrained scales ``s``.
+
+    This is the **single source of truth** for the raw→``s`` transform, shared
+    by the SVI sampler (:func:`sample_program_scales`) and the Laplace obs
+    model (which optimizes ``raw``/``tau_raw`` as plain params and rebuilds
+    ``s`` with this function). Keeping the gauge in one place means the two
+    inference backends cannot drift.
+
+    Applies, in order: ``tau = softplus(tau_raw)``; the sum-to-zero centering
+    of ``raw`` across donors (per program); then ``s = exp(tau · centered)``.
+
+    Parameters
+    ----------
+    raw : jnp.ndarray, shape ``(n_datasets, latent_dim)``
+        Standard-Normal NCP raw effects (pre-centering).
+    tau_raw : jnp.ndarray, scalar
+        Unconstrained shared between-donor scale; ``softplus`` maps it to the
+        positive ``tau_s``.
+
+    Returns
+    -------
+    s : jnp.ndarray, shape ``(n_datasets, latent_dim)``
+        Constrained relative per-donor program activity, strictly positive,
+        with ``mean_d log s_{d,k} == 0`` per program.
+    """
+    tau_s = jnn.softplus(tau_raw)
+    centered = raw - jnp.mean(raw, axis=0, keepdims=True)
+    return jnp.exp(tau_s * centered)
+
+
 def sample_program_scales(
     n_datasets: int,
     latent_dim: int,
@@ -142,15 +175,15 @@ def sample_program_scales(
     :func:`effective_loadings` rather than re-deriving the broadcast.
     """
     # --- Shared between-donor scale tau_s (one scalar for all K programs) ----
-    # Sample the unconstrained raw and map through softplus. We keep the raw as
-    # the latent site (rather than a TransformedDistribution) so the guide can
-    # place a simple mean-field Normal on it -- the cleanest pairing for the
-    # hand-written guide block used by the NBLN VAE path.
+    # Sample the unconstrained raw; ``program_scales_from_raw`` applies the
+    # softplus. We keep the raw as the latent site (rather than a
+    # TransformedDistribution) so the guide can place a simple mean-field
+    # Normal on it -- the cleanest pairing for the hand-written guide block
+    # used by the NBLN VAE path.
     tau_raw = numpyro.sample(
         f"{site_prefix}{_TAU_RAW_SUFFIX}",
         dist.Normal(tau_loc, tau_scale),
     )
-    tau_s = jnn.softplus(tau_raw)
 
     # --- Non-centered raw effects, shape (D, K) ------------------------------
     # ``to_event(2)`` marks both the donor and program axes as event dims so
@@ -160,18 +193,14 @@ def sample_program_scales(
         dist.Normal(0.0, 1.0).expand([n_datasets, latent_dim]).to_event(2),
     )
 
-    # --- Sum-to-zero gauge: center across donors (axis 0) per program --------
-    # Subtracting the per-column donor-mean enforces ``mean_d log s_{d,k} = 0``,
-    # which removes the per-column scale gauge between ``W`` and ``s`` (see the
-    # module docstring). ``keepdims=True`` so the (1, K) mean broadcasts back
-    # over the donor axis.
-    eps_centered = eps - jnp.mean(eps, axis=0, keepdims=True)
-
-    # --- Assemble constrained scales -----------------------------------------
-    log_s = numpyro.deterministic(
-        f"{site_prefix}{_LOG_SUFFIX}", tau_s * eps_centered
-    )
-    s = numpyro.deterministic(site_prefix, jnp.exp(log_s))
+    # --- Assemble constrained scales via the shared raw->s transform ---------
+    # ``program_scales_from_raw`` owns the sum-to-zero gauge + softplus + exp,
+    # so SVI here and the Laplace obs model use the identical mapping. We pass
+    # ``tau_raw`` (pre-softplus) to keep the gauge in one place; recompute
+    # ``log s`` only for the deterministic display site.
+    s = program_scales_from_raw(eps, tau_raw)
+    numpyro.deterministic(f"{site_prefix}{_LOG_SUFFIX}", jnp.log(s))
+    numpyro.deterministic(site_prefix, s)
     return s
 
 

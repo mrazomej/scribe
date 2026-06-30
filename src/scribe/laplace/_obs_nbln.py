@@ -75,6 +75,21 @@ from ._newton_nbln import (
     nbln_grad_x_only_norm_batch_decoupled,
     nbln_grad_x_only_offset_norm_batch,
     nbln_grad_x_only_offset_norm_batch_decoupled,
+    # Per-cell-W twins for the per-donor correlation hierarchy (Rung 1).
+    laplace_log_det_neg_H_batch_percellW,
+    laplace_log_det_neg_H_batch_x_only_percellW,
+    laplace_log_det_neg_H_batch_x_only_offset_percellW,
+    laplace_newton_batch_percellW,
+    laplace_newton_batch_x_only_percellW,
+    laplace_newton_batch_x_only_offset_percellW,
+    nbln_grad_split_batch_percellW,
+    nbln_grad_x_only_norm_batch_percellW,
+    nbln_grad_x_only_offset_norm_batch_percellW,
+)
+from ..models.components.program_scales import (
+    program_scales_from_raw,
+    _DEFAULT_TAU_LOC,
+    _DEFAULT_TAU_SCALE,
 )
 
 
@@ -108,6 +123,24 @@ def _woodbury_logdet_sigma(W: jnp.ndarray, d: jnp.ndarray) -> jnp.ndarray:
     log_det_K = 2.0 * jnp.sum(jnp.log(jnp.diag(L_K)))
     log_det_d = jnp.sum(jnp.log(d))
     return log_det_d + log_det_K
+
+
+# Per-cell-W Woodbury twins for the per-donor correlation hierarchy (Rung 1).
+# Under the hierarchy each cell's prior covariance is
+# ``Σ_{σ(c)} = W_eff,{σ(c)} W_eff,{σ(c)}ᵀ + diag(d)`` with per-cell effective
+# loadings, so the quadratic form and log-det of Σ become per-cell. Both are
+# ``jax.vmap`` over the cell axis of ``W`` (shape ``(N, G, k)``); ``d`` stays
+# shared. The per-cell math is the shared helper above, unchanged.
+_woodbury_quadform_percellW = jax.vmap(
+    # Each call gets a single cell's W ``(G, k)`` and diff ``(G,)``; reshape
+    # diff to ``(1, G)`` so the batched helper returns a length-1 vector, then
+    # take the scalar.
+    lambda Wc, d_, diffc: _woodbury_quadform(Wc, d_, diffc[None, :])[0],
+    in_axes=(0, None, 0),
+)
+_woodbury_logdet_sigma_percellW = jax.vmap(
+    _woodbury_logdet_sigma, in_axes=(0, None)
+)
 
 
 # =====================================================================
@@ -173,6 +206,7 @@ class NBLNObservationModel(LaplaceObservationModel):
         max_step: float = 5.0,
         gene_names: Optional[Any] = None,
         has_pooled_other: Optional[bool] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ):
         self._max_step = float(max_step)
 
@@ -194,6 +228,30 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         # Built lazily in init_state once `n_genes` is available.
         self._axis_layout = None
+
+        # --- Per-donor correlation hierarchy (NB-LogNormal Rung 1) -----------
+        # When active, each cell's latent prior covariance is donor-specific:
+        #   Σ_{σ(c)} = W diag(s_{σ(c)}^2) Wᵀ + diag(d).
+        # The shared ``program_scales_active`` predicate (used by the SVI path
+        # too) gates this on ``correlation_hierarchy == "program_scales"``,
+        # ``n_datasets >= 2``, and per-cell ``dataset_indices`` being present.
+        # ``s`` (the relative per-donor program activity) is learned as two
+        # extra optimizer globals (``program_scale_raw`` and
+        # ``program_scale_tau_raw``) added in ``init_state``; ``loss_fn``
+        # rebuilds ``s`` via the shared ``program_scales_from_raw`` transform,
+        # gathers per-cell effective loadings ``W_eff = W·diag(s_{σ(c)})``, and
+        # dispatches to the ``_percellW`` Newton kernels.
+        from ..models.components.program_scales import program_scales_active
+
+        self._dataset_indices = (
+            None
+            if dataset_indices is None
+            else jnp.asarray(dataset_indices, dtype=jnp.int32)
+        )
+        self._n_datasets = int(getattr(model_config, "n_datasets", 0) or 0)
+        self._hier_active = program_scales_active(
+            model_config, self._dataset_indices
+        )
 
         # Phase-3: pluggable shrinkage prior on W.  Default no-op so
         # existing callers are unaffected.
@@ -334,6 +392,18 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         _layout = self._axis_layout
 
+        # Per-donor correlation hierarchy: legacy-layout only for now. The
+        # decoupled (correlate_other_column=False) deviation-form kernels get
+        # their own per-cell-W twins in a follow-up; until then, fail fast with
+        # an actionable message rather than silently ignoring the hierarchy.
+        if self._hier_active and _layout.decoupled:
+            raise NotImplementedError(
+                "correlation_hierarchy='program_scales' is not yet supported "
+                "for the decoupled layout (correlate_other_column=False). "
+                "Pass correlate_other_column=True to use the per-donor "
+                "correlation hierarchy for now."
+            )
+
         # Commit 2b: the decoupled path is now fully implemented.  No
         # early guard here — init proceeds for both layouts.  The
         # decoupled branches in ``loss_fn`` / ``final_sweep`` /
@@ -397,6 +467,24 @@ class NBLNObservationModel(LaplaceObservationModel):
             "d_loc": d_loc_init,
             "r_loc": r_loc_init,
         }
+
+        # --- Per-donor correlation hierarchy: program-scale globals ----------
+        # When active, learn the relative per-donor program-activity ``s_d``
+        # through two extra optimizer globals (non-centered + sum-to-zero
+        # gauge, see ``program_scales_from_raw``):
+        #   • ``program_scale_raw``     : (n_datasets, K) NCP raw effects.
+        #   • ``program_scale_tau_raw`` : scalar unconstrained between-donor
+        #     scale (softplus -> τ_s).
+        # Initialized at the prior centre (raw = 0 -> s = 1 for every donor;
+        # tau_raw = τ_loc) so the fit starts at "no between-donor difference"
+        # and grows ``s_d`` only as the data support it.
+        if self._hier_active:
+            full_init["program_scale_raw"] = jnp.zeros(
+                (self._n_datasets, latent_dim), dtype=jnp.float32
+            )
+            full_init["program_scale_tau_raw"] = jnp.asarray(
+                _DEFAULT_TAU_LOC, dtype=jnp.float32
+            )
 
         # --- Phase-3: W-prior aux params ---
         # The strategy decides which aux params (if any) to register.
@@ -503,6 +591,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             aux_data["eta_frozen"] = jnp.asarray(
                 self._freeze_values["eta"]["loc"], dtype=jnp.float32
             )
+        # Per-cell donor/leaf index for the correlation hierarchy. Riding it
+        # on aux_data means ``aux_batch_slice`` gathers it per mini-batch
+        # automatically (same as eta_scale/eta_frozen), so ``loss_fn`` can map
+        # each cell to its donor's program scales.
+        if self._hier_active:
+            aux_data["dataset_indices"] = self._dataset_indices
 
         return InitState(
             params=params,
@@ -594,6 +688,53 @@ class NBLNObservationModel(LaplaceObservationModel):
         d_sg = jax.lax.stop_gradient(d)
         r_sg = jax.lax.stop_gradient(r)
 
+        # --- Per-donor correlation hierarchy: per-cell effective loadings ----
+        # When the hierarchy is active, each cell's prior covariance uses its
+        # donor's effective loadings ``W_eff,{σ(c)} = W·diag(s_{σ(c)})``. We
+        # build two per-cell ``(B, G, k)`` tensors and select the per-cell-W
+        # Newton/log-det/grad-norm twins:
+        #   • ``W_eff_sg``   — stop-grad (Newton + grad-norm inputs).
+        #   • ``W_eff_live`` — gradient-bearing (log det(-H) and the MVN prior),
+        #     the two terms through which ``s_d`` receives its gradient.
+        # When inactive, everything aliases to the shared-W path (bit-equal to
+        # today). ``d`` stays shared across donors in both cases.
+        if self._hier_active:
+            s_live = program_scales_from_raw(
+                params_full["program_scale_raw"],
+                params_full["program_scale_tau_raw"],
+            )  # (n_datasets, K), relative per-donor program activity
+            ds_batch = aux_batch["dataset_indices"]  # (B,) int
+            s_cell = s_live[ds_batch]  # (B, K)
+            W_eff_live = W[None, :, :] * s_cell[:, None, :]  # (B, G, K)
+            W_eff_sg = W_sg[None, :, :] * jax.lax.stop_gradient(s_cell)[
+                :, None, :
+            ]
+            W_newton, W_logdet = W_eff_sg, W_eff_live
+            _woodbury_quad = _woodbury_quadform_percellW
+            _woodbury_logdet = _woodbury_logdet_sigma_percellW
+            _nt_x_only = laplace_newton_batch_x_only_percellW
+            _nt_x_only_offset = laplace_newton_batch_x_only_offset_percellW
+            _nt_joint = laplace_newton_batch_percellW
+            _ld_x_only = laplace_log_det_neg_H_batch_x_only_percellW
+            _ld_x_only_offset = laplace_log_det_neg_H_batch_x_only_offset_percellW
+            _ld_joint = laplace_log_det_neg_H_batch_percellW
+            _gn_x_only = nbln_grad_x_only_norm_batch_percellW
+            _gn_x_only_offset = nbln_grad_x_only_offset_norm_batch_percellW
+            _gn_joint = nbln_grad_split_batch_percellW
+        else:
+            W_newton, W_logdet = W_sg, W
+            _woodbury_quad = _woodbury_quadform
+            _woodbury_logdet = _woodbury_logdet_sigma
+            _nt_x_only = laplace_newton_batch_x_only
+            _nt_x_only_offset = laplace_newton_batch_x_only_offset
+            _nt_joint = laplace_newton_batch
+            _ld_x_only = laplace_log_det_neg_H_batch_x_only
+            _ld_x_only_offset = laplace_log_det_neg_H_batch_x_only_offset
+            _ld_joint = laplace_log_det_neg_H_batch
+            _gn_x_only = nbln_grad_x_only_norm_batch
+            _gn_x_only_offset = nbln_grad_x_only_offset_norm_batch
+            _gn_joint = nbln_grad_split_batch
+
         # --- Four-way Newton dispatch (Round-4 R5-2) ---
         # 1. Frozen eta: x-only Newton with offset = freeze value.
         # 2. Soft eta (prior or anchor): joint (x, η) Newton.
@@ -634,11 +775,14 @@ class NBLNObservationModel(LaplaceObservationModel):
                     eta_offset_sg, _kept_idx_j,
                 )
             else:
-                x_new, _gn, _ = laplace_newton_batch_x_only_offset(
+                # ``_nt_*``/``_ld_*``/``_gn_*`` + ``W_newton``/``W_logdet`` are
+                # the shared-W kernels (+ shared W) when the hierarchy is off,
+                # and the per-cell-W twins (+ per-cell W_eff) when it is on.
+                x_new, _gn, _ = _nt_x_only_offset(
                     latent_init_sg,
                     counts_batch,
                     mu_sg,
-                    W_sg,
+                    W_newton,
                     d_sg,
                     r_sg,
                     eta_offset_sg,
@@ -648,12 +792,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = eta_offset_batch  # carried forward to result/PPC.
-                log_det = laplace_log_det_neg_H_batch_x_only_offset(
+                log_det = _ld_x_only_offset(
                     x_new,
                     eta_offset_batch,
                     counts_batch,
                     r,
-                    W,
+                    W_logdet,
                     d,
                 )
                 # Use the *offset-aware* helper: NB factors must be
@@ -661,11 +805,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                 # ``x`` (the latter saturates ``p → 0`` and produces
                 # enormous spurious gradients while the Newton MAP is
                 # actually fine).
-                gn_x = nbln_grad_x_only_offset_norm_batch(
+                gn_x = _gn_x_only_offset(
                     x_new,
                     counts_batch,
                     mu_sg,
-                    W_sg,
+                    W_newton,
                     d_sg,
                     r_sg,
                     eta_offset_sg,
@@ -702,12 +846,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                     _kept_idx_j, eta_anchor_sg, sigma_eta_sg,
                 )
             else:
-                x_new, eta_new, _gn, _ = laplace_newton_batch(
+                x_new, eta_new, _gn, _ = _nt_joint(
                     latent_init_sg,
                     eta_init_sg,
                     counts_batch,
                     mu_sg,
-                    W_sg,
+                    W_newton,
                     d_sg,
                     r_sg,
                     eta_anchor_sg,
@@ -718,16 +862,17 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = jax.lax.stop_gradient(eta_new)
-                log_det = laplace_log_det_neg_H_batch(
-                    x_new, eta_new, counts_batch, r, W, d, sigma_eta_batch
+                log_det = _ld_joint(
+                    x_new, eta_new, counts_batch, r, W_logdet, d,
+                    sigma_eta_batch,
                 )
                 # Per-block grad split for the progress display.
-                gn_x, gn_eta = nbln_grad_split_batch(
+                gn_x, gn_eta = _gn_joint(
                     x_new,
                     eta_new,
                     counts_batch,
                     mu_sg,
-                    W_sg,
+                    W_newton,
                     d_sg,
                     r_sg,
                     eta_anchor_sg,
@@ -759,11 +904,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                     _kept_idx_j,
                 )
             else:
-                x_new, _gn, _ = laplace_newton_batch_x_only(
+                x_new, _gn, _ = _nt_x_only(
                     latent_init_sg,
                     counts_batch,
                     mu_sg,
-                    W_sg,
+                    W_newton,
                     d_sg,
                     r_sg,
                     n_newton,
@@ -772,11 +917,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = eta_init  # placeholder, not used downstream
-                log_det = laplace_log_det_neg_H_batch_x_only(
-                    x_new, None, counts_batch, r, W, d, 1.0
+                log_det = _ld_x_only(
+                    x_new, None, counts_batch, r, W_logdet, d, 1.0
                 )
-                gn_x = nbln_grad_x_only_norm_batch(
-                    x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
+                gn_x = _gn_x_only(
+                    x_new, counts_batch, mu_sg, W_newton, d_sg, r_sg
                 )
             gn_blocks = {"x": gn_x}
 
@@ -836,8 +981,14 @@ class NBLNObservationModel(LaplaceObservationModel):
         else:
             diff = x_new - mu[None, :]
             G = mu.shape[0]
-        quad = _woodbury_quadform(W, d, diff)
-        log_det_sigma = _woodbury_logdet_sigma(W, d)
+        # ``_woodbury_quad``/``_woodbury_logdet`` + ``W_logdet`` are the shared
+        # helpers (+ shared W) when the hierarchy is off, and the per-cell-W
+        # twins (+ per-cell W_eff_live) when it is on -- so each cell's MVN
+        # prior uses its donor's Σ_{σ(c)}. ``log_det_sigma`` is then per-cell
+        # (shape (B,)) under the hierarchy and a scalar otherwise; both
+        # broadcast against the per-cell ``quad``.
+        quad = _woodbury_quad(W_logdet, d, diff)
+        log_det_sigma = _woodbury_logdet(W_logdet, d)
         mvn_lp = (
             -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
         )
@@ -882,6 +1033,23 @@ class NBLNObservationModel(LaplaceObservationModel):
                     params_full["mu"]
                 )
             )
+
+        # --- Per-donor correlation hierarchy: program-scale prior ------------
+        # The non-centered prior on s_d: the raw effects are standard Normal
+        # (the NCP latent), and the shared between-donor scale tau_raw gets the
+        # softplus-Normal hyperprior (same defaults as the SVI primitive). The
+        # sum-to-zero gauge is enforced by ``program_scales_from_raw`` and adds
+        # no prior term. These mirror the ``_prior_r``/``_prior_mu`` terms: a
+        # parameter prior, not scaled by ``data_scale``.
+        if self._hier_active:
+            global_prior_lp = global_prior_lp + jnp.sum(
+                dist.Normal(0.0, 1.0).log_prob(
+                    params_full["program_scale_raw"]
+                )
+            )
+            global_prior_lp = global_prior_lp + dist.Normal(
+                _DEFAULT_TAU_LOC, _DEFAULT_TAU_SCALE
+            ).log_prob(params_full["program_scale_tau_raw"])
 
         # Phase-3: W-prior contribution on the gauge-invariant projection.
         # For NBLN, the rigid-translation gauge means raw W has an
@@ -929,6 +1097,29 @@ class NBLNObservationModel(LaplaceObservationModel):
         d = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
         r = jax.lax.stop_gradient(self._pos_forward(params_full["r_loc"]))
 
+        # Per-donor correlation hierarchy: per-cell effective loadings for the
+        # full-data final sweep (mirrors loss_fn). All inputs are stop-grad
+        # here, so we fold s into a single per-cell ``(N, G, k)`` tensor and
+        # select the per-cell-W Newton twins; ``W_fs`` aliases the shared W
+        # when the hierarchy is off (bit-equal to today).
+        if self._hier_active:
+            _s_fs = program_scales_from_raw(
+                params_full["program_scale_raw"],
+                params_full["program_scale_tau_raw"],
+            )
+            _ds_fs = aux_data["dataset_indices"]  # (N,)
+            W_fs = jax.lax.stop_gradient(
+                W[None, :, :] * _s_fs[_ds_fs][:, None, :]
+            )  # (N, G, K)
+            _fs_nt_x_only = laplace_newton_batch_x_only_percellW
+            _fs_nt_x_only_offset = laplace_newton_batch_x_only_offset_percellW
+            _fs_nt_joint = laplace_newton_batch_percellW
+        else:
+            W_fs = W
+            _fs_nt_x_only = laplace_newton_batch_x_only
+            _fs_nt_x_only_offset = laplace_newton_batch_x_only_offset
+            _fs_nt_joint = laplace_newton_batch
+
         # Decoupled-layout branch (Commit 2b): the final sweep mirrors
         # ``loss_fn``'s four-way Newton dispatch but lives on the kept
         # axis.  ``latent_loc`` carries ``x_dev`` shape ``(N, G_kept)``;
@@ -950,11 +1141,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                     )
                 )
             else:
-                x_final, gn_final, _ = laplace_newton_batch_x_only_offset(
+                x_final, gn_final, _ = _fs_nt_x_only_offset(
                     latent_loc,
                     count_data,
                     mu,
-                    W,
+                    W_fs,
                     d,
                     r,
                     eta_offset,
@@ -976,12 +1167,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                     )
                 )
             else:
-                x_final, eta_final, gn_final, _ = laplace_newton_batch(
+                x_final, eta_final, gn_final, _ = _fs_nt_joint(
                     latent_loc,
                     eta_loc,
                     count_data,
                     mu,
-                    W,
+                    W_fs,
                     d,
                     r,
                     eta_anchor,
@@ -997,11 +1188,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                     n_newton, damping, self._max_step,
                 )
             else:
-                x_final, gn_final, _ = laplace_newton_batch_x_only(
+                x_final, gn_final, _ = _fs_nt_x_only(
                     latent_loc,
                     count_data,
                     mu,
-                    W,
+                    W_fs,
                     d,
                     r,
                     n_newton,

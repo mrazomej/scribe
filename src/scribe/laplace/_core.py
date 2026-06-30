@@ -62,6 +62,25 @@ class CoreResultsMixin:
         """
         return self.d
 
+    def get_program_activity(self):
+        """Return the per-donor relative program activity ``s`` (Rung 1).
+
+        Populated only for NB-LogNormal fits with
+        ``correlation_hierarchy="program_scales"``; ``None`` otherwise.
+
+        Returns
+        -------
+        jnp.ndarray or None
+            Shape ``(n_datasets, K)``. Entry ``s[d, k]`` is donor ``d``'s
+            relative activity of regulatory program ``k`` (geometric mean 1
+            across donors per program, by the sum-to-zero gauge), so donor
+            ``d``'s gene-gene covariance is
+            ``Σ_d = W diag(s[d]^2) Wᵀ + diag(d_resid)``. Read alongside
+            :meth:`get_W` (the shared programs) and
+            ``result.program_scale_tau`` (the between-donor scale ``τ_s``).
+        """
+        return self.program_activity
+
     def get_sigma(self) -> jnp.ndarray:
         """Return prior covariance ``Σ = W Wᵀ + diag(d)``.
 

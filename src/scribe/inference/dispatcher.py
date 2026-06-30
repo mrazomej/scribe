@@ -239,6 +239,7 @@ def _laplace_handler(
         w_prior=w_prior,
         filtered_gene_names=filtered_gene_names,
         has_pooled_other=has_pooled_other,
+        dataset_indices=dataset_indices,
     )
 
 
