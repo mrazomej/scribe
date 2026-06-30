@@ -370,6 +370,7 @@ results = scribe.fit(
 | `informative_priors_from` | `None` | Cascade source for NBLN (Phase-1 soft cascade) — see [NBLN workflow](#nbln-cascade--freeze--shrinkage-workflow) below |
 | `informative_priors_freeze` | `("r", "eta")` | Cascade freeze parameters for NBLN (Phase-2). Accepts either internal short names (`"r"`, `"mu"`, `"eta"`) or their descriptive aliases (`"dispersion"`, `"expression"`/`"mean_expression"`, `"capture_efficiency"`). Both forms work identically. |
 | `priors={"loadings": ...}` | `None` | Loadings-matrix shrinkage strategy spec for PLN/NBLN (Phase-3) |
+| `correlation_hierarchy` | `None` | `"program_scales"` for grouped fits: share \(W\) across datasets, learn per-dataset activity \(s_d\). Requires `dataset_key`/`hierarchy` with \(\ge 2\) datasets and (v1) the legacy layout `correlate_other_column=True`. See [hierarchical correlation](#hierarchical-gene-gene-correlation-across-datasets) below |
 
 ### Laplace configuration
 
@@ -526,6 +527,77 @@ combined recipe above is the recommended production workflow for
 NBLN fits.
 
 **Theory:** [NB Log-Normal Model](../theory/nb-lognormal.md), [Loadings-Matrix Shrinkage Priors](../theory/loadings-shrinkage.md)
+
+### Hierarchical gene-gene correlation across datasets
+
+For a **grouped** fit (donors / conditions / batches), the correlation
+models can share the low-rank regulatory programs \(W\) across datasets
+while learning a per-dataset *relative* program activity \(s_d\), inducing
+\(\Sigma_d = W\,\text{diag}(s_d^2)\,W^\top + \text{diag}(d)\). Turn it on
+with `correlation_hierarchy="program_scales"` and a grouping:
+
+```python
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",     # shared W, per-donor s_d
+    dataset_key="donor",                         # >= 2 datasets (legacy or decoupled)
+    informative_priors_from=svi_results,         # cascade composes with the hierarchy
+    informative_priors_freeze=("r",),            # pool dispersion across donors
+    latent_dim=16, n_steps=20_000,
+)
+s   = laplace_results.get_program_activity()   # (D, K) relative activities s_d
+tau = laplace_results.program_scale_tau        # scalar between-dataset scale τ_s
+```
+
+This is orthogonal to the three cascade phases above and **composes** with
+them — the freeze pins the marginals (\(r\), \(\eta\)) from an upstream fit
+while the \(s_d\) hierarchy learns the per-dataset correlation on top. The
+same flag is available on the SVI/VAE path as a fast structure check. See
+[Theory: Hierarchical gene-gene correlation across
+datasets](../theory/nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets)
+for the model, the effective-loadings collapse, and identifiability.
+
+#### Per-donor marginal cascade (freezing \(\mu^{(d)}\))
+
+When the cascade source is itself a **hierarchical** (multi-dataset)
+independent-gene fit, you can additionally freeze a *per-donor* mean
+\(\mu^{(d)}\): add `"mu"` to `informative_priors_freeze`. Each cell then uses
+its donor's prior mean \(\mu^{(\sigma(c))}\) (a per-cell gather, the same
+mechanism as the program scales), so the correlation hierarchy and the
+marginal hierarchy compose — dataset-specific *expression levels* from the
+SVI source plus dataset-specific *correlation* from \(s_d\), over a shared
+\(W\):
+
+```python
+# Step 1: hierarchical independent-gene SVI source (per-donor mean)
+svi_hier = scribe.fit(
+    adata, model="nbvcp", unconstrained=True, dataset_key="donor",
+    priors={"mean_expression": {"donor": "gaussian"}},
+    inference_method="svi", n_steps=50_000,
+)
+
+# Step 2: NBLN-Laplace freezing per-donor mu^(d) + pooled r
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",
+    correlate_other_column=True,
+    dataset_key="donor",
+    informative_priors_from=svi_hier,
+    informative_priors_freeze=("r", "mu"),   # pool r, freeze per-donor mu^(d)
+    latent_dim=16, n_steps=20_000,
+)
+mu_d = laplace_results.get_gene_mean_per_dataset()  # (D, G) per-donor means
+mu   = laplace_results.get_mu()                     # (G,) donor-pooled mean
+```
+
+The extractor reads the source's per-donor `get_map()["mu"]` (a hierarchical
+fit already exposes it as `(D, G)`), **aligns the source leaves to the target
+leaf ordering by label**, and log-transforms to the NBLN log-rate; the
+per-donor dispersion is pooled to a shared \(r\). Per-donor \(\mu^{(d)}\) is
+supported only alongside `correlation_hierarchy="program_scales"` (the
+per-cell-\(W\) Newton path); freezing it without the hierarchy raises a clear
+error. `get_gene_mean_per_dataset()` returns the `(D, G)` table; `get_mu()`
+stays the donor-pooled `(G,)`.
 
 ### Results
 

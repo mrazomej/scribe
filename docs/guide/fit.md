@@ -825,6 +825,38 @@ a Python-API feature — the CLI supports a single `dataset_key`.
 
 **Full guide:** [Theory: Hierarchical Priors > Multiple datasets](../theory/hierarchical-priors.md#extension-to-multiple-datasets)
 
+### Hierarchical gene-gene correlation (correlation models)
+
+The hierarchy above links the *marginal* (per-gene) parameters across
+datasets. For the **correlation models** (`nbln` / `pln` / `lnm`), a grouped
+fit can additionally share the low-rank regulatory programs \(W\) while
+giving each dataset its own *relative* program activity \(s_d\) — a
+hierarchical gene-gene correlation. Turn it on with the structural kwarg
+`correlation_hierarchy="program_scales"`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `correlation_hierarchy` | `None` | `"program_scales"` shares \(W\) across datasets and learns a per-dataset activity \(s_d\) (covariance \(\Sigma_d = W\,\text{diag}(s_d^2)\,W^\top + \text{diag}(d)\)). Requires a grouping (`dataset_key`/`hierarchy`) with \(\ge 2\) datasets |
+
+```python
+# Hierarchical correlation across donors (Laplace path)
+results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",   # shared W, per-donor s_d
+    dataset_key="donor",
+    informative_priors_from=hier_svi_source,   # freeze marginals (recommended)
+    informative_priors_freeze=("r",),          # pool dispersion across donors
+    latent_dim=16, n_steps=50_000,
+)
+s = results.get_program_activity()   # (D, K) relative per-donor activity s_d
+```
+
+Supported on both the SVI/VAE and Laplace paths, and (for Laplace) on both
+the legacy and decoupled (`correlate_other_column=False`) layouts. See
+[Theory: NB Log-Normal > Hierarchical gene-gene correlation across
+datasets](../theory/nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets)
+for the model and identifiability.
+
 ---
 
 ## 12. Custom prior hyperparameters
@@ -1151,6 +1183,7 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `regime_dataset_target` | `None` | `str` (TwoState) |
     | `overdispersion_dataset_independent` | `True` | `bool` (TwoState) |
     | `capture_scaling_prior` | `"none"` | `str` |
+    | `correlation_hierarchy` | `None` | `str` (`"program_scales"`; correlation models) |
     | `auto_downgrade_single_dataset_hierarchy` | `True` | `bool` |
 
     Dataset/factor prior families themselves go in `priors` as `{level: family}`

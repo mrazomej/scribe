@@ -30,6 +30,10 @@ from . import _guide_flow_mixin as _guide_flow_mixin
 
 # Import concrete symbols used directly by GuideBuilder.
 from ._guide_amortized_mixin import _setup_grouped_amortized_latent
+from ..components.program_scales import (
+    guide_program_scales,
+    program_scales_active,
+)
 from ._guide_cell_specific_mixin import (
     guide_mu_eta_hierarchy,
     setup_cell_specific_guide,
@@ -321,6 +325,26 @@ class GuideBuilder:
                     grouped_guide = gf
                     break
 
+            # ================================================================
+            # 2.75. Hierarchical correlation: variational block for the global
+            #       per-donor program-activity scales s_d (NB-LogNormal Rung 1)
+            # ================================================================
+            # Paired with ``sample_program_scales`` in the model builder.  s_d
+            # is a GLOBAL latent (shape ``(n_datasets, latent_dim)``), so its
+            # mean-field variational block lives HERE -- outside the cell plate.
+            # Gated on the SAME predicate as the model
+            # (``program_scales_active``) plus the presence of a VAE latent
+            # guide; if the two builders disagreed, the mean-field ELBO would
+            # see a latent site present in one trace but not the other and
+            # raise.
+            if grouped_guide is not None and program_scales_active(
+                model_config, dataset_indices
+            ):
+                guide_program_scales(
+                    n_datasets=int(model_config.n_datasets),
+                    latent_dim=int(grouped_guide.latent_spec.latent_dim),
+                )
+
             if cell_specs:
                 # Linen modules are registered automatically when flax_module is called
                 # No need to pre-register - flax_module handles parameter registration
@@ -336,6 +360,7 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=None,
+                                dataset_indices=dataset_indices,
                             )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()
@@ -361,6 +386,7 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=idx,
+                                dataset_indices=dataset_indices,
                             )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()

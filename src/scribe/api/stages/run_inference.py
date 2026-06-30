@@ -351,24 +351,87 @@ def dispatch_inference(ctx: FitContext) -> None:
             else:
                 from ...laplace.priors import freeze_values_from_results
 
-                freeze_values = freeze_values_from_results(
-                    informative_priors_from,
-                    target_positive_transform=_pos_xform_str,
-                    target_n_genes=ctx.n_genes,
-                    target_n_cells=ctx.n_cells,
-                    target_gene_names=target_gene_names,
-                    target_gene_mask=getattr(
-                        ctx, "_gene_coverage_mask", None
-                    ),
-                    source_counts=ctx.count_data,
-                    freeze_params=freeze_params,
-                    map_method=ctx.kwargs.get("cascade_map_method"),
-                    verbose=bool(
-                        ctx.kwargs.get(
-                            "informative_priors_verbose", True
-                        )
-                    ),
+                # Per-donor marginal cascade (step 4b): when the target
+                # uses the correlation hierarchy and freezes ``mu`` AND the
+                # SVI source is itself hierarchical (multi-dataset on the
+                # mean), reconstruct a per-donor leaf-level mean ``mu^(d)``
+                # of shape (D, G) aligned to the target's leaf ordering.
+                # Every other case routes to the pooled (G,) extractor.
+                _tgt_hier = (
+                    getattr(
+                        ctx.model_config, "correlation_hierarchy", None
+                    )
+                    == "program_scales"
                 )
+                _src_gs = getattr(
+                    getattr(
+                        informative_priors_from, "model_config", None
+                    ),
+                    "grouping_spec",
+                    None,
+                )
+                _src_is_hier = (
+                    _src_gs is not None
+                    and getattr(_src_gs, "leaf_labels", None) is not None
+                    and len(_src_gs.leaf_labels) > 1
+                )
+                _tgt_gs = getattr(ctx.model_config, "grouping_spec", None)
+                _tgt_labels = (
+                    list(_tgt_gs.leaf_labels)
+                    if _tgt_gs is not None
+                    and getattr(_tgt_gs, "leaf_labels", None) is not None
+                    else None
+                )
+                if (
+                    _tgt_hier
+                    and "mu" in freeze_params
+                    and _src_is_hier
+                    and _tgt_labels is not None
+                    and len(_tgt_labels) > 1
+                ):
+                    from ...laplace.priors import (
+                        freeze_values_hier_from_results,
+                    )
+
+                    freeze_values = freeze_values_hier_from_results(
+                        informative_priors_from,
+                        target_positive_transform=_pos_xform_str,
+                        target_n_genes=ctx.n_genes,
+                        target_n_cells=ctx.n_cells,
+                        target_leaf_labels=_tgt_labels,
+                        target_n_datasets=len(_tgt_labels),
+                        target_gene_names=target_gene_names,
+                        target_gene_mask=getattr(
+                            ctx, "_gene_coverage_mask", None
+                        ),
+                        source_counts=ctx.count_data,
+                        freeze_params=freeze_params,
+                        map_method=ctx.kwargs.get("cascade_map_method"),
+                        verbose=bool(
+                            ctx.kwargs.get(
+                                "informative_priors_verbose", True
+                            )
+                        ),
+                    )
+                else:
+                    freeze_values = freeze_values_from_results(
+                        informative_priors_from,
+                        target_positive_transform=_pos_xform_str,
+                        target_n_genes=ctx.n_genes,
+                        target_n_cells=ctx.n_cells,
+                        target_gene_names=target_gene_names,
+                        target_gene_mask=getattr(
+                            ctx, "_gene_coverage_mask", None
+                        ),
+                        source_counts=ctx.count_data,
+                        freeze_params=freeze_params,
+                        map_method=ctx.kwargs.get("cascade_map_method"),
+                        verbose=bool(
+                            ctx.kwargs.get(
+                                "informative_priors_verbose", True
+                            )
+                        ),
+                    )
         # Embed the SVI results object so PPC and get_distributions can
         # consult its guide directly for frozen parameters.  Per Round-5
         # R5-6: store counts on the Laplace result (cascade_source_counts)

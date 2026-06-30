@@ -166,6 +166,12 @@ def _vae_handler(
         svi_config=config,
         data_config=data_config,
         seed=seed,
+        # Forward grouping / annotation arrays so grouped VAE fits (e.g. the
+        # per-donor correlation hierarchy) reach the model + guide.  These
+        # were previously dropped here, silently disabling any dataset-axis
+        # structure on VAE-inference models.
+        annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
     )
 
 
@@ -233,6 +239,7 @@ def _laplace_handler(
         w_prior=w_prior,
         filtered_gene_names=filtered_gene_names,
         has_pooled_other=has_pooled_other,
+        dataset_indices=dataset_indices,
     )
 
 

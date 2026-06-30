@@ -98,6 +98,11 @@ def build_config_from_preset(
     # ``scribe.models.config.base.ModelConfig.correlate_other_column``
     # for the per-model wiring status and the default-flip schedule.
     correlate_other_column: bool = True,
+    # Hierarchical gene-gene correlation across donors for the correlation
+    # models (pln/nbln/lnm).  ``None`` -> single shared Σ; ``"program_scales"``
+    # -> shared loadings W with a hierarchical per-donor *relative*
+    # program-activity vector s_d.  See ``ModelConfig.correlation_hierarchy``.
+    correlation_hierarchy: Optional[str] = None,
     guide_rank: Optional[int] = None,
     joint_params: Optional[Union[str, List[str]]] = None,
     dense_params: Optional[Union[str, List[str]]] = None,
@@ -757,6 +762,12 @@ def build_config_from_preset(
     # docstring).  Forward unconditionally; non-applicable model
     # families simply ignore the flag.
     builder._correlate_other_column = bool(correlate_other_column)
+
+    # Forward the per-donor correlation hierarchy mode.  ``None`` (default)
+    # leaves the single shared Σ; ``"program_scales"`` activates the Rung-1
+    # per-donor program-activity hierarchy in the model/guide builders (gated
+    # there on a grouped, correlation-model fit).
+    builder._correlation_hierarchy = correlation_hierarchy
 
     # Forward positive_transform (string or per-parameter dict) to the
     # underlying ``ModelConfig``.  The dict form is normalized to

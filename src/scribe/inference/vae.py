@@ -50,6 +50,8 @@ def _run_vae_inference(
     svi_config: SVIConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> ScribeVAEResults:
     """Execute VAE inference using the composable factory.
 
@@ -71,6 +73,15 @@ def _run_vae_inference(
         Data processing configuration.
     seed : int
         Random seed.
+    annotation_prior_logits : Optional[jnp.ndarray], default=None
+        Per-cell mixture annotation logits, forwarded to the model/guide.
+        ``None`` for non-annotated fits.
+    dataset_indices : Optional[jnp.ndarray], default=None
+        Per-cell donor/leaf index for grouped (multi-dataset) fits. Required
+        for the per-donor correlation hierarchy
+        (``correlation_hierarchy="program_scales"``); without it the model
+        and guide cannot gather the per-cell program scales and the hierarchy
+        silently stays inert.
 
     Returns
     -------
@@ -93,6 +104,12 @@ def _run_vae_inference(
         # beta plumbing when ``svi_config.kl_annealing`` is set
         # (default-ON for VAE via ``preset_builder``).
         "kl_annealing": svi_config.kl_annealing,
+        # Forward grouping / annotation arrays so grouped VAE fits (e.g. the
+        # per-donor correlation hierarchy) reach the model + guide.  Without
+        # this, ``dataset_indices`` is dropped and any dataset-axis structure
+        # in a VAE fit silently stays inert.
+        "annotation_prior_logits": annotation_prior_logits,
+        "dataset_indices": dataset_indices,
     }
     resolved_optimizer = resolve_svi_optimizer(svi_config)
     if resolved_optimizer is not None:

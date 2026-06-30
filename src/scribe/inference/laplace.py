@@ -42,6 +42,7 @@ def _run_laplace_inference(
     w_prior: Optional[Dict[str, Any]] = None,
     filtered_gene_names: Optional[Any] = None,
     has_pooled_other: Optional[bool] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -153,6 +154,9 @@ def _run_laplace_inference(
         # them to the per-model obs-model constructors.
         filtered_gene_names=filtered_gene_names,
         has_pooled_other=has_pooled_other,
+        # Per-cell donor/leaf index for the per-donor correlation hierarchy
+        # (NB-LogNormal Rung 1).  ``None`` for non-grouped fits.
+        dataset_indices=dataset_indices,
     )
 
     g = run_result.globals
@@ -263,6 +267,26 @@ def _run_laplace_inference(
                 )
             )
 
+        # Per-donor correlation hierarchy (Rung 1): when the program-scale
+        # globals were fitted, reconstruct the constrained relative per-donor
+        # program activity ``s`` (n_datasets, K) and the between-donor scale
+        # ``tau_s`` via the shared raw->s transform, and surface them on the
+        # result for ``get_program_activity()`` / DE-style comparisons.
+        program_activity_val = None
+        program_scale_tau_val = None
+        if "program_scale_raw" in g and "program_scale_tau_raw" in g:
+            from ..models.components.program_scales import (
+                program_scales_from_raw,
+            )
+            import jax.nn as _jnn
+
+            program_activity_val = program_scales_from_raw(
+                g["program_scale_raw"], g["program_scale_tau_raw"]
+            )
+            program_scale_tau_val = float(
+                _jnn.softplus(g["program_scale_tau_raw"])
+            )
+
         # Round-5 R5-5: cascade fields live only on the bridge-level
         # result.  `cascade_source` carries the SVI guide for PPC and
         # `get_distributions()` routing; `cascade_source_counts` caches
@@ -279,6 +303,11 @@ def _run_laplace_inference(
             r_scale=r_scale_val,
             mu_loc=mu_loc_val,
             mu_scale=mu_scale_val,
+            program_activity=program_activity_val,
+            program_scale_tau=program_scale_tau_val,
+            gene_mean_per_dataset=getattr(
+                run_result, "gene_mean_per_dataset", None
+            ),
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,
             cascade_source_counts=cascade_source_counts,

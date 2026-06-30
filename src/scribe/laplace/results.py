@@ -257,6 +257,27 @@ class ScribeLaplaceResults(
     # NBLN fields:
     r_loc: Optional[jnp.ndarray] = None
     r_scale: Optional[jnp.ndarray] = None
+    # Per-donor correlation hierarchy (NB-LogNormal Rung 1).  Populated only
+    # when fitted with ``correlation_hierarchy="program_scales"``.
+    #   ``program_activity`` : (n_datasets, K) relative per-donor program
+    #     activity ``s_d`` (geometric mean 1 across donors per program, by the
+    #     sum-to-zero gauge); donor ``d`` scales latent program ``k`` by
+    #     ``s_{d,k}``, inducing Σ_d = W diag(s_d^2) Wᵀ + diag(d).
+    #   ``program_scale_tau`` : scalar between-donor scale ``τ_s`` (softplus of
+    #     the fitted unconstrained hyperparameter); larger ⇒ more program-usage
+    #     variation across donors.
+    program_activity: Optional[jnp.ndarray] = None
+    program_scale_tau: Optional[float] = None
+    # Per-donor marginal cascade (NB-LogNormal step 4b).  Populated only
+    # when the hierarchical-marginal cascade froze a per-donor mean
+    # ``mu^(d)`` (a hierarchical independent-gene SVI source + ``"mu"`` in
+    # ``informative_priors_freeze``).
+    #   ``gene_mean_per_dataset`` : (n_datasets, G) log-rate mean per
+    #     dataset (row ``d`` aligns with the target leaf indexing /
+    #     ``dataset_indices``).  ``self.mu`` carries the pooled per-gene
+    #     mean for the standard accessors; this field carries the unpooled
+    #     per-donor table.  Access via ``get_gene_mean_per_dataset()``.
+    gene_mean_per_dataset: Optional[jnp.ndarray] = None
     # TSLN-rate fields (unconstrained location/scale of the three
     # positive globals; constrained values are in the non-_loc
     # attributes above):

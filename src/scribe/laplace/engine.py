@@ -68,6 +68,7 @@ class LaplaceInferenceEngine:
         w_prior: Optional[Dict[str, Any]] = None,
         filtered_gene_names: Optional[Any] = None,
         has_pooled_other: Optional[bool] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -165,6 +166,11 @@ class LaplaceInferenceEngine:
                 ),
                 gene_names=filtered_gene_names,
                 has_pooled_other=has_pooled_other,
+                # Per-cell donor/leaf index for the per-donor correlation
+                # hierarchy (NB-LogNormal Rung 1).  ``None`` for non-grouped
+                # fits; the obs model only activates the hierarchy when this
+                # is present AND model_config.correlation_hierarchy is set.
+                dataset_indices=dataset_indices,
             )
         elif bm == "twostate_ln_rate":
             from ._obs_twostate_ln_rate import TwoStateLNRateObservationModel
