@@ -558,6 +558,48 @@ same flag is available on the SVI/VAE path as a fast structure check. See
 datasets](../theory/nb-lognormal.md#hierarchical-gene-gene-correlation-across-datasets)
 for the model, the effective-loadings collapse, and identifiability.
 
+#### Per-donor marginal cascade (freezing \(\mu^{(d)}\))
+
+When the cascade source is itself a **hierarchical** (multi-dataset)
+independent-gene fit, you can additionally freeze a *per-donor* mean
+\(\mu^{(d)}\): add `"mu"` to `informative_priors_freeze`. Each cell then uses
+its donor's prior mean \(\mu^{(\sigma(c))}\) (a per-cell gather, the same
+mechanism as the program scales), so the correlation hierarchy and the
+marginal hierarchy compose — dataset-specific *expression levels* from the
+SVI source plus dataset-specific *correlation* from \(s_d\), over a shared
+\(W\):
+
+```python
+# Step 1: hierarchical independent-gene SVI source (per-donor mean)
+svi_hier = scribe.fit(
+    adata, model="nbvcp", unconstrained=True, dataset_key="donor",
+    priors={"mean_expression": {"donor": "gaussian"}},
+    inference_method="svi", n_steps=50_000,
+)
+
+# Step 2: NBLN-Laplace freezing per-donor mu^(d) + pooled r
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",
+    correlate_other_column=True,
+    dataset_key="donor",
+    informative_priors_from=svi_hier,
+    informative_priors_freeze=("r", "mu"),   # pool r, freeze per-donor mu^(d)
+    latent_dim=16, n_steps=20_000,
+)
+mu_d = laplace_results.get_gene_mean_per_dataset()  # (D, G) per-donor means
+mu   = laplace_results.get_mu()                     # (G,) donor-pooled mean
+```
+
+The extractor reads the source's per-donor `get_map()["mu"]` (a hierarchical
+fit already exposes it as `(D, G)`), **aligns the source leaves to the target
+leaf ordering by label**, and log-transforms to the NBLN log-rate; the
+per-donor dispersion is pooled to a shared \(r\). Per-donor \(\mu^{(d)}\) is
+supported only alongside `correlation_hierarchy="program_scales"` (the
+per-cell-\(W\) Newton path); freezing it without the hierarchy raises a clear
+error. `get_gene_mean_per_dataset()` returns the `(D, G)` table; `get_mu()`
+stays the donor-pooled `(G,)`.
+
 ### Results
 
 `scribe.fit()` with `inference_method="laplace"` returns a

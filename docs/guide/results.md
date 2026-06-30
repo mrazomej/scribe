@@ -604,6 +604,7 @@ losses = results.loss_history
 | `results.p_capture_loc` | Per-cell MAP capture probabilities |
 | `results.get_program_activity()` | `(D, K)` relative per-dataset program activities \(s_d\) (only when fit with `correlation_hierarchy="program_scales"`; else `None`) |
 | `results.program_scale_tau` | Scalar between-dataset activity scale \(\tau_s\) (hierarchical correlation fits) |
+| `results.get_gene_mean_per_dataset()` | `(D, G)` per-dataset log-rate means \(\mu^{(d)}\), populated only when a **hierarchical** SVI source froze a per-donor mean (`informative_priors_from=` a multi-dataset fit with `"mu"` in `informative_priors_freeze`). `get_mu()` stays the donor-pooled `(G,)`; this exposes the unpooled table. `None` otherwise |
 
 ### Model-dispatching behavior
 

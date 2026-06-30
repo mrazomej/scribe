@@ -1119,9 +1119,35 @@ How it works internally:
 
 **Recommended cascade.** As with any NBLN-Laplace fit on low-count data,
 freeze the marginals from a well-identified upstream fit. The
-hierarchy-aware cascade (freezing per-donor `μ^(d)` + pooled `r` from an
-independent-gene *hierarchical* SVI fit) is the robust path for real
-data; see the cascade sections above for the single-dataset analogue.
+hierarchy-aware cascade — freezing **per-donor `μ^(d)`** + pooled `r` from
+an independent-gene *hierarchical* SVI fit — is the robust path for real
+data:
+
+```python
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",
+    correlate_other_column=True, dataset_key="donor",
+    informative_priors_from=hier_svi,          # a hierarchical (per-donor) SVI fit
+    informative_priors_freeze=("r", "mu"),     # pool r, freeze per-donor mu^(d)
+    latent_dim=16, n_steps=50_000,
+)
+mu_d = laplace_results.get_gene_mean_per_dataset()  # (D, G) per-donor means
+```
+
+When the source `model_config.grouping_spec` carries >1 leaf and the target
+freezes `mu`, the bridge routes to `freeze_values_hier_from_results`, which
+reads the source's per-donor `get_map()["mu"]` (a hierarchical fit exposes
+it as `(D, G)` directly), **aligns source leaves to the target leaf order by
+label**, log-transforms to the NBLN log-rate, and pools the per-donor `r` to
+a shared `(G,)`. In the obs model each cell uses `mu^{(σ(c))}` via the
+per-cell-mu Newton twins (`_percellWmu`); `pack_result` pools `mu` to `(G,)`
+for the standard accessors (the per-cell means already live in `x_loc`) and
+surfaces the unpooled table on `get_gene_mean_per_dataset()`. Per-donor
+`μ^(d)` requires the correlation hierarchy (the per-cell-`W` path); the soft
+cascade pools any per-donor `(S, D, G)` samples over the dataset axis for a
+population anchor. See the cascade sections above for the single-dataset
+analogue.
 
 **Caveats.**
 

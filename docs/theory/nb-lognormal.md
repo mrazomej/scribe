@@ -414,14 +414,40 @@ robust path on real data — and it **composes** with the correlation
 hierarchy: freeze \(\underline{r}\) (and \(\underline{\eta}\)) from an
 independent-gene fit while the \(\underline{s}_d\) hierarchy learns on top.
 
+When the cascade source is itself a **hierarchical** (multi-dataset) fit,
+the freeze can also pin a *per-donor* mean \(\mu^{(d)}\): add `"mu"` to
+`informative_priors_freeze`. Each cell then takes its donor's prior mean
+\(\mu^{(\sigma(c))}\) (a per-cell gather, the same mechanism as the program
+scales), so the marginal and correlation hierarchies compose in one fit:
+
+```python
+results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    correlation_hierarchy="program_scales",
+    correlate_other_column=True, dataset_key="donor",
+    informative_priors_from=hier_svi_source,   # a hierarchical (per-donor) SVI fit
+    informative_priors_freeze=("r", "mu"),     # pool r, freeze per-donor mu^(d)
+    latent_dim=16, n_steps=50_000,
+)
+mu_d = results.get_gene_mean_per_dataset()   # (D, G) per-donor log-rate means
+mu   = results.get_mu()                      # (G,) donor-pooled mean
+```
+
+The extractor reads the source's per-donor mean (a hierarchical fit exposes
+it directly), aligns the source leaves to the target leaf ordering *by
+label*, and pools the dispersion \(\underline{r}\) to a shared value.
+Per-donor \(\mu^{(d)}\) requires the correlation hierarchy (the per-cell
+\(\underline{\underline{W}}\) Newton path).
+
 !!! info "Relationship to the marginal hierarchy"
     The [multi-dataset hierarchy](hierarchical-priors.md#extension-to-multiple-datasets)
     links *first-order* structure — how much each gene's expression level
     \(\mu_g^{(d)}\) shifts between datasets. The correlation hierarchy links
     *second-order* structure — how much each regulatory module's activity
     \(s_{d,k}\) shifts. They are complementary and compose: a joint model
-    can carry dataset-specific marginals *and* dataset-specific correlation
-    over a shared \(\underline{\underline{W}}\).
+    can carry dataset-specific marginals (frozen via the per-donor
+    \(\mu^{(d)}\) cascade above) *and* dataset-specific correlation over a
+    shared \(\underline{\underline{W}}\).
 
 !!! warning "Few-dataset regime"
     With a small number of datasets \(D\) (e.g. a 7-donor panel), the
