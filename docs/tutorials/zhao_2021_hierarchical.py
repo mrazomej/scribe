@@ -322,8 +322,8 @@ def _(mo):
 
 
 @app.cell
-def _(results_joint, scribe):
-    _fig = scribe.viz.plot_loss(results_joint, figsize=(7, 3))
+def _(results_joint):
+    _fig = results_joint.viz.plot_loss(figsize=(7, 3))
     _fig.fig
     return
 
@@ -341,10 +341,10 @@ def _(mo):
 
 
 @app.cell
-def _(adata_joint, results_joint, scribe):
+def _(adata_joint, results_joint):
     # Per-leaf observed-vs-predicted means. The panels auto-arrange as a
     # condition (rows) x donor (cols) grid from the model's grouping spec.
-    _fig = scribe.viz.plot_mean_calibration(results_joint, counts=adata_joint)
+    _fig = results_joint.viz.plot_mean_calibration(counts=adata_joint)
     _fig.fig
     return
 
@@ -370,9 +370,8 @@ def _(mo):
 
 
 @app.cell
-def _(adata_joint, results_joint, scribe):
-    _fig = scribe.viz.plot_ppc(
-        results_joint,
+def _(adata_joint, results_joint):
+    _fig = results_joint.viz.plot_ppc(
         adata_joint,
         n_genes=16,
         n_rows=4,
@@ -396,10 +395,9 @@ def _(mo):
 
 
 @app.cell
-def _(adata_joint, results_joint, scribe):
+def _(adata_joint, results_joint):
     # A data-rich donor: its individual fit should track the data tightly.
-    _fig = scribe.viz.plot_ppc(
-        results_joint,
+    _fig = results_joint.viz.plot_ppc(
         adata_joint,
         dataset={"sample": "PW030", "perturbation": "control"},
         n_genes=16,
@@ -412,11 +410,10 @@ def _(adata_joint, results_joint, scribe):
 
 
 @app.cell
-def _(adata_joint, results_joint, scribe):
+def _(adata_joint, results_joint):
     # A sparse donor the mean-calibration flagged: the same diagnostic, where
     # the individual fit is most stretched (≈1,200 cells vs ≈19,000 above).
-    _fig = scribe.viz.plot_ppc(
-        results_joint,
+    _fig = results_joint.viz.plot_ppc(
         adata_joint,
         dataset={"sample": "PW051", "perturbation": "control"},
         n_genes=16,
@@ -564,6 +561,7 @@ def _(results_joint, scribe):
         "panobinostat",
         n_samples=5_000,
         batch_size=500,
+        convert_to_numpy=True,
     )
     results_de
     return (results_de,)
