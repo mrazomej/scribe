@@ -1055,6 +1055,12 @@ PARAM_REGISTRY: Tuple[ParamName, ...] = (
     ParamName("bnb_concentration", "overdispersion", "overdispersion"),
     # --- Low-rank loadings matrix W (PLN/NBLN/LNM-family) ---
     ParamName("W", "loadings"),
+    # --- Per-leaf module weights s (NBLN hierarchical correlation, Rung 1.5) ---
+    # The realized ``s`` is a deterministic function of per-factor NCP globals,
+    # not a directly-sampled site; this registry entry exists so the unified
+    # ``priors`` dict can route ``priors={"module_weight": {level: family}}``
+    # into ``Factor.priors["module_weight"]`` via HIERARCHY_TARGET_BY_SITE.
+    ParamName("s", "module_weight", "module_weight"),
     # --- LNM compositional parameters ---
     ParamName("y_alr", "alr_coordinates"),
     ParamName("d_lnm", "alr_residual_scale"),

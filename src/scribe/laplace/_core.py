@@ -62,24 +62,58 @@ class CoreResultsMixin:
         """
         return self.d
 
-    def get_program_activity(self):
-        """Return the per-donor relative program activity ``s`` (Rung 1).
+    def get_module_weights(self):
+        """Return the realized per-leaf relative module weights ``s`` (Rung 1.5).
 
-        Populated only for NB-LogNormal fits with
-        ``correlation_hierarchy="program_scales"``; ``None`` otherwise.
+        Populated only for NB-LogNormal fits with a
+        ``priors={"module_weight": {...}}`` hierarchy; ``None`` otherwise.
 
         Returns
         -------
         jnp.ndarray or None
-            Shape ``(n_datasets, K)``. Entry ``s[d, k]`` is donor ``d``'s
-            relative activity of regulatory program ``k`` (geometric mean 1
-            across donors per program, by the sum-to-zero gauge), so donor
-            ``d``'s gene-gene covariance is
-            ``Σ_d = W diag(s[d]^2) Wᵀ + diag(d_resid)``. Read alongside
-            :meth:`get_W` (the shared programs) and
-            ``result.program_scale_tau`` (the between-donor scale ``τ_s``).
+            Shape ``(n_leaves, K)``. Entry ``s[d, k]`` is leaf ``d``'s relative
+            weight of gene module ``k`` (geometric mean 1 across leaves per
+            module, by the global leaf-anchor gauge), so leaf ``d``'s gene-gene
+            covariance is ``Σ_d = W diag(s[d]^2) Wᵀ + diag(d_resid)``. Read
+            alongside :meth:`get_W` (the shared modules),
+            :meth:`get_module_weight_effects` (the per-factor decomposition),
+            and ``result.module_weight_tau_by_factor`` (per-factor scales).
         """
-        return self.program_activity
+        return self.module_weights
+
+    def get_module_weight_effects(self):
+        """Return the per-factor centered module-weight effects (Rung 1.5).
+
+        The additive decomposition of ``log s`` over the grouping factors:
+        ``log s_{leaf,k} = sum_f alpha^(f)_{kappa_f(leaf),k}``. Populated only
+        for NB-LogNormal fits with a ``module_weight`` hierarchy.
+
+        Returns
+        -------
+        dict or None
+            Map factor name -> centered effect ``alpha^(f)`` of shape
+            ``(L_f, K)`` (e.g. ``"perturbation"`` -> how each module's weight
+            shifts per treatment level, separate from donor idiosyncrasy).
+        """
+        return self.module_weight_effects
+
+    def get_module_weight_tau(self):
+        """Return the module-weight between-level scale(s) ``τ`` (Rung 1.5).
+
+        Returns
+        -------
+        dict or float or None
+            The per-factor dict ``{factor -> τ_f}`` when multiple random
+            factors are present, the scalar ``τ`` for the single-random-factor
+            case, or ``None`` when the hierarchy is inactive.
+        """
+        # The bridge sets the scalar ``module_weight_tau`` only for the
+        # single-random-factor case; prefer it so that case returns a scalar.
+        if self.module_weight_tau is not None:
+            return self.module_weight_tau
+        # An all-fixed-factor hierarchy has no learned scale: return None
+        # (not an empty dict) so ``is None`` checks read correctly.
+        return self.module_weight_tau_by_factor or None
 
     def get_gene_mean_per_dataset(self):
         """Return the per-donor frozen gene means ``mu^(d)`` (step 4b).

@@ -458,16 +458,17 @@ def _create_vae_model(
     # the amortization-gap mis-specification a leaf-blind encoder would incur.
     #
     # The DECODER is deliberately left leaf-free: feeding the leaf to the
-    # decoder would let it absorb between-leaf program-activity differences,
+    # decoder would let it absorb between-leaf module-weight differences,
     # competing with ``s_d`` and breaking the Rung-1 / common-principal-
-    # components identifiability (the donor effect must live solely in ``s_d``,
+    # components identifiability (the leaf effect must live solely in ``s_d``,
     # not in a leaf-specific decoding map).  See
-    # ``scribe.models.components.program_scales`` and
+    # ``scribe.models.components.module_weights`` and
     # ``paper/_nb_lognormal.qmd`` §sec-nbln-hierarchical-correlation.
-    if (
-        getattr(model_config, "correlation_hierarchy", None) == "program_scales"
-        and (model_config.n_datasets or 0) >= 2
-    ):
+    _mw_gs = getattr(model_config, "grouping_spec", None)
+    _mw_hier = _mw_gs is not None and any(
+        f.family("module_weight") != "none" for f in _mw_gs.factors
+    )
+    if _mw_hier and (model_config.n_datasets or 0) >= 2:
         _n_leaves = int(model_config.n_datasets)
         encoder_kwargs["covariate_specs"] = [
             CovariateSpec(

@@ -112,8 +112,9 @@ from ._newton_nbln import (
     nbln_grad_x_only_norm_batch_decoupled_percellWmu,
     nbln_grad_x_only_offset_norm_batch_decoupled_percellWmu,
 )
-from ..models.components.program_scales import (
-    program_scales_from_raw,
+from ..models.components.module_weights import (
+    module_weights_leaf_from_factors,
+    effective_loadings,
     _DEFAULT_TAU_LOC,
     _DEFAULT_TAU_SCALE,
 )
@@ -255,19 +256,25 @@ class NBLNObservationModel(LaplaceObservationModel):
         # Built lazily in init_state once `n_genes` is available.
         self._axis_layout = None
 
-        # --- Per-donor correlation hierarchy (NB-LogNormal Rung 1) -----------
-        # When active, each cell's latent prior covariance is donor-specific:
+        # --- Per-leaf module-weight hierarchy (NB-LogNormal Rung 1.5) --------
+        # When active, each cell's latent prior covariance is leaf-specific:
         #   Σ_{σ(c)} = W diag(s_{σ(c)}^2) Wᵀ + diag(d).
-        # The shared ``program_scales_active`` predicate (used by the SVI path
-        # too) gates this on ``correlation_hierarchy == "program_scales"``,
-        # ``n_datasets >= 2``, and per-cell ``dataset_indices`` being present.
-        # ``s`` (the relative per-donor program activity) is learned as two
-        # extra optimizer globals (``program_scale_raw`` and
-        # ``program_scale_tau_raw``) added in ``init_state``; ``loss_fn``
-        # rebuilds ``s`` via the shared ``program_scales_from_raw`` transform,
-        # gathers per-cell effective loadings ``W_eff = W·diag(s_{σ(c)})``, and
-        # dispatches to the ``_percellW`` Newton kernels.
-        from ..models.components.program_scales import program_scales_active
+        # The shared ``module_weights_active`` predicate (used by the SVI path
+        # too) gates this on a declared ``module_weight`` prior family (any
+        # grouping factor), ``n_datasets >= 2``, and per-cell ``dataset_indices``
+        # being present.  ``s`` (the relative per-leaf module weight) decomposes
+        # additively over the grouping factors; it is learned as per-factor
+        # optimizer globals (``module_weight_raw__{factor}`` and, for random
+        # factors, ``module_weight_tau_raw__{factor}``) added in ``init_state``.
+        # ``loss_fn`` rebuilds the realized ``s_leaf (n_leaves,K)`` via the
+        # shared ``module_weights_leaf_from_factors`` assembly, gathers per-cell
+        # effective loadings ``W_eff = W·diag(s_{σ(c)})``, and dispatches to the
+        # (unchanged) ``_percellW`` Newton kernels.  ``self._mw_ops`` caches the
+        # per-factor projections + gather maps + rank guard built once here.
+        from ..models.components.module_weights import (
+            module_weights_active,
+            build_module_weight_operators,
+        )
 
         self._dataset_indices = (
             None
@@ -275,8 +282,17 @@ class NBLNObservationModel(LaplaceObservationModel):
             else jnp.asarray(dataset_indices, dtype=jnp.int32)
         )
         self._n_datasets = int(getattr(model_config, "n_datasets", 0) or 0)
-        self._hier_active = program_scales_active(
+        self._hier_active = module_weights_active(
             model_config, self._dataset_indices
+        )
+        # Build the per-factor operator bundle (projections, gather maps, rank
+        # guard) once. ``None`` when the hierarchy is inactive.
+        self._mw_ops = (
+            build_module_weight_operators(
+                getattr(model_config, "grouping_spec", None)
+            )
+            if self._hier_active
+            else None
         )
 
         # Phase-3: pluggable shrinkage prior on W.  Default no-op so
@@ -389,10 +405,11 @@ class NBLNObservationModel(LaplaceObservationModel):
                 if not self._hier_active:
                     raise NotImplementedError(
                         "Per-donor frozen mu (shape (D, G)) is supported "
-                        "in v1 only together with "
-                        'correlation_hierarchy="program_scales" (the '
-                        "per-cell-W Newton path).  Pool the cascade mean "
-                        "to (G,), or enable the correlation hierarchy."
+                        "in v1 only together with a module_weight "
+                        "hierarchy (the per-cell-W Newton path). Pool the "
+                        "cascade mean to (G,), or declare a module_weight "
+                        'prior, e.g. priors={"module_weight": '
+                        '{"<factor>": "gaussian"}}.'
                     )
                 if int(_mu_loc.shape[0]) != self._n_datasets:
                     raise ValueError(
@@ -530,23 +547,27 @@ class NBLNObservationModel(LaplaceObservationModel):
             "r_loc": r_loc_init,
         }
 
-        # --- Per-donor correlation hierarchy: program-scale globals ----------
-        # When active, learn the relative per-donor program-activity ``s_d``
-        # through two extra optimizer globals (non-centered + sum-to-zero
-        # gauge, see ``program_scales_from_raw``):
-        #   • ``program_scale_raw``     : (n_datasets, K) NCP raw effects.
-        #   • ``program_scale_tau_raw`` : scalar unconstrained between-donor
-        #     scale (softplus -> τ_s).
-        # Initialized at the prior centre (raw = 0 -> s = 1 for every donor;
-        # tau_raw = τ_loc) so the fit starts at "no between-donor difference"
-        # and grows ``s_d`` only as the data support it.
+        # --- Per-leaf module-weight hierarchy: per-factor globals ------------
+        # When active, learn the relative per-leaf module weight ``s`` through
+        # an additive decomposition over the grouping factors. Each
+        # participating factor ``f`` contributes optimizer globals (NCP +
+        # per-factor centering gauge, see ``module_weights_leaf_from_factors``):
+        #   • ``module_weight_raw__{f}``     : (L_f, K) NCP raw effects.
+        #   • ``module_weight_tau_raw__{f}`` : scalar unconstrained between-level
+        #     scale (softplus -> τ_f) — random factors only; fixed factors use a
+        #     constant ``fixed_scale`` baked into ``self._mw_ops``.
+        # Initialized at the prior centre (raw = 0 -> s = 1 for every leaf;
+        # tau_raw = τ_loc) so the fit starts at "no between-leaf difference" and
+        # grows the effects only as the data support them.
         if self._hier_active:
-            full_init["program_scale_raw"] = jnp.zeros(
-                (self._n_datasets, latent_dim), dtype=jnp.float32
-            )
-            full_init["program_scale_tau_raw"] = jnp.asarray(
-                _DEFAULT_TAU_LOC, dtype=jnp.float32
-            )
+            for _f in self._mw_ops["factors"]:
+                full_init[f"module_weight_raw__{_f['site']}"] = jnp.zeros(
+                    (_f["n_levels"], latent_dim), dtype=jnp.float32
+                )
+                if _f["is_random"]:
+                    full_init[
+                        f"module_weight_tau_raw__{_f['site']}"
+                    ] = jnp.asarray(_DEFAULT_TAU_LOC, dtype=jnp.float32)
 
         # --- Phase-3: W-prior aux params ---
         # The strategy decides which aux params (if any) to register.
@@ -766,27 +787,40 @@ class NBLNObservationModel(LaplaceObservationModel):
         mu_newton = mu_sg
         mu_cell_live = None
 
-        # --- Per-donor correlation hierarchy: per-cell effective loadings ----
+        # --- Per-leaf module-weight hierarchy: per-cell effective loadings ---
         # When the hierarchy is active, each cell's prior covariance uses its
-        # donor's effective loadings ``W_eff,{σ(c)} = W·diag(s_{σ(c)})``. We
+        # leaf's effective loadings ``W_eff,{σ(c)} = W·diag(s_{σ(c)})``. We
         # build two per-cell ``(B, G, k)`` tensors and select the per-cell-W
         # Newton/log-det/grad-norm twins:
         #   • ``W_eff_sg``   — stop-grad (Newton + grad-norm inputs).
         #   • ``W_eff_live`` — gradient-bearing (log det(-H) and the MVN prior),
-        #     the two terms through which ``s_d`` receives its gradient.
+        #     the two terms through which the module weights receive gradient.
         # When inactive, everything aliases to the shared-W path (bit-equal to
-        # today). ``d`` stays shared across donors in both cases.
+        # today). ``d`` stays shared across leaves in both cases.  The realized
+        # ``s_leaf`` is assembled from the per-factor globals via the shared
+        # additive helper; the per-cell gather below is UNCHANGED from the flat
+        # path, so the Newton kernel boundary is untouched.
         if self._hier_active:
-            s_live = program_scales_from_raw(
-                params_full["program_scale_raw"],
-                params_full["program_scale_tau_raw"],
-            )  # (n_datasets, K), relative per-donor program activity
+            _mw_raw = {
+                _f["name"]: params_full[f"module_weight_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+            }
+            _mw_tau = {
+                _f["name"]: params_full[f"module_weight_tau_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+                if _f["is_random"]
+            }
+            s_live = module_weights_leaf_from_factors(
+                self._mw_ops, _mw_raw, _mw_tau
+            )  # (n_leaves, K), realized relative per-leaf module weight
             ds_batch = aux_batch["dataset_indices"]  # (B,) int
             s_cell = s_live[ds_batch]  # (B, K)
-            W_eff_live = W[None, :, :] * s_cell[:, None, :]  # (B, G, K)
-            W_eff_sg = W_sg[None, :, :] * jax.lax.stop_gradient(s_cell)[
-                :, None, :
-            ]
+            # W_eff,{σ(c)} = W·diag(s_{σ(c)}); shared helper keeps the collapse
+            # in one place (Woodbury low-rank-plus-diagonal form preserved).
+            W_eff_live = effective_loadings(W, s_cell)  # (B, G, K)
+            W_eff_sg = effective_loadings(
+                W_sg, jax.lax.stop_gradient(s_cell)
+            )
             W_newton, W_logdet = W_eff_sg, W_eff_live
             _woodbury_quad = _woodbury_quadform_percellW
             _woodbury_logdet = _woodbury_logdet_sigma_percellW
@@ -1204,22 +1238,28 @@ class NBLNObservationModel(LaplaceObservationModel):
                 )
             )
 
-        # --- Per-donor correlation hierarchy: program-scale prior ------------
-        # The non-centered prior on s_d: the raw effects are standard Normal
-        # (the NCP latent), and the shared between-donor scale tau_raw gets the
-        # softplus-Normal hyperprior (same defaults as the SVI primitive). The
-        # sum-to-zero gauge is enforced by ``program_scales_from_raw`` and adds
-        # no prior term. These mirror the ``_prior_r``/``_prior_mu`` terms: a
+        # --- Per-leaf module-weight hierarchy: per-factor prior --------------
+        # The non-centered prior on the module weights: each factor's raw
+        # effects are standard Normal (the NCP latent), and each RANDOM factor's
+        # between-level scale tau_raw gets the softplus-Normal hyperprior (same
+        # defaults as the SVI primitive). Fixed factors contribute only the
+        # N(0,1) raw term (no tau). The per-factor centering + global-anchor
+        # gauge is enforced by ``module_weights_leaf_from_factors`` and adds no
+        # prior term. These mirror the ``_prior_r``/``_prior_mu`` terms: a
         # parameter prior, not scaled by ``data_scale``.
         if self._hier_active:
-            global_prior_lp = global_prior_lp + jnp.sum(
-                dist.Normal(0.0, 1.0).log_prob(
-                    params_full["program_scale_raw"]
+            for _f in self._mw_ops["factors"]:
+                global_prior_lp = global_prior_lp + jnp.sum(
+                    dist.Normal(0.0, 1.0).log_prob(
+                        params_full[f"module_weight_raw__{_f['site']}"]
+                    )
                 )
-            )
-            global_prior_lp = global_prior_lp + dist.Normal(
-                _DEFAULT_TAU_LOC, _DEFAULT_TAU_SCALE
-            ).log_prob(params_full["program_scale_tau_raw"])
+                if _f["is_random"]:
+                    global_prior_lp = global_prior_lp + dist.Normal(
+                        _DEFAULT_TAU_LOC, _DEFAULT_TAU_SCALE
+                    ).log_prob(
+                        params_full[f"module_weight_tau_raw__{_f['site']}"]
+                    )
 
         # Phase-3: W-prior contribution on the gauge-invariant projection.
         # For NBLN, the rigid-translation gauge means raw W has an
@@ -1272,15 +1312,23 @@ class NBLNObservationModel(LaplaceObservationModel):
         # when mu is frozen per donor (mirrors ``mu_newton`` in loss_fn).
         mu_fs = mu
 
-        # Per-donor correlation hierarchy: per-cell effective loadings for the
+        # Per-leaf module-weight hierarchy: per-cell effective loadings for the
         # full-data final sweep (mirrors loss_fn). All inputs are stop-grad
         # here, so we fold s into a single per-cell ``(N, G, k)`` tensor and
         # select the per-cell-W Newton twins; ``W_fs`` aliases the shared W
         # when the hierarchy is off (bit-equal to today).
         if self._hier_active:
-            _s_fs = program_scales_from_raw(
-                params_full["program_scale_raw"],
-                params_full["program_scale_tau_raw"],
+            _mw_raw_fs = {
+                _f["name"]: params_full[f"module_weight_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+            }
+            _mw_tau_fs = {
+                _f["name"]: params_full[f"module_weight_tau_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+                if _f["is_random"]
+            }
+            _s_fs = module_weights_leaf_from_factors(
+                self._mw_ops, _mw_raw_fs, _mw_tau_fs
             )
             _ds_fs = aux_data["dataset_indices"]  # (N,)
             W_fs = jax.lax.stop_gradient(
@@ -1480,6 +1528,30 @@ class NBLNObservationModel(LaplaceObservationModel):
 
         N, G = count_data.shape
 
+        # Per-leaf module-weight hierarchy: the training objective uses each
+        # cell's effective loadings W_eff,{σ(c)} = W·diag(s_{σ(c)}), so the
+        # profiled-Hessian curvature here must too — otherwise the reported
+        # r_scale / mu_scale are computed under a different (s ≡ 1) prior than
+        # the point estimate was optimized under.  Assemble the realized
+        # per-leaf s once; the per-cell gather happens per chunk below to keep
+        # memory bounded.  When inactive, ``_s_live_unc`` stays None and the
+        # shared W is used (bit-equal to the non-hierarchical path).
+        _s_live_unc = None
+        if self._hier_active:
+            _mw_raw_u = {
+                _f["name"]: params_full[f"module_weight_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+            }
+            _mw_tau_u = {
+                _f["name"]: params_full[f"module_weight_tau_raw__{_f['site']}"]
+                for _f in self._mw_ops["factors"]
+                if _f["is_random"]
+            }
+            _s_live_unc = module_weights_leaf_from_factors(
+                self._mw_ops, _mw_raw_u, _mw_tau_u
+            )  # (n_leaves, K)
+            _ds_unc = aux_data["dataset_indices"]  # (N,)
+
         # Compute effective log-rate at each cell, on the FULL G_obs
         # axis regardless of layout.  Under decoupling, ``latent_loc``
         # has shape ``(N, G_kept)`` and carries ``x_dev``; we scatter
@@ -1638,6 +1710,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             log_rate_c: jnp.ndarray,
             u_c: jnp.ndarray,
             sigma_eta_c: jnp.ndarray,
+            W_c: jnp.ndarray,
         ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
             """Return ``(joint_inv_xx_diag, joint_inv_xη, joint_inv_ηη, a_full)``.
 
@@ -1659,7 +1732,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 a_for_woodbury = a_full[_kept_idx_inv]
             else:
                 a_for_woodbury = a_full
-            factors = _woodbury_factors(W, d, a_for_woodbury, damping=0.0)
+            factors = _woodbury_factors(W_c, d, a_for_woodbury, damping=0.0)
             A_inv_diag = _A_inv_diag_from_factors(factors)
             if capture_on:
                 A_inv_a = _solve_A(factors, a_for_woodbury)
@@ -1683,7 +1756,12 @@ class NBLNObservationModel(LaplaceObservationModel):
                 joint_inv_etaeta = jnp.asarray(0.0, dtype=a_for_woodbury.dtype)
             return joint_inv_xx_diag, joint_inv_xeta, joint_inv_etaeta, a_full
 
-        _per_cell_vmap = jax.vmap(_per_cell_inverse_blocks, in_axes=(0, 0, 0))
+        # W axis: shared (in_axes None) normally, per-cell (in_axes 0) under the
+        # module-weight hierarchy so each cell sees its own W_eff.
+        _W_in_axis = 0 if _s_live_unc is not None else None
+        _per_cell_vmap = jax.vmap(
+            _per_cell_inverse_blocks, in_axes=(0, 0, 0, _W_in_axis)
+        )
 
         # Chunked pass over cells to keep GPU memory bounded.
         _chunk_size = min(256, N)
@@ -1701,8 +1779,16 @@ class NBLNObservationModel(LaplaceObservationModel):
         _joint_xeta_chunks = []
         _joint_etaeta_chunks = []
         _a_full_chunks = []
-        for lr, u, se in zip(_chunks_lr, _chunks_u, _chunks_sigma):
-            jx, jxe, jee, af = _per_cell_vmap(lr, u, se)
+        for _ci, (lr, u, se) in enumerate(
+            zip(_chunks_lr, _chunks_u, _chunks_sigma)
+        ):
+            if _s_live_unc is not None:
+                _ds_chunk = _ds_unc[_ci * _chunk_size : _ci * _chunk_size + lr.shape[0]]
+                # (chunk, G_lat, K) per-cell effective loadings.
+                W_arg = W[None, :, :] * _s_live_unc[_ds_chunk][:, None, :]
+            else:
+                W_arg = W  # shared; in_axes None broadcasts it
+            jx, jxe, jee, af = _per_cell_vmap(lr, u, se, W_arg)
             _joint_xx_chunks.append(jx)
             _joint_xeta_chunks.append(jxe)
             _joint_etaeta_chunks.append(jee)

@@ -583,39 +583,19 @@ class ModelConfig(BaseModel):
         ),
     )
 
-    # Hierarchical gene-gene correlation across donors/datasets (NB-LogNormal
-    # "Rung 1").  When enabled, the shared low-rank loadings ``W`` stay common
-    # across all donors while each donor ``d`` carries a *relative* per-program
-    # activity vector ``s_d`` with a hierarchical, sum-to-zero, non-centered
-    # prior.  This induces a donor-specific gene-gene covariance
+    # Hierarchical gene-gene correlation across datasets (NB-LogNormal
+    # "Rung 1.5") is declared through the unified ``priors`` dict, NOT a
+    # dedicated ModelConfig field.  ``priors={"module_weight": {level: family}}``
+    # lands on ``Factor.priors["module_weight"]`` (see grouping.TARGET_NAMES);
+    # the shared low-rank loadings ``W`` stay common across leaves while each
+    # participating grouping factor contributes an additive per-leaf module
+    # weight, inducing a leaf-specific covariance
     #
     #     Σ_d = W diag(s_d²) Wᵀ + diag(d)
     #
-    # while preserving the low-rank-plus-diagonal form: the effective loadings
-    # ``W_eff,d = W·diag(s_d)`` feed the existing Woodbury / Newton machinery
-    # unchanged (Phase B), and the K-dim VAE latent prior is scaled per donor
-    # (Phase A).  The sum-to-zero constraint ``mean_d log s_{d,k} = 0`` removes
-    # the per-column scale gauge between ``W`` and ``s`` so ``s_d`` is purely
-    # *relative* donor activity.  See ``paper/_nb_lognormal.qmd``
-    # §sec-nbln-hierarchical-correlation and
-    # ``scribe.models.components.program_scales``.
-    #
-    # ``None`` (default) disables the hierarchy (a single shared Σ).
-    # ``"program_scales"`` enables the per-donor program-activity hierarchy.
-    # Requires ``n_datasets >= 2`` and a correlation model (pln / nbln / lnm
-    # family); the higher-level ``scribe.fit`` enforces those preconditions.
-    correlation_hierarchy: Optional[str] = Field(
-        None,
-        description=(
-            "Hierarchical gene-gene correlation across donors for the "
-            "correlation models (pln / nbln / lnm).  None (default) uses a "
-            "single shared low-rank covariance Σ = W Wᵀ + diag(d).  "
-            "'program_scales' shares the loadings W across donors while "
-            "learning a relative per-donor program-activity vector s_d with a "
-            "hierarchical sum-to-zero prior, inducing "
-            "Σ_d = W diag(s_d²) Wᵀ + diag(d).  Requires n_datasets >= 2."
-        ),
-    )
+    # while preserving the low-rank-plus-diagonal form.  See
+    # ``paper/_nb_lognormal.qmd`` §sec-nbln-hierarchical-correlation and
+    # ``scribe.models.components.module_weights``.
 
     # Gene-specific overdispersion beyond the NB family.
     overdispersion: OverdispersionType = Field(
@@ -835,26 +815,6 @@ class ModelConfig(BaseModel):
         allowed = {"low_rank", "learned"}
         if v not in allowed:
             raise ValueError(f"d_mode must be one of {allowed}, got {v!r}.")
-        return v
-
-    # --------------------------------------------------------------------------
-
-    @field_validator("correlation_hierarchy")
-    @classmethod
-    def validate_correlation_hierarchy(cls, v: Optional[str]) -> Optional[str]:
-        """Restrict ``correlation_hierarchy`` to the supported modes.
-
-        ``None`` disables the per-donor correlation hierarchy (single shared
-        Σ); ``"program_scales"`` enables the Rung-1 per-donor program-activity
-        hierarchy.  Cross-field preconditions (``n_datasets >= 2``, a
-        correlation base model) are enforced at the ``scribe.fit`` layer where
-        the data-derived donor count is known, not here.
-        """
-        allowed = {None, "program_scales"}
-        if v not in allowed:
-            raise ValueError(
-                f"correlation_hierarchy must be one of {allowed}, got {v!r}."
-            )
         return v
 
     # --------------------------------------------------------------------------

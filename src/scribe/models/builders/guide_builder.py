@@ -30,9 +30,9 @@ from . import _guide_flow_mixin as _guide_flow_mixin
 
 # Import concrete symbols used directly by GuideBuilder.
 from ._guide_amortized_mixin import _setup_grouped_amortized_latent
-from ..components.program_scales import (
-    guide_program_scales,
-    program_scales_active,
+from ..components.module_weights import (
+    guide_module_weights_hierarchical,
+    module_weights_active,
 )
 from ._guide_cell_specific_mixin import (
     guide_mu_eta_hierarchy,
@@ -327,22 +327,22 @@ class GuideBuilder:
 
             # ================================================================
             # 2.75. Hierarchical correlation: variational block for the global
-            #       per-donor program-activity scales s_d (NB-LogNormal Rung 1)
+            #       per-leaf module weights s (NB-LogNormal Rung 1.5)
             # ================================================================
-            # Paired with ``sample_program_scales`` in the model builder.  s_d
-            # is a GLOBAL latent (shape ``(n_datasets, latent_dim)``), so its
+            # Paired with ``sample_module_weights_hierarchical`` in the model
+            # builder.  The per-factor NCP blocks are GLOBAL latents, so their
             # mean-field variational block lives HERE -- outside the cell plate.
             # Gated on the SAME predicate as the model
-            # (``program_scales_active``) plus the presence of a VAE latent
+            # (``module_weights_active``) plus the presence of a VAE latent
             # guide; if the two builders disagreed, the mean-field ELBO would
             # see a latent site present in one trace but not the other and
             # raise.
-            if grouped_guide is not None and program_scales_active(
+            if grouped_guide is not None and module_weights_active(
                 model_config, dataset_indices
             ):
-                guide_program_scales(
-                    n_datasets=int(model_config.n_datasets),
-                    latent_dim=int(grouped_guide.latent_spec.latent_dim),
+                guide_module_weights_hierarchical(
+                    model_config.grouping_spec,
+                    int(grouped_guide.latent_spec.latent_dim),
                 )
 
             if cell_specs:

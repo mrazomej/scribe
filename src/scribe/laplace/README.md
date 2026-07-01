@@ -1066,56 +1066,93 @@ for cross-dataset transfer.
   scope validation, so the explicit no-op config is universally
   accepted (useful for parameterized testing).
 
-## Per-donor correlation hierarchy (`correlation_hierarchy`)
+## Hierarchical module weights (`priors={"module_weight": {...}}`)
 
 NBLN-Laplace can fit a **hierarchical gene-gene correlation across
 datasets** (donors / conditions / batches): the low-rank loadings `W`
-(the regulatory programs) are shared, while each dataset `d` gets its
-own *relative* program-activity vector `s_d`, inducing a donor-specific
-covariance
+are shared, and a column of `W` is a gene **module** (a regulatory
+program). Each leaf `d` gets its own **module-weight** vector `s_d` —
+how strongly each module co-activates in that leaf — inducing a
+leaf-specific covariance
 
 ```text
 Σ_d = W diag(s_d²) Wᵀ + diag(d)        # d here is the residual diagonal
 ```
 
-Enable it on a grouped fit:
+The log module-weight **decomposes additively** over the same crossed /
+nested grouping factors (and interactions) the mean `μ` uses, exactly
+mirroring the additive μ hierarchy. Declare it through the unified
+`priors` dict under a `module_weight` target, reusing the
+`hierarchy` / `interactions` grouping:
 
 ```python
 results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
-    correlation_hierarchy="program_scales",   # turn on the hierarchy
+    hierarchy=[scribe.GroupLevel("perturbation", effect_type="fixed"),
+               scribe.GroupLevel("sample")],
+    interactions=[("perturbation", "sample")],
+    priors={
+        "loadings": {"type": "horseshoe_columnwise"},   # W shrinkage (unchanged)
+        "module_weight": {"perturbation": "gaussian", "sample": "gaussian",
+                          "perturbation:sample": "gaussian"},
+    },
     correlate_other_column=True,              # legacy layout (see caveat)
-    dataset_key="donor",                       # or hierarchy=[GroupLevel("donor")]
     latent_dim=16, n_steps=50_000,
 )
-s = results.get_program_activity()   # (n_datasets, K) relative activity s_d
-tau = results.program_scale_tau      # scalar between-dataset scale τ_s
+s        = results.get_module_weights()        # (n_leaves, K) realized per-leaf s
+effects  = results.get_module_weight_effects() # {factor: (L_f, K)} centered effects
+tau      = results.get_module_weight_tau()     # {factor: τ_f} (scalar if one random factor)
 ```
 
-The math (sum-to-zero gauge, the `W_eff = W·diag(s_d)` collapse, the
-common-principal-components identifiability) is documented in
-[`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
-§`sec-nbln-hierarchical-correlation`.
+`GroupLevel` takes `name` positionally and `effect_type` as a keyword.
+Random factors (default) learn their own between-level scale `τ_f`;
+`effect_type="fixed"` uses a fixed, unlearned scale (right for a
+two-level treatment contrast). Interactions are **always random**.
+Families are **gaussian only** on the module axis (the module index `K`
+is low-dimensional and dense; horseshoe / NEG are reserved for the
+high-dim per-gene axis and are rejected here).
+
+The single-factor form `dataset_key="donor"` +
+`priors={"module_weight": {"donor": "gaussian"}}` reproduces the old
+flat per-leaf `s_d` — it is the saturated single-factor special case.
+
+The math (the additive `log s_{leaf,k} = Σ_f α^(f)`, the three-constraint
+gauge — global leaf anchor + leaf-count-weighted per-factor sum-to-zero +
+interaction zero-margin — the rank guard, the `W_eff = W·diag(s_d)`
+collapse, and the common-principal-components identifiability) is
+documented in [`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
+§`sec-nbln-hierarchical-correlation` (see §`sec-nbln-hier-multifactor`
+for the additive generalization).
+
+Result fields: `module_weights`, `module_weight_effects`,
+`module_weight_tau_by_factor`, `module_weight_tau`.
 
 How it works internally:
 
-- **`s_d` globals.** Two extra optax globals — `program_scale_raw`
-  `(n_datasets, K)` and a scalar `program_scale_tau_raw` — are added to
-  the params dict in `_obs_nbln.init_state`, initialized at `s = 1`
-  (no between-donor difference). `loss_fn` rebuilds `s` via the shared
-  `program_scales_from_raw` (sum-to-zero centering + softplus + exp), the
-  same transform the SVI path uses, so the gauge has one definition.
-- **Per-cell `W_eff`.** Each cell's donor index (carried on `aux_data`
+- **Per-factor globals.** For each grouping factor `f`, two extra optax
+  globals — `module_weight_raw__{factor}` `(L_f, K)` and a scalar
+  `module_weight_tau_raw__{factor}` (random factors only) — are added to
+  the params dict in `_obs_nbln.init_state`, initialized at `s = 1` (no
+  between-leaf difference). `loss_fn` rebuilds the realized per-leaf `s`
+  via the shared `module_weights_leaf_from_factors` in
+  [`models/components/module_weights.py`](../models/components/module_weights.py),
+  which applies the three-constraint gauge (leaf-count-weighted per-factor
+  sum-to-zero + interaction zero-margin, then the global leaf anchor) and
+  the softplus scales — the same transform the SVI path uses, so the gauge
+  has one definition. The build-time **rank guard** (stacked gathered
+  contrast bases must be full column rank; saturated rank = `n_leaves − 1`)
+  raises on column-rank-deficient designs.
+- **Per-cell `W_eff`.** Each cell's leaf index (carried on `aux_data`
   so the minibatch slicer gathers it) selects
   `W_eff = W·diag(s_{σ(c)})`, which feeds the `_percellW` Newton /
   log-det / grad-norm twins in `_newton_nbln`. These are the standard
-  per-cell kernels with `W`'s vmap axis mapped over cells; the shared-`W`
-  path is bit-equal when the hierarchy is off.
-- **Gradient on `s_d`.** The activities enter the loss only through the
-  live-`W` terms — the MVN-prior quadratic form / log-det of
-  `Σ_{σ(c)}` and the Laplace `log det(-H)` correction — which is how they
-  are learned. The NCP raw + τ_s softplus-Normal hyperprior are added to
-  `global_prior_lp`.
+  per-cell kernels **reused unchanged** — `W`'s vmap axis mapped over
+  cells; the shared-`W` path is bit-equal when the hierarchy is off.
+- **Gradient on the effects.** The module weights enter the loss only
+  through the live-`W` terms — the MVN-prior quadratic form / log-det of
+  `Σ_{σ(c)}` and the Laplace `log det(-H)` correction — which is how the
+  per-factor raws are learned. The per-factor NCP raws + softplus-Normal
+  `τ_f` hyperpriors are added to `global_prior_lp`.
 
 **Recommended cascade.** As with any NBLN-Laplace fit on low-count data,
 freeze the marginals from a well-identified upstream fit. The
@@ -1126,8 +1163,9 @@ data:
 ```python
 laplace_results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
-    correlation_hierarchy="program_scales",
-    correlate_other_column=True, dataset_key="donor",
+    hierarchy=[scribe.GroupLevel("donor")],
+    priors={"module_weight": {"donor": "gaussian"}},
+    correlate_other_column=True,
     informative_priors_from=hier_svi,          # a hierarchical (per-donor) SVI fit
     informative_priors_freeze=("r", "mu"),     # pool r, freeze per-donor mu^(d)
     latent_dim=16, n_steps=50_000,
@@ -1144,14 +1182,14 @@ a shared `(G,)`. In the obs model each cell uses `mu^{(σ(c))}` via the
 per-cell-mu Newton twins (`_percellWmu`); `pack_result` pools `mu` to `(G,)`
 for the standard accessors (the per-cell means already live in `x_loc`) and
 surfaces the unpooled table on `get_gene_mean_per_dataset()`. Per-donor
-`μ^(d)` requires the correlation hierarchy (the per-cell-`W` path); the soft
+`μ^(d)` requires the module-weight hierarchy (the per-cell-`W` path); the soft
 cascade pools any per-donor `(S, D, G)` samples over the dataset axis for a
 population anchor. See the cascade sections above for the single-dataset
 analogue.
 
 **Caveats.**
 
-- **Layout.** The correlation hierarchy (`s_d`) AND the per-donor `μ^(d)`
+- **Layout.** The module-weight hierarchy (`s_d`) AND the per-donor `μ^(d)`
   cascade run on **both layouts**: the legacy (`correlate_other_column=True`)
   and decoupled (`correlate_other_column=False`, `_other` excluded from `W`)
   paths each have per-cell-`W`/`mu` Newton/log-det/grad twins (`*_percellW` /
@@ -1164,10 +1202,11 @@ analogue.
   while staying out of `W` under decoupling.  Mismatched panels (e.g. a
   full-panel source against a `gene_coverage<1` target) raise a clear
   `NotImplementedError` — pool the cascade mean to `(G,)` or match the panels.
-- **Few datasets.** With small `n_datasets`, `τ_s` is weakly identified
-  (generic to hierarchical models with few groups); the hierarchy still
-  provides adaptive shrinkage but cannot resolve rich between-donor
-  eigenstructure.
+- **Few levels.** With few levels on a random factor (small `n_datasets`,
+  or a handful of donors crossed with two conditions), that factor's `τ_f`
+  is weakly identified (generic to hierarchical models with few groups); the
+  hierarchy still provides adaptive shrinkage but cannot resolve rich
+  between-leaf eigenstructure.
 
 ## Jacobian-corrected MAP (`map_method`)
 

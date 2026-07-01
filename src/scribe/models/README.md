@@ -118,11 +118,19 @@ rather than a separate NB. Use LNM when compositional DE in ALR/CLR
 coordinates is the primary goal.
 
 **Hierarchical gene-gene correlation across donors**: For grouped
-(multi-dataset) fits of the correlation models, the
-`correlation_hierarchy="program_scales"` option keeps the regulatory programs
-(columns of `W`) shared across donors while learning a relative per-donor
-program-activity vector `s_d` (so `Σ_d = W diag(s_d²) Wᵀ + diag(d)`). Supported
-on both the SVI/VAE path and the Laplace path. See
+(multi-dataset) fits of the correlation models, declaring a `module_weight`
+target in the `priors` dict keeps the gene **modules** (columns of `W`)
+shared across leaves while learning a per-leaf **module-weight** vector `s_d`
+(so `Σ_d = W diag(s_d²) Wᵀ + diag(d)`). The log module-weight decomposes
+additively over the same crossed / nested grouping factors (and interactions)
+the mean `μ` uses:
+
+```python
+priors={"module_weight": {"perturbation": "gaussian", "sample": "gaussian",
+                          "perturbation:sample": "gaussian"}}
+```
+
+Supported on both the SVI/VAE path and the Laplace path. See
 [`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
 §`sec-nbln-hierarchical-correlation` for the theory and
 [`../laplace/README.md`](../laplace/README.md) /

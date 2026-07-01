@@ -166,10 +166,11 @@ class LaplaceInferenceEngine:
                 ),
                 gene_names=filtered_gene_names,
                 has_pooled_other=has_pooled_other,
-                # Per-cell donor/leaf index for the per-donor correlation
-                # hierarchy (NB-LogNormal Rung 1).  ``None`` for non-grouped
+                # Per-cell donor/leaf index for the per-leaf module-weight
+                # hierarchy (NB-LogNormal Rung 1.5).  ``None`` for non-grouped
                 # fits; the obs model only activates the hierarchy when this
-                # is present AND model_config.correlation_hierarchy is set.
+                # is present AND a grouping factor declares a ``module_weight``
+                # prior family.
                 dataset_indices=dataset_indices,
             )
         elif bm == "twostate_ln_rate":
