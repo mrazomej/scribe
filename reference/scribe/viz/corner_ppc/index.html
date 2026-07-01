@@ -1,0 +1,3688 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../convergence/">
+      
+      
+        <link rel="next" href="../de/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>corner_ppc - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#scribe.viz.corner_ppc" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  <img src="../../../../assets/images/logo_icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              corner_ppc
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../../theory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../../guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../tutorials/jurkat_cells/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  <img src="../../../../assets/images/logo_icon.svg" alt="logo">
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../theory/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/beta-negative-binomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/two-state-promoter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Two-State Promoter (Poisson-Beta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/hierarchical-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/grn-biophysics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GRN Biophysics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/poisson-lognormal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Poisson Log-Normal Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/nb-lognormal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NB Log-Normal Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/logistic-normal-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logistic-Normal Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/loadings-shrinkage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loadings-Matrix Shrinkage Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../theory/goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Defining Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/guide-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guide/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/jurkat_cells/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modeling Assumptions for scRNA-seq
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/5050_jurkat_293t/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mixture Models & Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/jurkat_cells_nbln/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gene–gene correlations with NBLN
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/k562_cells_twostate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bursty genes & the two-state promoter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/zhao_2021_hierarchical/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crossed hierarchies & multi-donor DE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tutorials/zhao_2021_model_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model comparison: μ-only vs μ+r
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scribe.viz.corner_ppc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;corner_ppc
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" corner_ppc">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scribe.viz.corner_ppc.plot_corner_ppc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;plot_corner_ppc
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+  <h1>corner_ppc</h1>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="scribe.viz.corner_ppc" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <span class="doc doc-object-name doc-module-name">corner_ppc</span>
+
+
+<a href="#scribe.viz.corner_ppc" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Corner-plot-style posterior predictive check visualization.</p>
+<p>Renders an <code>n_genes x n_genes</code> triangular grid for a small set of
+selected genes:</p>
+<ul>
+<li><strong>Diagonal</strong>: marginal PPC histograms — shaded credible-region bands
+  from posterior predictive samples with the observed count histogram
+  overlaid (identical to :func:<code>plot_ppc</code>).</li>
+<li><strong>Lower triangle</strong>: bivariate PPC panels — 2-D density contours
+  computed from pooled posterior predictive samples with observed
+  gene–gene scatter in the background.</li>
+<li><strong>Upper triangle</strong>: hidden (<code>axis.off</code>).</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="scribe.viz.corner_ppc.plot_corner_ppc" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">plot_corner_ppc</span>
+
+
+<a href="#scribe.viz.corner_ppc.plot_corner_ppc" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">plot_corner_ppc</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">viz_cfg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gene_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gene_names_list</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gene_selection</span><span class="o">=</span><span class="s1">&#39;correlation_diverse&#39;</span><span class="p">,</span> <span class="n">n_genes</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">min_mean_umi_for_selection</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">subtract_direction</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_pcs_to_remove</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ppc_level</span><span class="o">=</span><span class="s1">&#39;library_anchored&#39;</span><span class="p">,</span> <span class="n">n_contour_levels</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">contour_mass_levels</span><span class="o">=</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.68</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">,</span> <span class="mf">0.99</span><span class="p">),</span> <span class="n">contour_cmap</span><span class="o">=</span><span class="s1">&#39;Blues&#39;</span><span class="p">,</span> <span class="n">contour_alpha</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">draw_contour_edges</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">contour_edgecolor</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">,</span> <span class="n">contour_edgewidth</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span> <span class="n">suppress_contour_edges_for_discrete</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">scatter_alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">scatter_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">scatter_color</span><span class="o">=</span><span class="s1">&#39;black&#39;</span><span class="p">,</span> <span class="n">density_method</span><span class="o">=</span><span class="s1">&#39;kde&#39;</span><span class="p">,</span> <span class="n">hist2d_bins</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">log_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">match_offdiag_limits_to_marginals</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fig</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">axes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Render a corner-plot-style posterior predictive check grid.</p>
+<p>For a set of selected genes the plot creates an <code>N x N</code> triangular
+grid where:</p>
+<ul>
+<li><strong>Diagonal</strong>: marginal PPC histograms (shaded predictive credible
+  bands + observed count histogram), identical to :func:<code>plot_ppc</code>.</li>
+<li><strong>Lower triangle</strong>: bivariate PPC panels showing 2-D density
+  contours from pooled posterior predictive samples with observed
+  gene-gene scatter in the background.</li>
+<li><strong>Upper triangle</strong>: hidden.</li>
+</ul>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">PARAMETER</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>results</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Fitted model results exposing predictive sampling.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="object">object</span></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>counts</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Observed count matrix <code>(n_cells, n_genes)</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="array">array</span> - <span title="like">like</span></code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>viz_cfg</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Visualization configuration.  Optional in interactive sessions —
+built-in defaults are used when <code>None</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="OmegaConf">OmegaConf</span> or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>gene_indices</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Explicit column indices of genes to display.  Takes highest
+priority over <code>gene_names_list</code> and <code>n_genes</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>array-like of int or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>gene_names_list</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Gene names to display.  Resolved against <code>results.var.index</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>list of str or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>gene_selection</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Auto-selection strategy used when neither <code>gene_indices</code> nor
+<code>gene_names_list</code> is supplied:</p>
+<ul>
+<li><code>"correlation_diverse"</code> (default): select genes spanning
+  strong positive, strong negative, and diverse near-zero
+  correlations.</li>
+<li><code>"abundance"</code>: select abundance-filtered log-spaced quantiles
+  of mean UMI counts.</li>
+</ul>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>(<span title="correlation_diverse">correlation_diverse</span>, <span title="abundance">abundance</span>)</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#34;correlation_diverse&#34;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>n_genes</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of genes when auto-selecting (default 5).  Ignored when
+<code>gene_indices</code> or <code>gene_names_list</code> is given.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>5</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>min_mean_umi_for_selection</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Lower threshold on per-gene mean UMI counts for auto-selection
+candidates (default 5). Ignored when <code>gene_indices</code> or
+<code>gene_names_list</code> is provided.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>5.0</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>subtract_direction</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Remove nuisance directions from the correlation matrix before
+automatic gene selection.  Useful when library-size variation
+dominates and hides secondary block structure:</p>
+<ul>
+<li><code>None</code> (default): use the full correlation matrix.</li>
+<li><code>"library_size"</code>: project out the latent direction closest
+  to the all-ones gene vector.  Available for Laplace and VAE
+  PLN fits; falls back to <code>"pc"</code> for the empirical path.</li>
+<li><code>"pc"</code>: project out the top <code>n_pcs_to_remove</code> principal
+  components from the covariance.</li>
+</ul>
+<p>Ignored when <code>gene_indices</code> or <code>gene_names_list</code> is given.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>(None, <span title="library_size">library_size</span>, <span title="pc">pc</span>)</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>n_pcs_to_remove</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of principal components to project out when
+<code>subtract_direction="pc"</code> (default 1).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>1</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>n_samples</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of posterior predictive draws.  Overrides
+<code>viz_cfg.ppc_opts.n_samples</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span> or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>ppc_level</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>PPC level passed to the predictive sampler (default
+<code>"library_anchored"</code>).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#39;library_anchored&#39;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>n_contour_levels</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of filled contour levels for off-diagonal panels when
+<code>contour_mass_levels=None</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>6</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>contour_mass_levels</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>HPD-style cumulative mass levels in <code>(0, 1)</code> for off-diagonal
+contour thresholds (default <code>(0.5, 0.68, 0.95, 0.99)</code>). Set to
+<code>None</code> to use evenly spaced density levels.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>tuple of float or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>(0.5, 0.68, 0.95, 0.99)</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>contour_cmap</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Colormap for off-diagonal contour fills.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#39;Blues&#39;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>contour_alpha</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Transparency for contour fills.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>0.6</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>draw_contour_edges</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If <code>True</code> (default), draw contour-line edges on top of each
+filled HPD region for clearer boundaries.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>True</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>contour_edgecolor</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Colour for contour-line edges (default <code>"gray"</code>).</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#39;gray&#39;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>contour_edgewidth</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Line width for contour-line edges.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>0.7</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>suppress_contour_edges_for_discrete</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If <code>True</code> (default), automatically suppress contour-line edges in
+strongly discrete integer-like panels where edge overlays can become
+visually cluttered.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>True</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>scatter_alpha</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Transparency for observed-data scatter points.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>0.25</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>scatter_size</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Marker size for scatter points.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="float">float</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>4</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>scatter_color</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Colour for observed-data scatter points.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="str">str</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#39;black&#39;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>density_method</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Off-diagonal density estimator. <code>"kde"</code> (default) provides smoother
+contours but is slower on large pooled PPC samples; <code>"hist2d"</code> is fast
+and uses binned densities.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>(<span title="kde">kde</span>, <span title="hist2d">hist2d</span>)</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>&#34;kde&#34;</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>hist2d_bins</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Number of bins per axis for <code>density_method="hist2d"</code>.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="int">int</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>80</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>log_scale</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If <code>True</code>, apply <code>log1p</code> to counts before off-diagonal density
+and scatter plotting in off-diagonal panels.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>False</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>match_offdiag_limits_to_marginals</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>If <code>True</code> (default), enforce off-diagonal axis limits to match
+the corresponding marginal (diagonal) panels: x-limits follow the
+diagonal panel in the same column and y-limits follow the diagonal
+panel in the same row. When <code>log_scale=True</code>, matched limits are
+transformed with <code>log1p</code> for consistency with off-diagonal axes.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="bool">bool</span></code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>True</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>figsize</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Figure size.  Defaults to <code>(3.0 * N, 3.0 * N)</code> where <code>N</code> is
+the number of selected genes.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>tuple of float or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>fig</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Optional figure to draw into.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="matplotlib.figure.Figure">Figure</span> or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>axes</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Optional <code>N x N</code> axes grid.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code>array-like of matplotlib.axes.Axes or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>ax</code>
+            </td>
+            <td class="doc-param-details">
+              <div class="doc-md-description">
+                <p>Unsupported for this multi-panel plot.</p>
+              </div>
+              <p>
+                  <span class="doc-param-annotation">
+                    <b>TYPE:</b>
+                      <code><span title="matplotlib.axes.Axes">Axes</span> or None</code>
+                  </span>
+                  <span class="doc-param-default">
+                    <b>DEFAULT:</b>
+                      <code>None</code>
+                  </span>
+              </p>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RETURNS</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <span class="doc-returns-annotation">
+                    <code><span title="PlotResult">PlotResult</span></code>
+                </span>
+            </td>
+            <td class="doc-returns-details">
+              <div class="doc-md-description">
+                <p>Wrapped result containing the figure, axes, and metadata.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">RAISES</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+              <span class="doc-raises-annotation">
+                  <code><span title="ValueError">ValueError</span></code>
+              </span>
+            </td>
+            <td class="doc-raises-details">
+              <div class="doc-md-description">
+                <p>If <code>ax</code> is provided (multi-panel plot requires <code>fig</code> or
+<code>axes</code>), if gene name resolution fails, or if no genes pass
+the minimum mean-UMI threshold during auto-selection.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/scribe/viz/corner_ppc.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-818"> 818</a></span>
+<span class="normal"><a href="#__codelineno-0-819"> 819</a></span>
+<span class="normal"><a href="#__codelineno-0-820"> 820</a></span>
+<span class="normal"><a href="#__codelineno-0-821"> 821</a></span>
+<span class="normal"><a href="#__codelineno-0-822"> 822</a></span>
+<span class="normal"><a href="#__codelineno-0-823"> 823</a></span>
+<span class="normal"><a href="#__codelineno-0-824"> 824</a></span>
+<span class="normal"><a href="#__codelineno-0-825"> 825</a></span>
+<span class="normal"><a href="#__codelineno-0-826"> 826</a></span>
+<span class="normal"><a href="#__codelineno-0-827"> 827</a></span>
+<span class="normal"><a href="#__codelineno-0-828"> 828</a></span>
+<span class="normal"><a href="#__codelineno-0-829"> 829</a></span>
+<span class="normal"><a href="#__codelineno-0-830"> 830</a></span>
+<span class="normal"><a href="#__codelineno-0-831"> 831</a></span>
+<span class="normal"><a href="#__codelineno-0-832"> 832</a></span>
+<span class="normal"><a href="#__codelineno-0-833"> 833</a></span>
+<span class="normal"><a href="#__codelineno-0-834"> 834</a></span>
+<span class="normal"><a href="#__codelineno-0-835"> 835</a></span>
+<span class="normal"><a href="#__codelineno-0-836"> 836</a></span>
+<span class="normal"><a href="#__codelineno-0-837"> 837</a></span>
+<span class="normal"><a href="#__codelineno-0-838"> 838</a></span>
+<span class="normal"><a href="#__codelineno-0-839"> 839</a></span>
+<span class="normal"><a href="#__codelineno-0-840"> 840</a></span>
+<span class="normal"><a href="#__codelineno-0-841"> 841</a></span>
+<span class="normal"><a href="#__codelineno-0-842"> 842</a></span>
+<span class="normal"><a href="#__codelineno-0-843"> 843</a></span>
+<span class="normal"><a href="#__codelineno-0-844"> 844</a></span>
+<span class="normal"><a href="#__codelineno-0-845"> 845</a></span>
+<span class="normal"><a href="#__codelineno-0-846"> 846</a></span>
+<span class="normal"><a href="#__codelineno-0-847"> 847</a></span>
+<span class="normal"><a href="#__codelineno-0-848"> 848</a></span>
+<span class="normal"><a href="#__codelineno-0-849"> 849</a></span>
+<span class="normal"><a href="#__codelineno-0-850"> 850</a></span>
+<span class="normal"><a href="#__codelineno-0-851"> 851</a></span>
+<span class="normal"><a href="#__codelineno-0-852"> 852</a></span>
+<span class="normal"><a href="#__codelineno-0-853"> 853</a></span>
+<span class="normal"><a href="#__codelineno-0-854"> 854</a></span>
+<span class="normal"><a href="#__codelineno-0-855"> 855</a></span>
+<span class="normal"><a href="#__codelineno-0-856"> 856</a></span>
+<span class="normal"><a href="#__codelineno-0-857"> 857</a></span>
+<span class="normal"><a href="#__codelineno-0-858"> 858</a></span>
+<span class="normal"><a href="#__codelineno-0-859"> 859</a></span>
+<span class="normal"><a href="#__codelineno-0-860"> 860</a></span>
+<span class="normal"><a href="#__codelineno-0-861"> 861</a></span>
+<span class="normal"><a href="#__codelineno-0-862"> 862</a></span>
+<span class="normal"><a href="#__codelineno-0-863"> 863</a></span>
+<span class="normal"><a href="#__codelineno-0-864"> 864</a></span>
+<span class="normal"><a href="#__codelineno-0-865"> 865</a></span>
+<span class="normal"><a href="#__codelineno-0-866"> 866</a></span>
+<span class="normal"><a href="#__codelineno-0-867"> 867</a></span>
+<span class="normal"><a href="#__codelineno-0-868"> 868</a></span>
+<span class="normal"><a href="#__codelineno-0-869"> 869</a></span>
+<span class="normal"><a href="#__codelineno-0-870"> 870</a></span>
+<span class="normal"><a href="#__codelineno-0-871"> 871</a></span>
+<span class="normal"><a href="#__codelineno-0-872"> 872</a></span>
+<span class="normal"><a href="#__codelineno-0-873"> 873</a></span>
+<span class="normal"><a href="#__codelineno-0-874"> 874</a></span>
+<span class="normal"><a href="#__codelineno-0-875"> 875</a></span>
+<span class="normal"><a href="#__codelineno-0-876"> 876</a></span>
+<span class="normal"><a href="#__codelineno-0-877"> 877</a></span>
+<span class="normal"><a href="#__codelineno-0-878"> 878</a></span>
+<span class="normal"><a href="#__codelineno-0-879"> 879</a></span>
+<span class="normal"><a href="#__codelineno-0-880"> 880</a></span>
+<span class="normal"><a href="#__codelineno-0-881"> 881</a></span>
+<span class="normal"><a href="#__codelineno-0-882"> 882</a></span>
+<span class="normal"><a href="#__codelineno-0-883"> 883</a></span>
+<span class="normal"><a href="#__codelineno-0-884"> 884</a></span>
+<span class="normal"><a href="#__codelineno-0-885"> 885</a></span>
+<span class="normal"><a href="#__codelineno-0-886"> 886</a></span>
+<span class="normal"><a href="#__codelineno-0-887"> 887</a></span>
+<span class="normal"><a href="#__codelineno-0-888"> 888</a></span>
+<span class="normal"><a href="#__codelineno-0-889"> 889</a></span>
+<span class="normal"><a href="#__codelineno-0-890"> 890</a></span>
+<span class="normal"><a href="#__codelineno-0-891"> 891</a></span>
+<span class="normal"><a href="#__codelineno-0-892"> 892</a></span>
+<span class="normal"><a href="#__codelineno-0-893"> 893</a></span>
+<span class="normal"><a href="#__codelineno-0-894"> 894</a></span>
+<span class="normal"><a href="#__codelineno-0-895"> 895</a></span>
+<span class="normal"><a href="#__codelineno-0-896"> 896</a></span>
+<span class="normal"><a href="#__codelineno-0-897"> 897</a></span>
+<span class="normal"><a href="#__codelineno-0-898"> 898</a></span>
+<span class="normal"><a href="#__codelineno-0-899"> 899</a></span>
+<span class="normal"><a href="#__codelineno-0-900"> 900</a></span>
+<span class="normal"><a href="#__codelineno-0-901"> 901</a></span>
+<span class="normal"><a href="#__codelineno-0-902"> 902</a></span>
+<span class="normal"><a href="#__codelineno-0-903"> 903</a></span>
+<span class="normal"><a href="#__codelineno-0-904"> 904</a></span>
+<span class="normal"><a href="#__codelineno-0-905"> 905</a></span>
+<span class="normal"><a href="#__codelineno-0-906"> 906</a></span>
+<span class="normal"><a href="#__codelineno-0-907"> 907</a></span>
+<span class="normal"><a href="#__codelineno-0-908"> 908</a></span>
+<span class="normal"><a href="#__codelineno-0-909"> 909</a></span>
+<span class="normal"><a href="#__codelineno-0-910"> 910</a></span>
+<span class="normal"><a href="#__codelineno-0-911"> 911</a></span>
+<span class="normal"><a href="#__codelineno-0-912"> 912</a></span>
+<span class="normal"><a href="#__codelineno-0-913"> 913</a></span>
+<span class="normal"><a href="#__codelineno-0-914"> 914</a></span>
+<span class="normal"><a href="#__codelineno-0-915"> 915</a></span>
+<span class="normal"><a href="#__codelineno-0-916"> 916</a></span>
+<span class="normal"><a href="#__codelineno-0-917"> 917</a></span>
+<span class="normal"><a href="#__codelineno-0-918"> 918</a></span>
+<span class="normal"><a href="#__codelineno-0-919"> 919</a></span>
+<span class="normal"><a href="#__codelineno-0-920"> 920</a></span>
+<span class="normal"><a href="#__codelineno-0-921"> 921</a></span>
+<span class="normal"><a href="#__codelineno-0-922"> 922</a></span>
+<span class="normal"><a href="#__codelineno-0-923"> 923</a></span>
+<span class="normal"><a href="#__codelineno-0-924"> 924</a></span>
+<span class="normal"><a href="#__codelineno-0-925"> 925</a></span>
+<span class="normal"><a href="#__codelineno-0-926"> 926</a></span>
+<span class="normal"><a href="#__codelineno-0-927"> 927</a></span>
+<span class="normal"><a href="#__codelineno-0-928"> 928</a></span>
+<span class="normal"><a href="#__codelineno-0-929"> 929</a></span>
+<span class="normal"><a href="#__codelineno-0-930"> 930</a></span>
+<span class="normal"><a href="#__codelineno-0-931"> 931</a></span>
+<span class="normal"><a href="#__codelineno-0-932"> 932</a></span>
+<span class="normal"><a href="#__codelineno-0-933"> 933</a></span>
+<span class="normal"><a href="#__codelineno-0-934"> 934</a></span>
+<span class="normal"><a href="#__codelineno-0-935"> 935</a></span>
+<span class="normal"><a href="#__codelineno-0-936"> 936</a></span>
+<span class="normal"><a href="#__codelineno-0-937"> 937</a></span>
+<span class="normal"><a href="#__codelineno-0-938"> 938</a></span>
+<span class="normal"><a href="#__codelineno-0-939"> 939</a></span>
+<span class="normal"><a href="#__codelineno-0-940"> 940</a></span>
+<span class="normal"><a href="#__codelineno-0-941"> 941</a></span>
+<span class="normal"><a href="#__codelineno-0-942"> 942</a></span>
+<span class="normal"><a href="#__codelineno-0-943"> 943</a></span>
+<span class="normal"><a href="#__codelineno-0-944"> 944</a></span>
+<span class="normal"><a href="#__codelineno-0-945"> 945</a></span>
+<span class="normal"><a href="#__codelineno-0-946"> 946</a></span>
+<span class="normal"><a href="#__codelineno-0-947"> 947</a></span>
+<span class="normal"><a href="#__codelineno-0-948"> 948</a></span>
+<span class="normal"><a href="#__codelineno-0-949"> 949</a></span>
+<span class="normal"><a href="#__codelineno-0-950"> 950</a></span>
+<span class="normal"><a href="#__codelineno-0-951"> 951</a></span>
+<span class="normal"><a href="#__codelineno-0-952"> 952</a></span>
+<span class="normal"><a href="#__codelineno-0-953"> 953</a></span>
+<span class="normal"><a href="#__codelineno-0-954"> 954</a></span>
+<span class="normal"><a href="#__codelineno-0-955"> 955</a></span>
+<span class="normal"><a href="#__codelineno-0-956"> 956</a></span>
+<span class="normal"><a href="#__codelineno-0-957"> 957</a></span>
+<span class="normal"><a href="#__codelineno-0-958"> 958</a></span>
+<span class="normal"><a href="#__codelineno-0-959"> 959</a></span>
+<span class="normal"><a href="#__codelineno-0-960"> 960</a></span>
+<span class="normal"><a href="#__codelineno-0-961"> 961</a></span>
+<span class="normal"><a href="#__codelineno-0-962"> 962</a></span>
+<span class="normal"><a href="#__codelineno-0-963"> 963</a></span>
+<span class="normal"><a href="#__codelineno-0-964"> 964</a></span>
+<span class="normal"><a href="#__codelineno-0-965"> 965</a></span>
+<span class="normal"><a href="#__codelineno-0-966"> 966</a></span>
+<span class="normal"><a href="#__codelineno-0-967"> 967</a></span>
+<span class="normal"><a href="#__codelineno-0-968"> 968</a></span>
+<span class="normal"><a href="#__codelineno-0-969"> 969</a></span>
+<span class="normal"><a href="#__codelineno-0-970"> 970</a></span>
+<span class="normal"><a href="#__codelineno-0-971"> 971</a></span>
+<span class="normal"><a href="#__codelineno-0-972"> 972</a></span>
+<span class="normal"><a href="#__codelineno-0-973"> 973</a></span>
+<span class="normal"><a href="#__codelineno-0-974"> 974</a></span>
+<span class="normal"><a href="#__codelineno-0-975"> 975</a></span>
+<span class="normal"><a href="#__codelineno-0-976"> 976</a></span>
+<span class="normal"><a href="#__codelineno-0-977"> 977</a></span>
+<span class="normal"><a href="#__codelineno-0-978"> 978</a></span>
+<span class="normal"><a href="#__codelineno-0-979"> 979</a></span>
+<span class="normal"><a href="#__codelineno-0-980"> 980</a></span>
+<span class="normal"><a href="#__codelineno-0-981"> 981</a></span>
+<span class="normal"><a href="#__codelineno-0-982"> 982</a></span>
+<span class="normal"><a href="#__codelineno-0-983"> 983</a></span>
+<span class="normal"><a href="#__codelineno-0-984"> 984</a></span>
+<span class="normal"><a href="#__codelineno-0-985"> 985</a></span>
+<span class="normal"><a href="#__codelineno-0-986"> 986</a></span>
+<span class="normal"><a href="#__codelineno-0-987"> 987</a></span>
+<span class="normal"><a href="#__codelineno-0-988"> 988</a></span>
+<span class="normal"><a href="#__codelineno-0-989"> 989</a></span>
+<span class="normal"><a href="#__codelineno-0-990"> 990</a></span>
+<span class="normal"><a href="#__codelineno-0-991"> 991</a></span>
+<span class="normal"><a href="#__codelineno-0-992"> 992</a></span>
+<span class="normal"><a href="#__codelineno-0-993"> 993</a></span>
+<span class="normal"><a href="#__codelineno-0-994"> 994</a></span>
+<span class="normal"><a href="#__codelineno-0-995"> 995</a></span>
+<span class="normal"><a href="#__codelineno-0-996"> 996</a></span>
+<span class="normal"><a href="#__codelineno-0-997"> 997</a></span>
+<span class="normal"><a href="#__codelineno-0-998"> 998</a></span>
+<span class="normal"><a href="#__codelineno-0-999"> 999</a></span>
+<span class="normal"><a href="#__codelineno-0-1000">1000</a></span>
+<span class="normal"><a href="#__codelineno-0-1001">1001</a></span>
+<span class="normal"><a href="#__codelineno-0-1002">1002</a></span>
+<span class="normal"><a href="#__codelineno-0-1003">1003</a></span>
+<span class="normal"><a href="#__codelineno-0-1004">1004</a></span>
+<span class="normal"><a href="#__codelineno-0-1005">1005</a></span>
+<span class="normal"><a href="#__codelineno-0-1006">1006</a></span>
+<span class="normal"><a href="#__codelineno-0-1007">1007</a></span>
+<span class="normal"><a href="#__codelineno-0-1008">1008</a></span>
+<span class="normal"><a href="#__codelineno-0-1009">1009</a></span>
+<span class="normal"><a href="#__codelineno-0-1010">1010</a></span>
+<span class="normal"><a href="#__codelineno-0-1011">1011</a></span>
+<span class="normal"><a href="#__codelineno-0-1012">1012</a></span>
+<span class="normal"><a href="#__codelineno-0-1013">1013</a></span>
+<span class="normal"><a href="#__codelineno-0-1014">1014</a></span>
+<span class="normal"><a href="#__codelineno-0-1015">1015</a></span>
+<span class="normal"><a href="#__codelineno-0-1016">1016</a></span>
+<span class="normal"><a href="#__codelineno-0-1017">1017</a></span>
+<span class="normal"><a href="#__codelineno-0-1018">1018</a></span>
+<span class="normal"><a href="#__codelineno-0-1019">1019</a></span>
+<span class="normal"><a href="#__codelineno-0-1020">1020</a></span>
+<span class="normal"><a href="#__codelineno-0-1021">1021</a></span>
+<span class="normal"><a href="#__codelineno-0-1022">1022</a></span>
+<span class="normal"><a href="#__codelineno-0-1023">1023</a></span>
+<span class="normal"><a href="#__codelineno-0-1024">1024</a></span>
+<span class="normal"><a href="#__codelineno-0-1025">1025</a></span>
+<span class="normal"><a href="#__codelineno-0-1026">1026</a></span>
+<span class="normal"><a href="#__codelineno-0-1027">1027</a></span>
+<span class="normal"><a href="#__codelineno-0-1028">1028</a></span>
+<span class="normal"><a href="#__codelineno-0-1029">1029</a></span>
+<span class="normal"><a href="#__codelineno-0-1030">1030</a></span>
+<span class="normal"><a href="#__codelineno-0-1031">1031</a></span>
+<span class="normal"><a href="#__codelineno-0-1032">1032</a></span>
+<span class="normal"><a href="#__codelineno-0-1033">1033</a></span>
+<span class="normal"><a href="#__codelineno-0-1034">1034</a></span>
+<span class="normal"><a href="#__codelineno-0-1035">1035</a></span>
+<span class="normal"><a href="#__codelineno-0-1036">1036</a></span>
+<span class="normal"><a href="#__codelineno-0-1037">1037</a></span>
+<span class="normal"><a href="#__codelineno-0-1038">1038</a></span>
+<span class="normal"><a href="#__codelineno-0-1039">1039</a></span>
+<span class="normal"><a href="#__codelineno-0-1040">1040</a></span>
+<span class="normal"><a href="#__codelineno-0-1041">1041</a></span>
+<span class="normal"><a href="#__codelineno-0-1042">1042</a></span>
+<span class="normal"><a href="#__codelineno-0-1043">1043</a></span>
+<span class="normal"><a href="#__codelineno-0-1044">1044</a></span>
+<span class="normal"><a href="#__codelineno-0-1045">1045</a></span>
+<span class="normal"><a href="#__codelineno-0-1046">1046</a></span>
+<span class="normal"><a href="#__codelineno-0-1047">1047</a></span>
+<span class="normal"><a href="#__codelineno-0-1048">1048</a></span>
+<span class="normal"><a href="#__codelineno-0-1049">1049</a></span>
+<span class="normal"><a href="#__codelineno-0-1050">1050</a></span>
+<span class="normal"><a href="#__codelineno-0-1051">1051</a></span>
+<span class="normal"><a href="#__codelineno-0-1052">1052</a></span>
+<span class="normal"><a href="#__codelineno-0-1053">1053</a></span>
+<span class="normal"><a href="#__codelineno-0-1054">1054</a></span>
+<span class="normal"><a href="#__codelineno-0-1055">1055</a></span>
+<span class="normal"><a href="#__codelineno-0-1056">1056</a></span>
+<span class="normal"><a href="#__codelineno-0-1057">1057</a></span>
+<span class="normal"><a href="#__codelineno-0-1058">1058</a></span>
+<span class="normal"><a href="#__codelineno-0-1059">1059</a></span>
+<span class="normal"><a href="#__codelineno-0-1060">1060</a></span>
+<span class="normal"><a href="#__codelineno-0-1061">1061</a></span>
+<span class="normal"><a href="#__codelineno-0-1062">1062</a></span>
+<span class="normal"><a href="#__codelineno-0-1063">1063</a></span>
+<span class="normal"><a href="#__codelineno-0-1064">1064</a></span>
+<span class="normal"><a href="#__codelineno-0-1065">1065</a></span>
+<span class="normal"><a href="#__codelineno-0-1066">1066</a></span>
+<span class="normal"><a href="#__codelineno-0-1067">1067</a></span>
+<span class="normal"><a href="#__codelineno-0-1068">1068</a></span>
+<span class="normal"><a href="#__codelineno-0-1069">1069</a></span>
+<span class="normal"><a href="#__codelineno-0-1070">1070</a></span>
+<span class="normal"><a href="#__codelineno-0-1071">1071</a></span>
+<span class="normal"><a href="#__codelineno-0-1072">1072</a></span>
+<span class="normal"><a href="#__codelineno-0-1073">1073</a></span>
+<span class="normal"><a href="#__codelineno-0-1074">1074</a></span>
+<span class="normal"><a href="#__codelineno-0-1075">1075</a></span>
+<span class="normal"><a href="#__codelineno-0-1076">1076</a></span>
+<span class="normal"><a href="#__codelineno-0-1077">1077</a></span>
+<span class="normal"><a href="#__codelineno-0-1078">1078</a></span>
+<span class="normal"><a href="#__codelineno-0-1079">1079</a></span>
+<span class="normal"><a href="#__codelineno-0-1080">1080</a></span>
+<span class="normal"><a href="#__codelineno-0-1081">1081</a></span>
+<span class="normal"><a href="#__codelineno-0-1082">1082</a></span>
+<span class="normal"><a href="#__codelineno-0-1083">1083</a></span>
+<span class="normal"><a href="#__codelineno-0-1084">1084</a></span>
+<span class="normal"><a href="#__codelineno-0-1085">1085</a></span>
+<span class="normal"><a href="#__codelineno-0-1086">1086</a></span>
+<span class="normal"><a href="#__codelineno-0-1087">1087</a></span>
+<span class="normal"><a href="#__codelineno-0-1088">1088</a></span>
+<span class="normal"><a href="#__codelineno-0-1089">1089</a></span>
+<span class="normal"><a href="#__codelineno-0-1090">1090</a></span>
+<span class="normal"><a href="#__codelineno-0-1091">1091</a></span>
+<span class="normal"><a href="#__codelineno-0-1092">1092</a></span>
+<span class="normal"><a href="#__codelineno-0-1093">1093</a></span>
+<span class="normal"><a href="#__codelineno-0-1094">1094</a></span>
+<span class="normal"><a href="#__codelineno-0-1095">1095</a></span>
+<span class="normal"><a href="#__codelineno-0-1096">1096</a></span>
+<span class="normal"><a href="#__codelineno-0-1097">1097</a></span>
+<span class="normal"><a href="#__codelineno-0-1098">1098</a></span>
+<span class="normal"><a href="#__codelineno-0-1099">1099</a></span>
+<span class="normal"><a href="#__codelineno-0-1100">1100</a></span>
+<span class="normal"><a href="#__codelineno-0-1101">1101</a></span>
+<span class="normal"><a href="#__codelineno-0-1102">1102</a></span>
+<span class="normal"><a href="#__codelineno-0-1103">1103</a></span>
+<span class="normal"><a href="#__codelineno-0-1104">1104</a></span>
+<span class="normal"><a href="#__codelineno-0-1105">1105</a></span>
+<span class="normal"><a href="#__codelineno-0-1106">1106</a></span>
+<span class="normal"><a href="#__codelineno-0-1107">1107</a></span>
+<span class="normal"><a href="#__codelineno-0-1108">1108</a></span>
+<span class="normal"><a href="#__codelineno-0-1109">1109</a></span>
+<span class="normal"><a href="#__codelineno-0-1110">1110</a></span>
+<span class="normal"><a href="#__codelineno-0-1111">1111</a></span>
+<span class="normal"><a href="#__codelineno-0-1112">1112</a></span>
+<span class="normal"><a href="#__codelineno-0-1113">1113</a></span>
+<span class="normal"><a href="#__codelineno-0-1114">1114</a></span>
+<span class="normal"><a href="#__codelineno-0-1115">1115</a></span>
+<span class="normal"><a href="#__codelineno-0-1116">1116</a></span>
+<span class="normal"><a href="#__codelineno-0-1117">1117</a></span>
+<span class="normal"><a href="#__codelineno-0-1118">1118</a></span>
+<span class="normal"><a href="#__codelineno-0-1119">1119</a></span>
+<span class="normal"><a href="#__codelineno-0-1120">1120</a></span>
+<span class="normal"><a href="#__codelineno-0-1121">1121</a></span>
+<span class="normal"><a href="#__codelineno-0-1122">1122</a></span>
+<span class="normal"><a href="#__codelineno-0-1123">1123</a></span>
+<span class="normal"><a href="#__codelineno-0-1124">1124</a></span>
+<span class="normal"><a href="#__codelineno-0-1125">1125</a></span>
+<span class="normal"><a href="#__codelineno-0-1126">1126</a></span>
+<span class="normal"><a href="#__codelineno-0-1127">1127</a></span>
+<span class="normal"><a href="#__codelineno-0-1128">1128</a></span>
+<span class="normal"><a href="#__codelineno-0-1129">1129</a></span>
+<span class="normal"><a href="#__codelineno-0-1130">1130</a></span>
+<span class="normal"><a href="#__codelineno-0-1131">1131</a></span>
+<span class="normal"><a href="#__codelineno-0-1132">1132</a></span>
+<span class="normal"><a href="#__codelineno-0-1133">1133</a></span>
+<span class="normal"><a href="#__codelineno-0-1134">1134</a></span>
+<span class="normal"><a href="#__codelineno-0-1135">1135</a></span>
+<span class="normal"><a href="#__codelineno-0-1136">1136</a></span>
+<span class="normal"><a href="#__codelineno-0-1137">1137</a></span>
+<span class="normal"><a href="#__codelineno-0-1138">1138</a></span>
+<span class="normal"><a href="#__codelineno-0-1139">1139</a></span>
+<span class="normal"><a href="#__codelineno-0-1140">1140</a></span>
+<span class="normal"><a href="#__codelineno-0-1141">1141</a></span>
+<span class="normal"><a href="#__codelineno-0-1142">1142</a></span>
+<span class="normal"><a href="#__codelineno-0-1143">1143</a></span>
+<span class="normal"><a href="#__codelineno-0-1144">1144</a></span>
+<span class="normal"><a href="#__codelineno-0-1145">1145</a></span>
+<span class="normal"><a href="#__codelineno-0-1146">1146</a></span>
+<span class="normal"><a href="#__codelineno-0-1147">1147</a></span>
+<span class="normal"><a href="#__codelineno-0-1148">1148</a></span>
+<span class="normal"><a href="#__codelineno-0-1149">1149</a></span>
+<span class="normal"><a href="#__codelineno-0-1150">1150</a></span>
+<span class="normal"><a href="#__codelineno-0-1151">1151</a></span>
+<span class="normal"><a href="#__codelineno-0-1152">1152</a></span>
+<span class="normal"><a href="#__codelineno-0-1153">1153</a></span>
+<span class="normal"><a href="#__codelineno-0-1154">1154</a></span>
+<span class="normal"><a href="#__codelineno-0-1155">1155</a></span>
+<span class="normal"><a href="#__codelineno-0-1156">1156</a></span>
+<span class="normal"><a href="#__codelineno-0-1157">1157</a></span>
+<span class="normal"><a href="#__codelineno-0-1158">1158</a></span>
+<span class="normal"><a href="#__codelineno-0-1159">1159</a></span>
+<span class="normal"><a href="#__codelineno-0-1160">1160</a></span>
+<span class="normal"><a href="#__codelineno-0-1161">1161</a></span>
+<span class="normal"><a href="#__codelineno-0-1162">1162</a></span>
+<span class="normal"><a href="#__codelineno-0-1163">1163</a></span>
+<span class="normal"><a href="#__codelineno-0-1164">1164</a></span>
+<span class="normal"><a href="#__codelineno-0-1165">1165</a></span>
+<span class="normal"><a href="#__codelineno-0-1166">1166</a></span>
+<span class="normal"><a href="#__codelineno-0-1167">1167</a></span>
+<span class="normal"><a href="#__codelineno-0-1168">1168</a></span>
+<span class="normal"><a href="#__codelineno-0-1169">1169</a></span>
+<span class="normal"><a href="#__codelineno-0-1170">1170</a></span>
+<span class="normal"><a href="#__codelineno-0-1171">1171</a></span>
+<span class="normal"><a href="#__codelineno-0-1172">1172</a></span>
+<span class="normal"><a href="#__codelineno-0-1173">1173</a></span>
+<span class="normal"><a href="#__codelineno-0-1174">1174</a></span>
+<span class="normal"><a href="#__codelineno-0-1175">1175</a></span>
+<span class="normal"><a href="#__codelineno-0-1176">1176</a></span>
+<span class="normal"><a href="#__codelineno-0-1177">1177</a></span>
+<span class="normal"><a href="#__codelineno-0-1178">1178</a></span>
+<span class="normal"><a href="#__codelineno-0-1179">1179</a></span>
+<span class="normal"><a href="#__codelineno-0-1180">1180</a></span>
+<span class="normal"><a href="#__codelineno-0-1181">1181</a></span>
+<span class="normal"><a href="#__codelineno-0-1182">1182</a></span>
+<span class="normal"><a href="#__codelineno-0-1183">1183</a></span>
+<span class="normal"><a href="#__codelineno-0-1184">1184</a></span>
+<span class="normal"><a href="#__codelineno-0-1185">1185</a></span>
+<span class="normal"><a href="#__codelineno-0-1186">1186</a></span>
+<span class="normal"><a href="#__codelineno-0-1187">1187</a></span>
+<span class="normal"><a href="#__codelineno-0-1188">1188</a></span>
+<span class="normal"><a href="#__codelineno-0-1189">1189</a></span>
+<span class="normal"><a href="#__codelineno-0-1190">1190</a></span>
+<span class="normal"><a href="#__codelineno-0-1191">1191</a></span>
+<span class="normal"><a href="#__codelineno-0-1192">1192</a></span>
+<span class="normal"><a href="#__codelineno-0-1193">1193</a></span>
+<span class="normal"><a href="#__codelineno-0-1194">1194</a></span>
+<span class="normal"><a href="#__codelineno-0-1195">1195</a></span>
+<span class="normal"><a href="#__codelineno-0-1196">1196</a></span>
+<span class="normal"><a href="#__codelineno-0-1197">1197</a></span>
+<span class="normal"><a href="#__codelineno-0-1198">1198</a></span>
+<span class="normal"><a href="#__codelineno-0-1199">1199</a></span>
+<span class="normal"><a href="#__codelineno-0-1200">1200</a></span>
+<span class="normal"><a href="#__codelineno-0-1201">1201</a></span>
+<span class="normal"><a href="#__codelineno-0-1202">1202</a></span>
+<span class="normal"><a href="#__codelineno-0-1203">1203</a></span>
+<span class="normal"><a href="#__codelineno-0-1204">1204</a></span>
+<span class="normal"><a href="#__codelineno-0-1205">1205</a></span>
+<span class="normal"><a href="#__codelineno-0-1206">1206</a></span>
+<span class="normal"><a href="#__codelineno-0-1207">1207</a></span>
+<span class="normal"><a href="#__codelineno-0-1208">1208</a></span>
+<span class="normal"><a href="#__codelineno-0-1209">1209</a></span>
+<span class="normal"><a href="#__codelineno-0-1210">1210</a></span>
+<span class="normal"><a href="#__codelineno-0-1211">1211</a></span>
+<span class="normal"><a href="#__codelineno-0-1212">1212</a></span>
+<span class="normal"><a href="#__codelineno-0-1213">1213</a></span>
+<span class="normal"><a href="#__codelineno-0-1214">1214</a></span>
+<span class="normal"><a href="#__codelineno-0-1215">1215</a></span>
+<span class="normal"><a href="#__codelineno-0-1216">1216</a></span>
+<span class="normal"><a href="#__codelineno-0-1217">1217</a></span>
+<span class="normal"><a href="#__codelineno-0-1218">1218</a></span>
+<span class="normal"><a href="#__codelineno-0-1219">1219</a></span>
+<span class="normal"><a href="#__codelineno-0-1220">1220</a></span>
+<span class="normal"><a href="#__codelineno-0-1221">1221</a></span>
+<span class="normal"><a href="#__codelineno-0-1222">1222</a></span>
+<span class="normal"><a href="#__codelineno-0-1223">1223</a></span>
+<span class="normal"><a href="#__codelineno-0-1224">1224</a></span>
+<span class="normal"><a href="#__codelineno-0-1225">1225</a></span>
+<span class="normal"><a href="#__codelineno-0-1226">1226</a></span>
+<span class="normal"><a href="#__codelineno-0-1227">1227</a></span>
+<span class="normal"><a href="#__codelineno-0-1228">1228</a></span>
+<span class="normal"><a href="#__codelineno-0-1229">1229</a></span>
+<span class="normal"><a href="#__codelineno-0-1230">1230</a></span>
+<span class="normal"><a href="#__codelineno-0-1231">1231</a></span>
+<span class="normal"><a href="#__codelineno-0-1232">1232</a></span>
+<span class="normal"><a href="#__codelineno-0-1233">1233</a></span>
+<span class="normal"><a href="#__codelineno-0-1234">1234</a></span>
+<span class="normal"><a href="#__codelineno-0-1235">1235</a></span>
+<span class="normal"><a href="#__codelineno-0-1236">1236</a></span>
+<span class="normal"><a href="#__codelineno-0-1237">1237</a></span>
+<span class="normal"><a href="#__codelineno-0-1238">1238</a></span>
+<span class="normal"><a href="#__codelineno-0-1239">1239</a></span>
+<span class="normal"><a href="#__codelineno-0-1240">1240</a></span>
+<span class="normal"><a href="#__codelineno-0-1241">1241</a></span>
+<span class="normal"><a href="#__codelineno-0-1242">1242</a></span>
+<span class="normal"><a href="#__codelineno-0-1243">1243</a></span>
+<span class="normal"><a href="#__codelineno-0-1244">1244</a></span>
+<span class="normal"><a href="#__codelineno-0-1245">1245</a></span>
+<span class="normal"><a href="#__codelineno-0-1246">1246</a></span>
+<span class="normal"><a href="#__codelineno-0-1247">1247</a></span>
+<span class="normal"><a href="#__codelineno-0-1248">1248</a></span>
+<span class="normal"><a href="#__codelineno-0-1249">1249</a></span>
+<span class="normal"><a href="#__codelineno-0-1250">1250</a></span>
+<span class="normal"><a href="#__codelineno-0-1251">1251</a></span>
+<span class="normal"><a href="#__codelineno-0-1252">1252</a></span>
+<span class="normal"><a href="#__codelineno-0-1253">1253</a></span>
+<span class="normal"><a href="#__codelineno-0-1254">1254</a></span>
+<span class="normal"><a href="#__codelineno-0-1255">1255</a></span>
+<span class="normal"><a href="#__codelineno-0-1256">1256</a></span>
+<span class="normal"><a href="#__codelineno-0-1257">1257</a></span>
+<span class="normal"><a href="#__codelineno-0-1258">1258</a></span>
+<span class="normal"><a href="#__codelineno-0-1259">1259</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="nd">@plot_function</span><span class="p">(</span>
+</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>    <span class="n">suffix</span><span class="o">=</span><span class="s2">&quot;corner_ppc&quot;</span><span class="p">,</span>
+</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>    <span class="n">save_label</span><span class="o">=</span><span class="s2">&quot;corner PPC plot&quot;</span><span class="p">,</span>
+</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a>    <span class="n">save_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;bbox_inches&quot;</span><span class="p">:</span> <span class="s2">&quot;tight&quot;</span><span class="p">,</span> <span class="s2">&quot;dpi&quot;</span><span class="p">:</span> <span class="mi">150</span><span class="p">},</span>
+</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a><span class="p">)</span>
+</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a><span class="k">def</span><span class="w"> </span><span class="nf">plot_corner_ppc</span><span class="p">(</span>
+</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a>    <span class="n">results</span><span class="p">,</span>
+</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>    <span class="n">counts</span><span class="p">,</span>
+</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>    <span class="n">ctx</span><span class="p">,</span>
+</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>    <span class="n">viz_cfg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>    <span class="n">gene_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a>    <span class="n">gene_names_list</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a>    <span class="n">gene_selection</span><span class="o">=</span><span class="s2">&quot;correlation_diverse&quot;</span><span class="p">,</span>
+</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a>    <span class="n">n_genes</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a>    <span class="n">min_mean_umi_for_selection</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>    <span class="n">subtract_direction</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a>    <span class="n">n_pcs_to_remove</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a>    <span class="n">n_samples</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a>    <span class="n">ppc_level</span><span class="o">=</span><span class="s2">&quot;library_anchored&quot;</span><span class="p">,</span>
+</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a>    <span class="n">n_contour_levels</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>    <span class="n">contour_mass_levels</span><span class="o">=</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.68</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">,</span> <span class="mf">0.99</span><span class="p">),</span>
+</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a>    <span class="n">contour_cmap</span><span class="o">=</span><span class="s2">&quot;Blues&quot;</span><span class="p">,</span>
+</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a>    <span class="n">contour_alpha</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span>
+</span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a>    <span class="n">draw_contour_edges</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a>    <span class="n">contour_edgecolor</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">,</span>
+</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a>    <span class="n">contour_edgewidth</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>    <span class="n">suppress_contour_edges_for_discrete</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a>    <span class="n">scatter_alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span>
+</span><span id="__span-0-847"><a id="__codelineno-0-847" name="__codelineno-0-847"></a>    <span class="n">scatter_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-0-848"><a id="__codelineno-0-848" name="__codelineno-0-848"></a>    <span class="n">scatter_color</span><span class="o">=</span><span class="s2">&quot;black&quot;</span><span class="p">,</span>
+</span><span id="__span-0-849"><a id="__codelineno-0-849" name="__codelineno-0-849"></a>    <span class="n">density_method</span><span class="o">=</span><span class="s2">&quot;kde&quot;</span><span class="p">,</span>
+</span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a>    <span class="n">hist2d_bins</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span>
+</span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a>    <span class="n">log_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a>    <span class="n">match_offdiag_limits_to_marginals</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a>    <span class="n">figsize</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a>    <span class="n">fig</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a>    <span class="n">axes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a>    <span class="n">ax</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a><span class="p">):</span>
+</span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Render a corner-plot-style posterior predictive check grid.</span>
+</span><span id="__span-0-859"><a id="__codelineno-0-859" name="__codelineno-0-859"></a>
+</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a><span class="sd">    For a set of selected genes the plot creates an ``N x N`` triangular</span>
+</span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a><span class="sd">    grid where:</span>
+</span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a>
+</span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a><span class="sd">    - **Diagonal**: marginal PPC histograms (shaded predictive credible</span>
+</span><span id="__span-0-864"><a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="sd">      bands + observed count histogram), identical to :func:`plot_ppc`.</span>
+</span><span id="__span-0-865"><a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="sd">    - **Lower triangle**: bivariate PPC panels showing 2-D density</span>
+</span><span id="__span-0-866"><a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="sd">      contours from pooled posterior predictive samples with observed</span>
+</span><span id="__span-0-867"><a id="__codelineno-0-867" name="__codelineno-0-867"></a><span class="sd">      gene-gene scatter in the background.</span>
+</span><span id="__span-0-868"><a id="__codelineno-0-868" name="__codelineno-0-868"></a><span class="sd">    - **Upper triangle**: hidden.</span>
+</span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a>
+</span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a><span class="sd">    results : object</span>
+</span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a><span class="sd">        Fitted model results exposing predictive sampling.</span>
+</span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a><span class="sd">    counts : array-like</span>
+</span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a><span class="sd">        Observed count matrix ``(n_cells, n_genes)``.</span>
+</span><span id="__span-0-876"><a id="__codelineno-0-876" name="__codelineno-0-876"></a><span class="sd">    viz_cfg : OmegaConf or None</span>
+</span><span id="__span-0-877"><a id="__codelineno-0-877" name="__codelineno-0-877"></a><span class="sd">        Visualization configuration.  Optional in interactive sessions —</span>
+</span><span id="__span-0-878"><a id="__codelineno-0-878" name="__codelineno-0-878"></a><span class="sd">        built-in defaults are used when ``None``.</span>
+</span><span id="__span-0-879"><a id="__codelineno-0-879" name="__codelineno-0-879"></a><span class="sd">    gene_indices : array-like of int or None</span>
+</span><span id="__span-0-880"><a id="__codelineno-0-880" name="__codelineno-0-880"></a><span class="sd">        Explicit column indices of genes to display.  Takes highest</span>
+</span><span id="__span-0-881"><a id="__codelineno-0-881" name="__codelineno-0-881"></a><span class="sd">        priority over ``gene_names_list`` and ``n_genes``.</span>
+</span><span id="__span-0-882"><a id="__codelineno-0-882" name="__codelineno-0-882"></a><span class="sd">    gene_names_list : list of str or None</span>
+</span><span id="__span-0-883"><a id="__codelineno-0-883" name="__codelineno-0-883"></a><span class="sd">        Gene names to display.  Resolved against ``results.var.index``.</span>
+</span><span id="__span-0-884"><a id="__codelineno-0-884" name="__codelineno-0-884"></a><span class="sd">    gene_selection : {&quot;correlation_diverse&quot;, &quot;abundance&quot;}</span>
+</span><span id="__span-0-885"><a id="__codelineno-0-885" name="__codelineno-0-885"></a><span class="sd">        Auto-selection strategy used when neither ``gene_indices`` nor</span>
+</span><span id="__span-0-886"><a id="__codelineno-0-886" name="__codelineno-0-886"></a><span class="sd">        ``gene_names_list`` is supplied:</span>
+</span><span id="__span-0-887"><a id="__codelineno-0-887" name="__codelineno-0-887"></a>
+</span><span id="__span-0-888"><a id="__codelineno-0-888" name="__codelineno-0-888"></a><span class="sd">        - ``&quot;correlation_diverse&quot;`` (default): select genes spanning</span>
+</span><span id="__span-0-889"><a id="__codelineno-0-889" name="__codelineno-0-889"></a><span class="sd">          strong positive, strong negative, and diverse near-zero</span>
+</span><span id="__span-0-890"><a id="__codelineno-0-890" name="__codelineno-0-890"></a><span class="sd">          correlations.</span>
+</span><span id="__span-0-891"><a id="__codelineno-0-891" name="__codelineno-0-891"></a><span class="sd">        - ``&quot;abundance&quot;``: select abundance-filtered log-spaced quantiles</span>
+</span><span id="__span-0-892"><a id="__codelineno-0-892" name="__codelineno-0-892"></a><span class="sd">          of mean UMI counts.</span>
+</span><span id="__span-0-893"><a id="__codelineno-0-893" name="__codelineno-0-893"></a><span class="sd">    n_genes : int</span>
+</span><span id="__span-0-894"><a id="__codelineno-0-894" name="__codelineno-0-894"></a><span class="sd">        Number of genes when auto-selecting (default 5).  Ignored when</span>
+</span><span id="__span-0-895"><a id="__codelineno-0-895" name="__codelineno-0-895"></a><span class="sd">        ``gene_indices`` or ``gene_names_list`` is given.</span>
+</span><span id="__span-0-896"><a id="__codelineno-0-896" name="__codelineno-0-896"></a><span class="sd">    min_mean_umi_for_selection : float</span>
+</span><span id="__span-0-897"><a id="__codelineno-0-897" name="__codelineno-0-897"></a><span class="sd">        Lower threshold on per-gene mean UMI counts for auto-selection</span>
+</span><span id="__span-0-898"><a id="__codelineno-0-898" name="__codelineno-0-898"></a><span class="sd">        candidates (default 5). Ignored when ``gene_indices`` or</span>
+</span><span id="__span-0-899"><a id="__codelineno-0-899" name="__codelineno-0-899"></a><span class="sd">        ``gene_names_list`` is provided.</span>
+</span><span id="__span-0-900"><a id="__codelineno-0-900" name="__codelineno-0-900"></a><span class="sd">    subtract_direction : {None, &quot;library_size&quot;, &quot;pc&quot;}, optional</span>
+</span><span id="__span-0-901"><a id="__codelineno-0-901" name="__codelineno-0-901"></a><span class="sd">        Remove nuisance directions from the correlation matrix before</span>
+</span><span id="__span-0-902"><a id="__codelineno-0-902" name="__codelineno-0-902"></a><span class="sd">        automatic gene selection.  Useful when library-size variation</span>
+</span><span id="__span-0-903"><a id="__codelineno-0-903" name="__codelineno-0-903"></a><span class="sd">        dominates and hides secondary block structure:</span>
+</span><span id="__span-0-904"><a id="__codelineno-0-904" name="__codelineno-0-904"></a>
+</span><span id="__span-0-905"><a id="__codelineno-0-905" name="__codelineno-0-905"></a><span class="sd">        - ``None`` (default): use the full correlation matrix.</span>
+</span><span id="__span-0-906"><a id="__codelineno-0-906" name="__codelineno-0-906"></a><span class="sd">        - ``&quot;library_size&quot;``: project out the latent direction closest</span>
+</span><span id="__span-0-907"><a id="__codelineno-0-907" name="__codelineno-0-907"></a><span class="sd">          to the all-ones gene vector.  Available for Laplace and VAE</span>
+</span><span id="__span-0-908"><a id="__codelineno-0-908" name="__codelineno-0-908"></a><span class="sd">          PLN fits; falls back to ``&quot;pc&quot;`` for the empirical path.</span>
+</span><span id="__span-0-909"><a id="__codelineno-0-909" name="__codelineno-0-909"></a><span class="sd">        - ``&quot;pc&quot;``: project out the top ``n_pcs_to_remove`` principal</span>
+</span><span id="__span-0-910"><a id="__codelineno-0-910" name="__codelineno-0-910"></a><span class="sd">          components from the covariance.</span>
+</span><span id="__span-0-911"><a id="__codelineno-0-911" name="__codelineno-0-911"></a>
+</span><span id="__span-0-912"><a id="__codelineno-0-912" name="__codelineno-0-912"></a><span class="sd">        Ignored when ``gene_indices`` or ``gene_names_list`` is given.</span>
+</span><span id="__span-0-913"><a id="__codelineno-0-913" name="__codelineno-0-913"></a><span class="sd">    n_pcs_to_remove : int</span>
+</span><span id="__span-0-914"><a id="__codelineno-0-914" name="__codelineno-0-914"></a><span class="sd">        Number of principal components to project out when</span>
+</span><span id="__span-0-915"><a id="__codelineno-0-915" name="__codelineno-0-915"></a><span class="sd">        ``subtract_direction=&quot;pc&quot;`` (default 1).</span>
+</span><span id="__span-0-916"><a id="__codelineno-0-916" name="__codelineno-0-916"></a><span class="sd">    n_samples : int or None</span>
+</span><span id="__span-0-917"><a id="__codelineno-0-917" name="__codelineno-0-917"></a><span class="sd">        Number of posterior predictive draws.  Overrides</span>
+</span><span id="__span-0-918"><a id="__codelineno-0-918" name="__codelineno-0-918"></a><span class="sd">        ``viz_cfg.ppc_opts.n_samples``.</span>
+</span><span id="__span-0-919"><a id="__codelineno-0-919" name="__codelineno-0-919"></a><span class="sd">    ppc_level : str</span>
+</span><span id="__span-0-920"><a id="__codelineno-0-920" name="__codelineno-0-920"></a><span class="sd">        PPC level passed to the predictive sampler (default</span>
+</span><span id="__span-0-921"><a id="__codelineno-0-921" name="__codelineno-0-921"></a><span class="sd">        ``&quot;library_anchored&quot;``).</span>
+</span><span id="__span-0-922"><a id="__codelineno-0-922" name="__codelineno-0-922"></a><span class="sd">    n_contour_levels : int</span>
+</span><span id="__span-0-923"><a id="__codelineno-0-923" name="__codelineno-0-923"></a><span class="sd">        Number of filled contour levels for off-diagonal panels when</span>
+</span><span id="__span-0-924"><a id="__codelineno-0-924" name="__codelineno-0-924"></a><span class="sd">        ``contour_mass_levels=None``.</span>
+</span><span id="__span-0-925"><a id="__codelineno-0-925" name="__codelineno-0-925"></a><span class="sd">    contour_mass_levels : tuple of float or None</span>
+</span><span id="__span-0-926"><a id="__codelineno-0-926" name="__codelineno-0-926"></a><span class="sd">        HPD-style cumulative mass levels in ``(0, 1)`` for off-diagonal</span>
+</span><span id="__span-0-927"><a id="__codelineno-0-927" name="__codelineno-0-927"></a><span class="sd">        contour thresholds (default ``(0.5, 0.68, 0.95, 0.99)``). Set to</span>
+</span><span id="__span-0-928"><a id="__codelineno-0-928" name="__codelineno-0-928"></a><span class="sd">        ``None`` to use evenly spaced density levels.</span>
+</span><span id="__span-0-929"><a id="__codelineno-0-929" name="__codelineno-0-929"></a><span class="sd">    contour_cmap : str</span>
+</span><span id="__span-0-930"><a id="__codelineno-0-930" name="__codelineno-0-930"></a><span class="sd">        Colormap for off-diagonal contour fills.</span>
+</span><span id="__span-0-931"><a id="__codelineno-0-931" name="__codelineno-0-931"></a><span class="sd">    contour_alpha : float</span>
+</span><span id="__span-0-932"><a id="__codelineno-0-932" name="__codelineno-0-932"></a><span class="sd">        Transparency for contour fills.</span>
+</span><span id="__span-0-933"><a id="__codelineno-0-933" name="__codelineno-0-933"></a><span class="sd">    draw_contour_edges : bool</span>
+</span><span id="__span-0-934"><a id="__codelineno-0-934" name="__codelineno-0-934"></a><span class="sd">        If ``True`` (default), draw contour-line edges on top of each</span>
+</span><span id="__span-0-935"><a id="__codelineno-0-935" name="__codelineno-0-935"></a><span class="sd">        filled HPD region for clearer boundaries.</span>
+</span><span id="__span-0-936"><a id="__codelineno-0-936" name="__codelineno-0-936"></a><span class="sd">    contour_edgecolor : str</span>
+</span><span id="__span-0-937"><a id="__codelineno-0-937" name="__codelineno-0-937"></a><span class="sd">        Colour for contour-line edges (default ``&quot;gray&quot;``).</span>
+</span><span id="__span-0-938"><a id="__codelineno-0-938" name="__codelineno-0-938"></a><span class="sd">    contour_edgewidth : float</span>
+</span><span id="__span-0-939"><a id="__codelineno-0-939" name="__codelineno-0-939"></a><span class="sd">        Line width for contour-line edges.</span>
+</span><span id="__span-0-940"><a id="__codelineno-0-940" name="__codelineno-0-940"></a><span class="sd">    suppress_contour_edges_for_discrete : bool</span>
+</span><span id="__span-0-941"><a id="__codelineno-0-941" name="__codelineno-0-941"></a><span class="sd">        If ``True`` (default), automatically suppress contour-line edges in</span>
+</span><span id="__span-0-942"><a id="__codelineno-0-942" name="__codelineno-0-942"></a><span class="sd">        strongly discrete integer-like panels where edge overlays can become</span>
+</span><span id="__span-0-943"><a id="__codelineno-0-943" name="__codelineno-0-943"></a><span class="sd">        visually cluttered.</span>
+</span><span id="__span-0-944"><a id="__codelineno-0-944" name="__codelineno-0-944"></a><span class="sd">    scatter_alpha : float</span>
+</span><span id="__span-0-945"><a id="__codelineno-0-945" name="__codelineno-0-945"></a><span class="sd">        Transparency for observed-data scatter points.</span>
+</span><span id="__span-0-946"><a id="__codelineno-0-946" name="__codelineno-0-946"></a><span class="sd">    scatter_size : float</span>
+</span><span id="__span-0-947"><a id="__codelineno-0-947" name="__codelineno-0-947"></a><span class="sd">        Marker size for scatter points.</span>
+</span><span id="__span-0-948"><a id="__codelineno-0-948" name="__codelineno-0-948"></a><span class="sd">    scatter_color : str</span>
+</span><span id="__span-0-949"><a id="__codelineno-0-949" name="__codelineno-0-949"></a><span class="sd">        Colour for observed-data scatter points.</span>
+</span><span id="__span-0-950"><a id="__codelineno-0-950" name="__codelineno-0-950"></a><span class="sd">    density_method : {&quot;kde&quot;, &quot;hist2d&quot;}</span>
+</span><span id="__span-0-951"><a id="__codelineno-0-951" name="__codelineno-0-951"></a><span class="sd">        Off-diagonal density estimator. ``&quot;kde&quot;`` (default) provides smoother</span>
+</span><span id="__span-0-952"><a id="__codelineno-0-952" name="__codelineno-0-952"></a><span class="sd">        contours but is slower on large pooled PPC samples; ``&quot;hist2d&quot;`` is fast</span>
+</span><span id="__span-0-953"><a id="__codelineno-0-953" name="__codelineno-0-953"></a><span class="sd">        and uses binned densities.</span>
+</span><span id="__span-0-954"><a id="__codelineno-0-954" name="__codelineno-0-954"></a><span class="sd">    hist2d_bins : int</span>
+</span><span id="__span-0-955"><a id="__codelineno-0-955" name="__codelineno-0-955"></a><span class="sd">        Number of bins per axis for ``density_method=&quot;hist2d&quot;``.</span>
+</span><span id="__span-0-956"><a id="__codelineno-0-956" name="__codelineno-0-956"></a><span class="sd">    log_scale : bool</span>
+</span><span id="__span-0-957"><a id="__codelineno-0-957" name="__codelineno-0-957"></a><span class="sd">        If ``True``, apply ``log1p`` to counts before off-diagonal density</span>
+</span><span id="__span-0-958"><a id="__codelineno-0-958" name="__codelineno-0-958"></a><span class="sd">        and scatter plotting in off-diagonal panels.</span>
+</span><span id="__span-0-959"><a id="__codelineno-0-959" name="__codelineno-0-959"></a><span class="sd">    match_offdiag_limits_to_marginals : bool</span>
+</span><span id="__span-0-960"><a id="__codelineno-0-960" name="__codelineno-0-960"></a><span class="sd">        If ``True`` (default), enforce off-diagonal axis limits to match</span>
+</span><span id="__span-0-961"><a id="__codelineno-0-961" name="__codelineno-0-961"></a><span class="sd">        the corresponding marginal (diagonal) panels: x-limits follow the</span>
+</span><span id="__span-0-962"><a id="__codelineno-0-962" name="__codelineno-0-962"></a><span class="sd">        diagonal panel in the same column and y-limits follow the diagonal</span>
+</span><span id="__span-0-963"><a id="__codelineno-0-963" name="__codelineno-0-963"></a><span class="sd">        panel in the same row. When ``log_scale=True``, matched limits are</span>
+</span><span id="__span-0-964"><a id="__codelineno-0-964" name="__codelineno-0-964"></a><span class="sd">        transformed with ``log1p`` for consistency with off-diagonal axes.</span>
+</span><span id="__span-0-965"><a id="__codelineno-0-965" name="__codelineno-0-965"></a><span class="sd">    figsize : tuple of float or None</span>
+</span><span id="__span-0-966"><a id="__codelineno-0-966" name="__codelineno-0-966"></a><span class="sd">        Figure size.  Defaults to ``(3.0 * N, 3.0 * N)`` where ``N`` is</span>
+</span><span id="__span-0-967"><a id="__codelineno-0-967" name="__codelineno-0-967"></a><span class="sd">        the number of selected genes.</span>
+</span><span id="__span-0-968"><a id="__codelineno-0-968" name="__codelineno-0-968"></a><span class="sd">    fig : matplotlib.figure.Figure or None</span>
+</span><span id="__span-0-969"><a id="__codelineno-0-969" name="__codelineno-0-969"></a><span class="sd">        Optional figure to draw into.</span>
+</span><span id="__span-0-970"><a id="__codelineno-0-970" name="__codelineno-0-970"></a><span class="sd">    axes : array-like of matplotlib.axes.Axes or None</span>
+</span><span id="__span-0-971"><a id="__codelineno-0-971" name="__codelineno-0-971"></a><span class="sd">        Optional ``N x N`` axes grid.</span>
+</span><span id="__span-0-972"><a id="__codelineno-0-972" name="__codelineno-0-972"></a><span class="sd">    ax : matplotlib.axes.Axes or None</span>
+</span><span id="__span-0-973"><a id="__codelineno-0-973" name="__codelineno-0-973"></a><span class="sd">        Unsupported for this multi-panel plot.</span>
+</span><span id="__span-0-974"><a id="__codelineno-0-974" name="__codelineno-0-974"></a>
+</span><span id="__span-0-975"><a id="__codelineno-0-975" name="__codelineno-0-975"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-976"><a id="__codelineno-0-976" name="__codelineno-0-976"></a><span class="sd">    -------</span>
+</span><span id="__span-0-977"><a id="__codelineno-0-977" name="__codelineno-0-977"></a><span class="sd">    PlotResult</span>
+</span><span id="__span-0-978"><a id="__codelineno-0-978" name="__codelineno-0-978"></a><span class="sd">        Wrapped result containing the figure, axes, and metadata.</span>
+</span><span id="__span-0-979"><a id="__codelineno-0-979" name="__codelineno-0-979"></a>
+</span><span id="__span-0-980"><a id="__codelineno-0-980" name="__codelineno-0-980"></a><span class="sd">    Raises</span>
+</span><span id="__span-0-981"><a id="__codelineno-0-981" name="__codelineno-0-981"></a><span class="sd">    ------</span>
+</span><span id="__span-0-982"><a id="__codelineno-0-982" name="__codelineno-0-982"></a><span class="sd">    ValueError</span>
+</span><span id="__span-0-983"><a id="__codelineno-0-983" name="__codelineno-0-983"></a><span class="sd">        If ``ax`` is provided (multi-panel plot requires ``fig`` or</span>
+</span><span id="__span-0-984"><a id="__codelineno-0-984" name="__codelineno-0-984"></a><span class="sd">        ``axes``), if gene name resolution fails, or if no genes pass</span>
+</span><span id="__span-0-985"><a id="__codelineno-0-985" name="__codelineno-0-985"></a><span class="sd">        the minimum mean-UMI threshold during auto-selection.</span>
+</span><span id="__span-0-986"><a id="__codelineno-0-986" name="__codelineno-0-986"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-987"><a id="__codelineno-0-987" name="__codelineno-0-987"></a>    <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">&quot;[dim]Plotting corner PPC...[/dim]&quot;</span><span class="p">)</span>
+</span><span id="__span-0-988"><a id="__codelineno-0-988" name="__codelineno-0-988"></a>    <span class="k">if</span> <span class="n">ax</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-989"><a id="__codelineno-0-989" name="__codelineno-0-989"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-990"><a id="__codelineno-0-990" name="__codelineno-0-990"></a>            <span class="s2">&quot;Corner PPC requires multiple axes; provide `fig` or `axes` &quot;</span>
+</span><span id="__span-0-991"><a id="__codelineno-0-991" name="__codelineno-0-991"></a>            <span class="s2">&quot;instead of `ax`.&quot;</span>
+</span><span id="__span-0-992"><a id="__codelineno-0-992" name="__codelineno-0-992"></a>        <span class="p">)</span>
+</span><span id="__span-0-993"><a id="__codelineno-0-993" name="__codelineno-0-993"></a>
+</span><span id="__span-0-994"><a id="__codelineno-0-994" name="__codelineno-0-994"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-995"><a id="__codelineno-0-995" name="__codelineno-0-995"></a>    <span class="c1"># Count alignment</span>
+</span><span id="__span-0-996"><a id="__codelineno-0-996" name="__codelineno-0-996"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-997"><a id="__codelineno-0-997" name="__codelineno-0-997"></a>    <span class="n">raw_counts</span> <span class="o">=</span> <span class="n">_coerce_counts</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span>
+</span><span id="__span-0-998"><a id="__codelineno-0-998" name="__codelineno-0-998"></a>    <span class="n">counts</span> <span class="o">=</span> <span class="n">_coerce_and_align_counts_to_results</span><span class="p">(</span>
+</span><span id="__span-0-999"><a id="__codelineno-0-999" name="__codelineno-0-999"></a>        <span class="n">raw_counts</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;plot_corner_ppc&quot;</span>
+</span><span id="__span-0-1000"><a id="__codelineno-0-1000" name="__codelineno-0-1000"></a>    <span class="p">)</span>
+</span><span id="__span-0-1001"><a id="__codelineno-0-1001" name="__codelineno-0-1001"></a>    <span class="n">counts_for_sampling</span> <span class="o">=</span> <span class="n">_resolve_ppc_sampling_counts</span><span class="p">(</span>
+</span><span id="__span-0-1002"><a id="__codelineno-0-1002" name="__codelineno-0-1002"></a>        <span class="n">results</span><span class="p">,</span> <span class="n">raw_counts</span><span class="p">,</span> <span class="n">counts</span>
+</span><span id="__span-0-1003"><a id="__codelineno-0-1003" name="__codelineno-0-1003"></a>    <span class="p">)</span>
+</span><span id="__span-0-1004"><a id="__codelineno-0-1004" name="__codelineno-0-1004"></a>
+</span><span id="__span-0-1005"><a id="__codelineno-0-1005" name="__codelineno-0-1005"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1006"><a id="__codelineno-0-1006" name="__codelineno-0-1006"></a>    <span class="c1"># Gene selection</span>
+</span><span id="__span-0-1007"><a id="__codelineno-0-1007" name="__codelineno-0-1007"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1008"><a id="__codelineno-0-1008" name="__codelineno-0-1008"></a>    <span class="n">selected_idx</span> <span class="o">=</span> <span class="n">_resolve_gene_indices</span><span class="p">(</span>
+</span><span id="__span-0-1009"><a id="__codelineno-0-1009" name="__codelineno-0-1009"></a>        <span class="n">results</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">gene_indices</span><span class="p">,</span> <span class="n">gene_names_list</span><span class="p">,</span> <span class="n">n_genes</span><span class="p">,</span>
+</span><span id="__span-0-1010"><a id="__codelineno-0-1010" name="__codelineno-0-1010"></a>        <span class="n">gene_selection</span><span class="o">=</span><span class="n">gene_selection</span><span class="p">,</span>
+</span><span id="__span-0-1011"><a id="__codelineno-0-1011" name="__codelineno-0-1011"></a>        <span class="n">min_mean_umi_for_selection</span><span class="o">=</span><span class="n">min_mean_umi_for_selection</span><span class="p">,</span>
+</span><span id="__span-0-1012"><a id="__codelineno-0-1012" name="__codelineno-0-1012"></a>        <span class="n">subtract_direction</span><span class="o">=</span><span class="n">subtract_direction</span><span class="p">,</span>
+</span><span id="__span-0-1013"><a id="__codelineno-0-1013" name="__codelineno-0-1013"></a>        <span class="n">n_pcs_to_remove</span><span class="o">=</span><span class="n">n_pcs_to_remove</span><span class="p">,</span>
+</span><span id="__span-0-1014"><a id="__codelineno-0-1014" name="__codelineno-0-1014"></a>    <span class="p">)</span>
+</span><span id="__span-0-1015"><a id="__codelineno-0-1015" name="__codelineno-0-1015"></a>    <span class="n">n_panel</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">)</span>
+</span><span id="__span-0-1016"><a id="__codelineno-0-1016" name="__codelineno-0-1016"></a>    <span class="n">gene_names</span> <span class="o">=</span> <span class="n">_get_gene_names</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span><span id="__span-0-1017"><a id="__codelineno-0-1017" name="__codelineno-0-1017"></a>    <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+</span><span id="__span-0-1018"><a id="__codelineno-0-1018" name="__codelineno-0-1018"></a>        <span class="sa">f</span><span class="s2">&quot;[dim]Corner PPC: </span><span class="si">{</span><span class="n">n_panel</span><span class="si">}</span><span class="s2"> genes selected[/dim]&quot;</span>
+</span><span id="__span-0-1019"><a id="__codelineno-0-1019" name="__codelineno-0-1019"></a>    <span class="p">)</span>
+</span><span id="__span-0-1020"><a id="__codelineno-0-1020" name="__codelineno-0-1020"></a>
+</span><span id="__span-0-1021"><a id="__codelineno-0-1021" name="__codelineno-0-1021"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1022"><a id="__codelineno-0-1022" name="__codelineno-0-1022"></a>    <span class="c1"># PPC sampling</span>
+</span><span id="__span-0-1023"><a id="__codelineno-0-1023" name="__codelineno-0-1023"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1024"><a id="__codelineno-0-1024" name="__codelineno-0-1024"></a>    <span class="n">grid</span> <span class="o">=</span> <span class="n">_resolve_ppc_grid</span><span class="p">(</span>
+</span><span id="__span-0-1025"><a id="__codelineno-0-1025" name="__codelineno-0-1025"></a>        <span class="n">n_rows</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_cols</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_genes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1026"><a id="__codelineno-0-1026" name="__codelineno-0-1026"></a>        <span class="n">n_samples</span><span class="o">=</span><span class="n">n_samples</span><span class="p">,</span> <span class="n">viz_cfg</span><span class="o">=</span><span class="n">viz_cfg</span><span class="p">,</span>
+</span><span id="__span-0-1027"><a id="__codelineno-0-1027" name="__codelineno-0-1027"></a>    <span class="p">)</span>
+</span><span id="__span-0-1028"><a id="__codelineno-0-1028" name="__codelineno-0-1028"></a>    <span class="n">_n_samples</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="s2">&quot;n_samples&quot;</span><span class="p">]</span>
+</span><span id="__span-0-1029"><a id="__codelineno-0-1029" name="__codelineno-0-1029"></a>
+</span><span id="__span-0-1030"><a id="__codelineno-0-1030" name="__codelineno-0-1030"></a>    <span class="c1"># Decide whether sampling must run on the full gene space (VAE /</span>
+</span><span id="__span-0-1031"><a id="__codelineno-0-1031" name="__codelineno-0-1031"></a>    <span class="c1"># amortized capture) or can use the selected subset only.</span>
+</span><span id="__span-0-1032"><a id="__codelineno-0-1032" name="__codelineno-0-1032"></a>    <span class="n">sample_full_space</span> <span class="o">=</span> <span class="n">_requires_full_gene_sampling</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span><span id="__span-0-1033"><a id="__codelineno-0-1033" name="__codelineno-0-1033"></a>    <span class="k">if</span> <span class="n">sample_full_space</span><span class="p">:</span>
+</span><span id="__span-0-1034"><a id="__codelineno-0-1034" name="__codelineno-0-1034"></a>        <span class="n">sampling_results</span> <span class="o">=</span> <span class="n">results</span>
+</span><span id="__span-0-1035"><a id="__codelineno-0-1035" name="__codelineno-0-1035"></a>        <span class="n">sampling_counts</span> <span class="o">=</span> <span class="n">counts_for_sampling</span>
+</span><span id="__span-0-1036"><a id="__codelineno-0-1036" name="__codelineno-0-1036"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-1037"><a id="__codelineno-0-1037" name="__codelineno-0-1037"></a>        <span class="n">sampling_results</span> <span class="o">=</span> <span class="n">results</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span>
+</span><span id="__span-0-1038"><a id="__codelineno-0-1038" name="__codelineno-0-1038"></a>        <span class="n">sampling_counts</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[:,</span> <span class="n">selected_idx</span><span class="p">]</span>
+</span><span id="__span-0-1039"><a id="__codelineno-0-1039" name="__codelineno-0-1039"></a>
+</span><span id="__span-0-1040"><a id="__codelineno-0-1040" name="__codelineno-0-1040"></a>    <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+</span><span id="__span-0-1041"><a id="__codelineno-0-1041" name="__codelineno-0-1041"></a>        <span class="sa">f</span><span class="s2">&quot;[dim]Generating </span><span class="si">{</span><span class="n">_n_samples</span><span class="si">}</span><span class="s2"> posterior predictive samples...[/dim]&quot;</span>
+</span><span id="__span-0-1042"><a id="__codelineno-0-1042" name="__codelineno-0-1042"></a>    <span class="p">)</span>
+</span><span id="__span-0-1043"><a id="__codelineno-0-1043" name="__codelineno-0-1043"></a>    <span class="n">_</span> <span class="o">=</span> <span class="n">_get_predictive_samples_for_plot</span><span class="p">(</span>
+</span><span id="__span-0-1044"><a id="__codelineno-0-1044" name="__codelineno-0-1044"></a>        <span class="n">sampling_results</span><span class="p">,</span>
+</span><span id="__span-0-1045"><a id="__codelineno-0-1045" name="__codelineno-0-1045"></a>        <span class="n">rng_key</span><span class="o">=</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">42</span><span class="p">),</span>
+</span><span id="__span-0-1046"><a id="__codelineno-0-1046" name="__codelineno-0-1046"></a>        <span class="n">n_samples</span><span class="o">=</span><span class="n">_n_samples</span><span class="p">,</span>
+</span><span id="__span-0-1047"><a id="__codelineno-0-1047" name="__codelineno-0-1047"></a>        <span class="n">counts</span><span class="o">=</span><span class="n">sampling_counts</span><span class="p">,</span>
+</span><span id="__span-0-1048"><a id="__codelineno-0-1048" name="__codelineno-0-1048"></a>        <span class="n">store_samples</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-1049"><a id="__codelineno-0-1049" name="__codelineno-0-1049"></a>        <span class="n">ppc_level</span><span class="o">=</span><span class="n">ppc_level</span><span class="p">,</span>
+</span><span id="__span-0-1050"><a id="__codelineno-0-1050" name="__codelineno-0-1050"></a>    <span class="p">)</span>
+</span><span id="__span-0-1051"><a id="__codelineno-0-1051" name="__codelineno-0-1051"></a>
+</span><span id="__span-0-1052"><a id="__codelineno-0-1052" name="__codelineno-0-1052"></a>    <span class="c1"># Reuse the object that received predictive samples. For the subset</span>
+</span><span id="__span-0-1053"><a id="__codelineno-0-1053" name="__codelineno-0-1053"></a>    <span class="c1"># sampling path, sampling_results is already gene-aligned and now carries</span>
+</span><span id="__span-0-1054"><a id="__codelineno-0-1054" name="__codelineno-0-1054"></a>    <span class="c1"># predictive_samples. Re-creating results[selected_idx] here would drop the</span>
+</span><span id="__span-0-1055"><a id="__codelineno-0-1055" name="__codelineno-0-1055"></a>    <span class="c1"># freshly populated cache when the parent results object had no cache.</span>
+</span><span id="__span-0-1056"><a id="__codelineno-0-1056" name="__codelineno-0-1056"></a>    <span class="n">results_subset</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-1057"><a id="__codelineno-0-1057" name="__codelineno-0-1057"></a>        <span class="n">results</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span> <span class="k">if</span> <span class="n">sample_full_space</span> <span class="k">else</span> <span class="n">sampling_results</span>
+</span><span id="__span-0-1058"><a id="__codelineno-0-1058" name="__codelineno-0-1058"></a>    <span class="p">)</span>
+</span><span id="__span-0-1059"><a id="__codelineno-0-1059" name="__codelineno-0-1059"></a>
+</span><span id="__span-0-1060"><a id="__codelineno-0-1060" name="__codelineno-0-1060"></a>    <span class="c1"># Build a mapping from original gene index → position inside the</span>
+</span><span id="__span-0-1061"><a id="__codelineno-0-1061" name="__codelineno-0-1061"></a>    <span class="c1"># gene-subset (needed because results[selected_idx] preserves</span>
+</span><span id="__span-0-1062"><a id="__codelineno-0-1062" name="__codelineno-0-1062"></a>    <span class="c1"># the caller-specified gene order).</span>
+</span><span id="__span-0-1063"><a id="__codelineno-0-1063" name="__codelineno-0-1063"></a>    <span class="n">subset_positions</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-1064"><a id="__codelineno-0-1064" name="__codelineno-0-1064"></a>        <span class="nb">int</span><span class="p">(</span><span class="n">gene_idx</span><span class="p">):</span> <span class="n">pos</span>
+</span><span id="__span-0-1065"><a id="__codelineno-0-1065" name="__codelineno-0-1065"></a>        <span class="k">for</span> <span class="n">pos</span><span class="p">,</span> <span class="n">gene_idx</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">)</span>
+</span><span id="__span-0-1066"><a id="__codelineno-0-1066" name="__codelineno-0-1066"></a>    <span class="p">}</span>
+</span><span id="__span-0-1067"><a id="__codelineno-0-1067" name="__codelineno-0-1067"></a>
+</span><span id="__span-0-1068"><a id="__codelineno-0-1068" name="__codelineno-0-1068"></a>    <span class="n">render_opts</span> <span class="o">=</span> <span class="n">get_ppc_render_options</span><span class="p">(</span><span class="n">viz_cfg</span><span class="p">)</span>
+</span><span id="__span-0-1069"><a id="__codelineno-0-1069" name="__codelineno-0-1069"></a>
+</span><span id="__span-0-1070"><a id="__codelineno-0-1070" name="__codelineno-0-1070"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1071"><a id="__codelineno-0-1071" name="__codelineno-0-1071"></a>    <span class="c1"># Grid creation</span>
+</span><span id="__span-0-1072"><a id="__codelineno-0-1072" name="__codelineno-0-1072"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1073"><a id="__codelineno-0-1073" name="__codelineno-0-1073"></a>    <span class="n">fig</span><span class="p">,</span> <span class="n">axes_grid</span><span class="p">,</span> <span class="n">axes_flat</span> <span class="o">=</span> <span class="n">_create_or_validate_grid_axes</span><span class="p">(</span>
+</span><span id="__span-0-1074"><a id="__codelineno-0-1074" name="__codelineno-0-1074"></a>        <span class="n">n_rows</span><span class="o">=</span><span class="n">n_panel</span><span class="p">,</span>
+</span><span id="__span-0-1075"><a id="__codelineno-0-1075" name="__codelineno-0-1075"></a>        <span class="n">n_cols</span><span class="o">=</span><span class="n">n_panel</span><span class="p">,</span>
+</span><span id="__span-0-1076"><a id="__codelineno-0-1076" name="__codelineno-0-1076"></a>        <span class="n">fig</span><span class="o">=</span><span class="n">fig</span><span class="p">,</span>
+</span><span id="__span-0-1077"><a id="__codelineno-0-1077" name="__codelineno-0-1077"></a>        <span class="n">axes</span><span class="o">=</span><span class="n">axes</span><span class="p">,</span>
+</span><span id="__span-0-1078"><a id="__codelineno-0-1078" name="__codelineno-0-1078"></a>        <span class="n">figsize</span><span class="o">=</span><span class="n">figsize</span> <span class="ow">or</span> <span class="p">(</span><span class="mf">3.0</span> <span class="o">*</span> <span class="n">n_panel</span><span class="p">,</span> <span class="mf">3.0</span> <span class="o">*</span> <span class="n">n_panel</span><span class="p">),</span>
+</span><span id="__span-0-1079"><a id="__codelineno-0-1079" name="__codelineno-0-1079"></a>    <span class="p">)</span>
+</span><span id="__span-0-1080"><a id="__codelineno-0-1080" name="__codelineno-0-1080"></a>
+</span><span id="__span-0-1081"><a id="__codelineno-0-1081" name="__codelineno-0-1081"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1082"><a id="__codelineno-0-1082" name="__codelineno-0-1082"></a>    <span class="c1"># Rendering loop</span>
+</span><span id="__span-0-1083"><a id="__codelineno-0-1083" name="__codelineno-0-1083"></a>    <span class="c1"># ------------------------------------------------------------------</span>
+</span><span id="__span-0-1084"><a id="__codelineno-0-1084" name="__codelineno-0-1084"></a>    <span class="c1"># Total renderable panels: n_panel diagonal + n_panel*(n_panel-1)/2</span>
+</span><span id="__span-0-1085"><a id="__codelineno-0-1085" name="__codelineno-0-1085"></a>    <span class="n">n_renderable</span> <span class="o">=</span> <span class="n">n_panel</span> <span class="o">+</span> <span class="n">n_panel</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_panel</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+</span><span id="__span-0-1086"><a id="__codelineno-0-1086" name="__codelineno-0-1086"></a>    <span class="n">_rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+</span><span id="__span-0-1087"><a id="__codelineno-0-1087" name="__codelineno-0-1087"></a>    <span class="n">_diag_rendered</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_panel</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+</span><span id="__span-0-1088"><a id="__codelineno-0-1088" name="__codelineno-0-1088"></a>
+</span><span id="__span-0-1089"><a id="__codelineno-0-1089" name="__codelineno-0-1089"></a>    <span class="c1"># Helper to render one diagonal panel exactly once, even when a lower-</span>
+</span><span id="__span-0-1090"><a id="__codelineno-0-1090" name="__codelineno-0-1090"></a>    <span class="c1"># triangle panel needs its limits before the row-major loop reaches that</span>
+</span><span id="__span-0-1091"><a id="__codelineno-0-1091" name="__codelineno-0-1091"></a>    <span class="c1"># diagonal cell.</span>
+</span><span id="__span-0-1092"><a id="__codelineno-0-1092" name="__codelineno-0-1092"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_ensure_diagonal_panel</span><span class="p">(</span><span class="n">diag_idx</span><span class="p">):</span>
+</span><span id="__span-0-1093"><a id="__codelineno-0-1093" name="__codelineno-0-1093"></a>        <span class="k">if</span> <span class="n">_diag_rendered</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">]:</span>
+</span><span id="__span-0-1094"><a id="__codelineno-0-1094" name="__codelineno-0-1094"></a>            <span class="k">return</span>
+</span><span id="__span-0-1095"><a id="__codelineno-0-1095" name="__codelineno-0-1095"></a>        <span class="n">axis_diag</span> <span class="o">=</span> <span class="n">axes_grid</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">,</span> <span class="n">diag_idx</span><span class="p">]</span>
+</span><span id="__span-0-1096"><a id="__codelineno-0-1096" name="__codelineno-0-1096"></a>        <span class="n">gene_idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">])</span>
+</span><span id="__span-0-1097"><a id="__codelineno-0-1097" name="__codelineno-0-1097"></a>        <span class="n">subset_pos</span> <span class="o">=</span> <span class="n">subset_positions</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span>
+</span><span id="__span-0-1098"><a id="__codelineno-0-1098" name="__codelineno-0-1098"></a>        <span class="n">true_counts</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">]</span>
+</span><span id="__span-0-1099"><a id="__codelineno-0-1099" name="__codelineno-0-1099"></a>        <span class="n">ppc_gene</span> <span class="o">=</span> <span class="n">results_subset</span><span class="o">.</span><span class="n">predictive_samples</span><span class="p">[:,</span> <span class="p">:,</span> <span class="n">subset_pos</span><span class="p">]</span>
+</span><span id="__span-0-1100"><a id="__codelineno-0-1100" name="__codelineno-0-1100"></a>        <span class="n">_label</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">gene_names</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">])</span> <span class="k">if</span> <span class="n">gene_names</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+</span><span id="__span-0-1101"><a id="__codelineno-0-1101" name="__codelineno-0-1101"></a>        <span class="n">_render_diagonal_panel</span><span class="p">(</span>
+</span><span id="__span-0-1102"><a id="__codelineno-0-1102" name="__codelineno-0-1102"></a>            <span class="n">axis_diag</span><span class="p">,</span>
+</span><span id="__span-0-1103"><a id="__codelineno-0-1103" name="__codelineno-0-1103"></a>            <span class="n">ppc_gene</span><span class="p">,</span>
+</span><span id="__span-0-1104"><a id="__codelineno-0-1104" name="__codelineno-0-1104"></a>            <span class="n">true_counts</span><span class="p">,</span>
+</span><span id="__span-0-1105"><a id="__codelineno-0-1105" name="__codelineno-0-1105"></a>            <span class="n">render_opts</span><span class="p">,</span>
+</span><span id="__span-0-1106"><a id="__codelineno-0-1106" name="__codelineno-0-1106"></a>            <span class="n">gene_label</span><span class="o">=</span><span class="n">_label</span><span class="p">,</span>
+</span><span id="__span-0-1107"><a id="__codelineno-0-1107" name="__codelineno-0-1107"></a>        <span class="p">)</span>
+</span><span id="__span-0-1108"><a id="__codelineno-0-1108" name="__codelineno-0-1108"></a>        <span class="c1"># Mirror classic corner-plot style by hiding diagonal y ticks.</span>
+</span><span id="__span-0-1109"><a id="__codelineno-0-1109" name="__codelineno-0-1109"></a>        <span class="n">axis_diag</span><span class="o">.</span><span class="n">set_yticks</span><span class="p">([])</span>
+</span><span id="__span-0-1110"><a id="__codelineno-0-1110" name="__codelineno-0-1110"></a>        <span class="n">_diag_rendered</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+</span><span id="__span-0-1111"><a id="__codelineno-0-1111" name="__codelineno-0-1111"></a>        <span class="n">progress</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">advance</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-0-1112"><a id="__codelineno-0-1112" name="__codelineno-0-1112"></a>
+</span><span id="__span-0-1113"><a id="__codelineno-0-1113" name="__codelineno-0-1113"></a>    <span class="c1"># Helper to get diagonal x-limits in off-diagonal plotting space.</span>
+</span><span id="__span-0-1114"><a id="__codelineno-0-1114" name="__codelineno-0-1114"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_diagonal_plot_limits</span><span class="p">(</span><span class="n">diag_idx</span><span class="p">):</span>
+</span><span id="__span-0-1115"><a id="__codelineno-0-1115" name="__codelineno-0-1115"></a>        <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">axes_grid</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">,</span> <span class="n">diag_idx</span><span class="p">]</span><span class="o">.</span><span class="n">get_xlim</span><span class="p">()</span>
+</span><span id="__span-0-1116"><a id="__codelineno-0-1116" name="__codelineno-0-1116"></a>        <span class="k">if</span> <span class="n">log_scale</span><span class="p">:</span>
+</span><span id="__span-0-1117"><a id="__codelineno-0-1117" name="__codelineno-0-1117"></a>            <span class="n">lo</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="kc">None</span><span class="p">)))</span>
+</span><span id="__span-0-1118"><a id="__codelineno-0-1118" name="__codelineno-0-1118"></a>            <span class="n">hi</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">hi</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="kc">None</span><span class="p">)))</span>
+</span><span id="__span-0-1119"><a id="__codelineno-0-1119" name="__codelineno-0-1119"></a>        <span class="k">return</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lo</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">hi</span><span class="p">))</span>
+</span><span id="__span-0-1120"><a id="__codelineno-0-1120" name="__codelineno-0-1120"></a>
+</span><span id="__span-0-1121"><a id="__codelineno-0-1121" name="__codelineno-0-1121"></a>    <span class="k">with</span> <span class="n">Progress</span><span class="p">(</span>
+</span><span id="__span-0-1122"><a id="__codelineno-0-1122" name="__codelineno-0-1122"></a>        <span class="n">SpinnerColumn</span><span class="p">(),</span>
+</span><span id="__span-0-1123"><a id="__codelineno-0-1123" name="__codelineno-0-1123"></a>        <span class="n">TextColumn</span><span class="p">(</span><span class="s2">&quot;[progress.description]</span><span class="si">{task.description}</span><span class="s2">&quot;</span><span class="p">),</span>
+</span><span id="__span-0-1124"><a id="__codelineno-0-1124" name="__codelineno-0-1124"></a>        <span class="n">BarColumn</span><span class="p">(),</span>
+</span><span id="__span-0-1125"><a id="__codelineno-0-1125" name="__codelineno-0-1125"></a>        <span class="n">TextColumn</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{task.completed}</span><span class="s2">/</span><span class="si">{task.total}</span><span class="s2">&quot;</span><span class="p">),</span>
+</span><span id="__span-0-1126"><a id="__codelineno-0-1126" name="__codelineno-0-1126"></a>        <span class="n">TimeElapsedColumn</span><span class="p">(),</span>
+</span><span id="__span-0-1127"><a id="__codelineno-0-1127" name="__codelineno-0-1127"></a>        <span class="n">console</span><span class="o">=</span><span class="n">console</span><span class="p">,</span>
+</span><span id="__span-0-1128"><a id="__codelineno-0-1128" name="__codelineno-0-1128"></a>    <span class="p">)</span> <span class="k">as</span> <span class="n">progress</span><span class="p">:</span>
+</span><span id="__span-0-1129"><a id="__codelineno-0-1129" name="__codelineno-0-1129"></a>        <span class="n">task</span> <span class="o">=</span> <span class="n">progress</span><span class="o">.</span><span class="n">add_task</span><span class="p">(</span>
+</span><span id="__span-0-1130"><a id="__codelineno-0-1130" name="__codelineno-0-1130"></a>            <span class="s2">&quot;[cyan]Plotting corner PPC panels...&quot;</span><span class="p">,</span> <span class="n">total</span><span class="o">=</span><span class="n">n_renderable</span>
+</span><span id="__span-0-1131"><a id="__codelineno-0-1131" name="__codelineno-0-1131"></a>        <span class="p">)</span>
+</span><span id="__span-0-1132"><a id="__codelineno-0-1132" name="__codelineno-0-1132"></a>
+</span><span id="__span-0-1133"><a id="__codelineno-0-1133" name="__codelineno-0-1133"></a>        <span class="k">for</span> <span class="n">row_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_panel</span><span class="p">):</span>
+</span><span id="__span-0-1134"><a id="__codelineno-0-1134" name="__codelineno-0-1134"></a>            <span class="k">for</span> <span class="n">col_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_panel</span><span class="p">):</span>
+</span><span id="__span-0-1135"><a id="__codelineno-0-1135" name="__codelineno-0-1135"></a>                <span class="n">axis</span> <span class="o">=</span> <span class="n">axes_grid</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="n">col_idx</span><span class="p">]</span>
+</span><span id="__span-0-1136"><a id="__codelineno-0-1136" name="__codelineno-0-1136"></a>
+</span><span id="__span-0-1137"><a id="__codelineno-0-1137" name="__codelineno-0-1137"></a>                <span class="k">if</span> <span class="n">row_idx</span> <span class="o">==</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1138"><a id="__codelineno-0-1138" name="__codelineno-0-1138"></a>                    <span class="c1"># --- Diagonal: marginal PPC histogram ---</span>
+</span><span id="__span-0-1139"><a id="__codelineno-0-1139" name="__codelineno-0-1139"></a>                    <span class="n">_ensure_diagonal_panel</span><span class="p">(</span><span class="n">row_idx</span><span class="p">)</span>
+</span><span id="__span-0-1140"><a id="__codelineno-0-1140" name="__codelineno-0-1140"></a>
+</span><span id="__span-0-1141"><a id="__codelineno-0-1141" name="__codelineno-0-1141"></a>                <span class="k">elif</span> <span class="n">row_idx</span> <span class="o">&gt;</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1142"><a id="__codelineno-0-1142" name="__codelineno-0-1142"></a>                    <span class="c1"># --- Lower triangle: bivariate PPC contour ---</span>
+</span><span id="__span-0-1143"><a id="__codelineno-0-1143" name="__codelineno-0-1143"></a>                    <span class="c1"># Ensure both relevant diagonal marginals are rendered so</span>
+</span><span id="__span-0-1144"><a id="__codelineno-0-1144" name="__codelineno-0-1144"></a>                    <span class="c1"># off-diagonal density ranges can be aligned to them.</span>
+</span><span id="__span-0-1145"><a id="__codelineno-0-1145" name="__codelineno-0-1145"></a>                    <span class="n">_ensure_diagonal_panel</span><span class="p">(</span><span class="n">col_idx</span><span class="p">)</span>
+</span><span id="__span-0-1146"><a id="__codelineno-0-1146" name="__codelineno-0-1146"></a>                    <span class="n">_ensure_diagonal_panel</span><span class="p">(</span><span class="n">row_idx</span><span class="p">)</span>
+</span><span id="__span-0-1147"><a id="__codelineno-0-1147" name="__codelineno-0-1147"></a>                    <span class="n">gene_x</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">[</span><span class="n">col_idx</span><span class="p">])</span>
+</span><span id="__span-0-1148"><a id="__codelineno-0-1148" name="__codelineno-0-1148"></a>                    <span class="n">gene_y</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">[</span><span class="n">row_idx</span><span class="p">])</span>
+</span><span id="__span-0-1149"><a id="__codelineno-0-1149" name="__codelineno-0-1149"></a>                    <span class="n">pos_x</span> <span class="o">=</span> <span class="n">subset_positions</span><span class="p">[</span><span class="n">gene_x</span><span class="p">]</span>
+</span><span id="__span-0-1150"><a id="__codelineno-0-1150" name="__codelineno-0-1150"></a>                    <span class="n">pos_y</span> <span class="o">=</span> <span class="n">subset_positions</span><span class="p">[</span><span class="n">gene_y</span><span class="p">]</span>
+</span><span id="__span-0-1151"><a id="__codelineno-0-1151" name="__codelineno-0-1151"></a>                    <span class="n">ppc_x</span> <span class="o">=</span> <span class="n">results_subset</span><span class="o">.</span><span class="n">predictive_samples</span><span class="p">[:,</span> <span class="p">:,</span> <span class="n">pos_x</span><span class="p">]</span>
+</span><span id="__span-0-1152"><a id="__codelineno-0-1152" name="__codelineno-0-1152"></a>                    <span class="n">ppc_y</span> <span class="o">=</span> <span class="n">results_subset</span><span class="o">.</span><span class="n">predictive_samples</span><span class="p">[:,</span> <span class="p">:,</span> <span class="n">pos_y</span><span class="p">]</span>
+</span><span id="__span-0-1153"><a id="__codelineno-0-1153" name="__codelineno-0-1153"></a>                    <span class="n">obs_x</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_x</span><span class="p">]</span>
+</span><span id="__span-0-1154"><a id="__codelineno-0-1154" name="__codelineno-0-1154"></a>                    <span class="n">obs_y</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_y</span><span class="p">]</span>
+</span><span id="__span-0-1155"><a id="__codelineno-0-1155" name="__codelineno-0-1155"></a>                    <span class="n">_x_range</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-1156"><a id="__codelineno-0-1156" name="__codelineno-0-1156"></a>                    <span class="n">_y_range</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-1157"><a id="__codelineno-0-1157" name="__codelineno-0-1157"></a>                    <span class="k">if</span> <span class="n">match_offdiag_limits_to_marginals</span><span class="p">:</span>
+</span><span id="__span-0-1158"><a id="__codelineno-0-1158" name="__codelineno-0-1158"></a>                        <span class="n">_x_range</span> <span class="o">=</span> <span class="n">_diagonal_plot_limits</span><span class="p">(</span><span class="n">col_idx</span><span class="p">)</span>
+</span><span id="__span-0-1159"><a id="__codelineno-0-1159" name="__codelineno-0-1159"></a>                        <span class="n">_y_range</span> <span class="o">=</span> <span class="n">_diagonal_plot_limits</span><span class="p">(</span><span class="n">row_idx</span><span class="p">)</span>
+</span><span id="__span-0-1160"><a id="__codelineno-0-1160" name="__codelineno-0-1160"></a>
+</span><span id="__span-0-1161"><a id="__codelineno-0-1161" name="__codelineno-0-1161"></a>                    <span class="n">_render_offdiag_panel</span><span class="p">(</span>
+</span><span id="__span-0-1162"><a id="__codelineno-0-1162" name="__codelineno-0-1162"></a>                        <span class="n">axis</span><span class="p">,</span>
+</span><span id="__span-0-1163"><a id="__codelineno-0-1163" name="__codelineno-0-1163"></a>                        <span class="n">ppc_x</span><span class="p">,</span>
+</span><span id="__span-0-1164"><a id="__codelineno-0-1164" name="__codelineno-0-1164"></a>                        <span class="n">ppc_y</span><span class="p">,</span>
+</span><span id="__span-0-1165"><a id="__codelineno-0-1165" name="__codelineno-0-1165"></a>                        <span class="n">obs_x</span><span class="p">,</span>
+</span><span id="__span-0-1166"><a id="__codelineno-0-1166" name="__codelineno-0-1166"></a>                        <span class="n">obs_y</span><span class="p">,</span>
+</span><span id="__span-0-1167"><a id="__codelineno-0-1167" name="__codelineno-0-1167"></a>                        <span class="n">n_contour_levels</span><span class="o">=</span><span class="n">n_contour_levels</span><span class="p">,</span>
+</span><span id="__span-0-1168"><a id="__codelineno-0-1168" name="__codelineno-0-1168"></a>                        <span class="n">contour_mass_levels</span><span class="o">=</span><span class="n">contour_mass_levels</span><span class="p">,</span>
+</span><span id="__span-0-1169"><a id="__codelineno-0-1169" name="__codelineno-0-1169"></a>                        <span class="n">contour_cmap</span><span class="o">=</span><span class="n">contour_cmap</span><span class="p">,</span>
+</span><span id="__span-0-1170"><a id="__codelineno-0-1170" name="__codelineno-0-1170"></a>                        <span class="n">contour_alpha</span><span class="o">=</span><span class="n">contour_alpha</span><span class="p">,</span>
+</span><span id="__span-0-1171"><a id="__codelineno-0-1171" name="__codelineno-0-1171"></a>                        <span class="n">draw_contour_edges</span><span class="o">=</span><span class="n">draw_contour_edges</span><span class="p">,</span>
+</span><span id="__span-0-1172"><a id="__codelineno-0-1172" name="__codelineno-0-1172"></a>                        <span class="n">contour_edgecolor</span><span class="o">=</span><span class="n">contour_edgecolor</span><span class="p">,</span>
+</span><span id="__span-0-1173"><a id="__codelineno-0-1173" name="__codelineno-0-1173"></a>                        <span class="n">contour_edgewidth</span><span class="o">=</span><span class="n">contour_edgewidth</span><span class="p">,</span>
+</span><span id="__span-0-1174"><a id="__codelineno-0-1174" name="__codelineno-0-1174"></a>                        <span class="n">suppress_contour_edges_for_discrete</span><span class="o">=</span><span class="p">(</span>
+</span><span id="__span-0-1175"><a id="__codelineno-0-1175" name="__codelineno-0-1175"></a>                            <span class="n">suppress_contour_edges_for_discrete</span>
+</span><span id="__span-0-1176"><a id="__codelineno-0-1176" name="__codelineno-0-1176"></a>                        <span class="p">),</span>
+</span><span id="__span-0-1177"><a id="__codelineno-0-1177" name="__codelineno-0-1177"></a>                        <span class="n">scatter_alpha</span><span class="o">=</span><span class="n">scatter_alpha</span><span class="p">,</span>
+</span><span id="__span-0-1178"><a id="__codelineno-0-1178" name="__codelineno-0-1178"></a>                        <span class="n">scatter_size</span><span class="o">=</span><span class="n">scatter_size</span><span class="p">,</span>
+</span><span id="__span-0-1179"><a id="__codelineno-0-1179" name="__codelineno-0-1179"></a>                        <span class="n">scatter_color</span><span class="o">=</span><span class="n">scatter_color</span><span class="p">,</span>
+</span><span id="__span-0-1180"><a id="__codelineno-0-1180" name="__codelineno-0-1180"></a>                        <span class="n">density_method</span><span class="o">=</span><span class="n">density_method</span><span class="p">,</span>
+</span><span id="__span-0-1181"><a id="__codelineno-0-1181" name="__codelineno-0-1181"></a>                        <span class="n">hist2d_bins</span><span class="o">=</span><span class="n">hist2d_bins</span><span class="p">,</span>
+</span><span id="__span-0-1182"><a id="__codelineno-0-1182" name="__codelineno-0-1182"></a>                        <span class="n">x_range</span><span class="o">=</span><span class="n">_x_range</span><span class="p">,</span>
+</span><span id="__span-0-1183"><a id="__codelineno-0-1183" name="__codelineno-0-1183"></a>                        <span class="n">y_range</span><span class="o">=</span><span class="n">_y_range</span><span class="p">,</span>
+</span><span id="__span-0-1184"><a id="__codelineno-0-1184" name="__codelineno-0-1184"></a>                        <span class="n">log_scale</span><span class="o">=</span><span class="n">log_scale</span><span class="p">,</span>
+</span><span id="__span-0-1185"><a id="__codelineno-0-1185" name="__codelineno-0-1185"></a>                        <span class="n">rng</span><span class="o">=</span><span class="n">_rng</span><span class="p">,</span>
+</span><span id="__span-0-1186"><a id="__codelineno-0-1186" name="__codelineno-0-1186"></a>                    <span class="p">)</span>
+</span><span id="__span-0-1187"><a id="__codelineno-0-1187" name="__codelineno-0-1187"></a>                    <span class="n">progress</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">advance</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-0-1188"><a id="__codelineno-0-1188" name="__codelineno-0-1188"></a>
+</span><span id="__span-0-1189"><a id="__codelineno-0-1189" name="__codelineno-0-1189"></a>                <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-1190"><a id="__codelineno-0-1190" name="__codelineno-0-1190"></a>                    <span class="c1"># --- Upper triangle: hidden ---</span>
+</span><span id="__span-0-1191"><a id="__codelineno-0-1191" name="__codelineno-0-1191"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1192"><a id="__codelineno-0-1192" name="__codelineno-0-1192"></a>                    <span class="k">continue</span>
+</span><span id="__span-0-1193"><a id="__codelineno-0-1193" name="__codelineno-0-1193"></a>
+</span><span id="__span-0-1194"><a id="__codelineno-0-1194" name="__codelineno-0-1194"></a>                <span class="c1"># ----------------------------------------------------------</span>
+</span><span id="__span-0-1195"><a id="__codelineno-0-1195" name="__codelineno-0-1195"></a>                <span class="c1"># Tick / label management (corner-style layout)</span>
+</span><span id="__span-0-1196"><a id="__codelineno-0-1196" name="__codelineno-0-1196"></a>                <span class="c1"># ----------------------------------------------------------</span>
+</span><span id="__span-0-1197"><a id="__codelineno-0-1197" name="__codelineno-0-1197"></a>
+</span><span id="__span-0-1198"><a id="__codelineno-0-1198" name="__codelineno-0-1198"></a>                <span class="c1"># Bottom row: show x-axis labels with gene name</span>
+</span><span id="__span-0-1199"><a id="__codelineno-0-1199" name="__codelineno-0-1199"></a>                <span class="k">if</span> <span class="n">row_idx</span> <span class="o">==</span> <span class="n">n_panel</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1200"><a id="__codelineno-0-1200" name="__codelineno-0-1200"></a>                    <span class="n">_xlabel</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-1201"><a id="__codelineno-0-1201" name="__codelineno-0-1201"></a>                    <span class="k">if</span> <span class="n">gene_names</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1202"><a id="__codelineno-0-1202" name="__codelineno-0-1202"></a>                        <span class="n">_xlabel</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">gene_names</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">[</span><span class="n">col_idx</span><span class="p">])])</span>
+</span><span id="__span-0-1203"><a id="__codelineno-0-1203" name="__codelineno-0-1203"></a>                    <span class="k">if</span> <span class="n">log_scale</span> <span class="ow">and</span> <span class="n">row_idx</span> <span class="o">!=</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1204"><a id="__codelineno-0-1204" name="__codelineno-0-1204"></a>                        <span class="n">_xlabel</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">(log1p counts)&quot;</span>
+</span><span id="__span-0-1205"><a id="__codelineno-0-1205" name="__codelineno-0-1205"></a>                    <span class="k">elif</span> <span class="n">row_idx</span> <span class="o">!=</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1206"><a id="__codelineno-0-1206" name="__codelineno-0-1206"></a>                        <span class="n">_xlabel</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">(counts)&quot;</span>
+</span><span id="__span-0-1207"><a id="__codelineno-0-1207" name="__codelineno-0-1207"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="n">_xlabel</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="__span-0-1208"><a id="__codelineno-0-1208" name="__codelineno-0-1208"></a>                <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-1209"><a id="__codelineno-0-1209" name="__codelineno-0-1209"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">set_xticklabels</span><span class="p">([])</span>
+</span><span id="__span-0-1210"><a id="__codelineno-0-1210" name="__codelineno-0-1210"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s2">&quot;both&quot;</span><span class="p">,</span> <span class="n">bottom</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-1211"><a id="__codelineno-0-1211" name="__codelineno-0-1211"></a>
+</span><span id="__span-0-1212"><a id="__codelineno-0-1212" name="__codelineno-0-1212"></a>                <span class="c1"># Left column of lower-triangle panels: show y-axis labels</span>
+</span><span id="__span-0-1213"><a id="__codelineno-0-1213" name="__codelineno-0-1213"></a>                <span class="k">if</span> <span class="n">col_idx</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">row_idx</span> <span class="o">&gt;</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1214"><a id="__codelineno-0-1214" name="__codelineno-0-1214"></a>                    <span class="n">_ylabel</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-1215"><a id="__codelineno-0-1215" name="__codelineno-0-1215"></a>                    <span class="k">if</span> <span class="n">gene_names</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1216"><a id="__codelineno-0-1216" name="__codelineno-0-1216"></a>                        <span class="n">_ylabel</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">gene_names</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">[</span><span class="n">row_idx</span><span class="p">])])</span>
+</span><span id="__span-0-1217"><a id="__codelineno-0-1217" name="__codelineno-0-1217"></a>                    <span class="k">if</span> <span class="n">log_scale</span><span class="p">:</span>
+</span><span id="__span-0-1218"><a id="__codelineno-0-1218" name="__codelineno-0-1218"></a>                        <span class="n">_ylabel</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">(log1p counts)&quot;</span>
+</span><span id="__span-0-1219"><a id="__codelineno-0-1219" name="__codelineno-0-1219"></a>                    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-1220"><a id="__codelineno-0-1220" name="__codelineno-0-1220"></a>                        <span class="n">_ylabel</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">(counts)&quot;</span>
+</span><span id="__span-0-1221"><a id="__codelineno-0-1221" name="__codelineno-0-1221"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="n">_ylabel</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="__span-0-1222"><a id="__codelineno-0-1222" name="__codelineno-0-1222"></a>                <span class="k">elif</span> <span class="n">row_idx</span> <span class="o">!=</span> <span class="n">col_idx</span><span class="p">:</span>
+</span><span id="__span-0-1223"><a id="__codelineno-0-1223" name="__codelineno-0-1223"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">set_yticklabels</span><span class="p">([])</span>
+</span><span id="__span-0-1224"><a id="__codelineno-0-1224" name="__codelineno-0-1224"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s2">&quot;both&quot;</span><span class="p">,</span> <span class="n">left</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-1225"><a id="__codelineno-0-1225" name="__codelineno-0-1225"></a>
+</span><span id="__span-0-1226"><a id="__codelineno-0-1226" name="__codelineno-0-1226"></a>                <span class="c1"># Diagonal panels above the last row should not show x ticks</span>
+</span><span id="__span-0-1227"><a id="__codelineno-0-1227" name="__codelineno-0-1227"></a>                <span class="k">if</span> <span class="n">row_idx</span> <span class="o">==</span> <span class="n">col_idx</span> <span class="ow">and</span> <span class="n">row_idx</span> <span class="o">!=</span> <span class="n">n_panel</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-1228"><a id="__codelineno-0-1228" name="__codelineno-0-1228"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">set_xticklabels</span><span class="p">([])</span>
+</span><span id="__span-0-1229"><a id="__codelineno-0-1229" name="__codelineno-0-1229"></a>                    <span class="n">axis</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s2">&quot;both&quot;</span><span class="p">,</span> <span class="n">bottom</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-0-1230"><a id="__codelineno-0-1230" name="__codelineno-0-1230"></a>
+</span><span id="__span-0-1231"><a id="__codelineno-0-1231" name="__codelineno-0-1231"></a>    <span class="c1"># Optionally enforce corner-style shared limits between marginals and</span>
+</span><span id="__span-0-1232"><a id="__codelineno-0-1232" name="__codelineno-0-1232"></a>    <span class="c1"># lower-triangle bivariate panels for easier visual cross-comparison.</span>
+</span><span id="__span-0-1233"><a id="__codelineno-0-1233" name="__codelineno-0-1233"></a>    <span class="k">if</span> <span class="n">match_offdiag_limits_to_marginals</span><span class="p">:</span>
+</span><span id="__span-0-1234"><a id="__codelineno-0-1234" name="__codelineno-0-1234"></a>        <span class="n">_diag_limits</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-0-1235"><a id="__codelineno-0-1235" name="__codelineno-0-1235"></a>        <span class="k">for</span> <span class="n">diag_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_panel</span><span class="p">):</span>
+</span><span id="__span-0-1236"><a id="__codelineno-0-1236" name="__codelineno-0-1236"></a>            <span class="n">_x_lo</span><span class="p">,</span> <span class="n">_x_hi</span> <span class="o">=</span> <span class="n">axes_grid</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">,</span> <span class="n">diag_idx</span><span class="p">]</span><span class="o">.</span><span class="n">get_xlim</span><span class="p">()</span>
+</span><span id="__span-0-1237"><a id="__codelineno-0-1237" name="__codelineno-0-1237"></a>            <span class="k">if</span> <span class="n">log_scale</span><span class="p">:</span>
+</span><span id="__span-0-1238"><a id="__codelineno-0-1238" name="__codelineno-0-1238"></a>                <span class="n">_x_lo</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">_x_lo</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="kc">None</span><span class="p">)))</span>
+</span><span id="__span-0-1239"><a id="__codelineno-0-1239" name="__codelineno-0-1239"></a>                <span class="n">_x_hi</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">_x_hi</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="kc">None</span><span class="p">)))</span>
+</span><span id="__span-0-1240"><a id="__codelineno-0-1240" name="__codelineno-0-1240"></a>            <span class="n">_diag_limits</span><span class="p">[</span><span class="n">diag_idx</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">_x_lo</span><span class="p">,</span> <span class="n">_x_hi</span><span class="p">)</span>
+</span><span id="__span-0-1241"><a id="__codelineno-0-1241" name="__codelineno-0-1241"></a>
+</span><span id="__span-0-1242"><a id="__codelineno-0-1242" name="__codelineno-0-1242"></a>        <span class="k">for</span> <span class="n">row_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_panel</span><span class="p">):</span>
+</span><span id="__span-0-1243"><a id="__codelineno-0-1243" name="__codelineno-0-1243"></a>            <span class="k">for</span> <span class="n">col_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">row_idx</span><span class="p">):</span>
+</span><span id="__span-0-1244"><a id="__codelineno-0-1244" name="__codelineno-0-1244"></a>                <span class="n">axis</span> <span class="o">=</span> <span class="n">axes_grid</span><span class="p">[</span><span class="n">row_idx</span><span class="p">,</span> <span class="n">col_idx</span><span class="p">]</span>
+</span><span id="__span-0-1245"><a id="__codelineno-0-1245" name="__codelineno-0-1245"></a>                <span class="n">axis</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">_diag_limits</span><span class="p">[</span><span class="n">col_idx</span><span class="p">])</span>
+</span><span id="__span-0-1246"><a id="__codelineno-0-1246" name="__codelineno-0-1246"></a>                <span class="n">axis</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">_diag_limits</span><span class="p">[</span><span class="n">row_idx</span><span class="p">])</span>
+</span><span id="__span-0-1247"><a id="__codelineno-0-1247" name="__codelineno-0-1247"></a>
+</span><span id="__span-0-1248"><a id="__codelineno-0-1248" name="__codelineno-0-1248"></a>    <span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="s2">&quot;Corner PPC&quot;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">11</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mf">1.01</span><span class="p">)</span>
+</span><span id="__span-0-1249"><a id="__codelineno-0-1249" name="__codelineno-0-1249"></a>    <span class="n">fig</span><span class="o">.</span><span class="n">subplots_adjust</span><span class="p">(</span>
+</span><span id="__span-0-1250"><a id="__codelineno-0-1250" name="__codelineno-0-1250"></a>        <span class="n">left</span><span class="o">=</span><span class="mf">0.08</span><span class="p">,</span>
+</span><span id="__span-0-1251"><a id="__codelineno-0-1251" name="__codelineno-0-1251"></a>        <span class="n">right</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span>
+</span><span id="__span-0-1252"><a id="__codelineno-0-1252" name="__codelineno-0-1252"></a>        <span class="n">bottom</span><span class="o">=</span><span class="mf">0.08</span><span class="p">,</span>
+</span><span id="__span-0-1253"><a id="__codelineno-0-1253" name="__codelineno-0-1253"></a>        <span class="n">top</span><span class="o">=</span><span class="mf">0.92</span><span class="p">,</span>
+</span><span id="__span-0-1254"><a id="__codelineno-0-1254" name="__codelineno-0-1254"></a>        <span class="n">wspace</span><span class="o">=</span><span class="mf">0.03</span><span class="p">,</span>
+</span><span id="__span-0-1255"><a id="__codelineno-0-1255" name="__codelineno-0-1255"></a>        <span class="n">hspace</span><span class="o">=</span><span class="mf">0.03</span><span class="p">,</span>
+</span><span id="__span-0-1256"><a id="__codelineno-0-1256" name="__codelineno-0-1256"></a>    <span class="p">)</span>
+</span><span id="__span-0-1257"><a id="__codelineno-0-1257" name="__codelineno-0-1257"></a>
+</span><span id="__span-0-1258"><a id="__codelineno-0-1258" name="__codelineno-0-1258"></a>    <span class="k">del</span> <span class="n">results_subset</span>
+</span><span id="__span-0-1259"><a id="__codelineno-0-1259" name="__codelineno-0-1259"></a>    <span class="k">return</span> <span class="n">fig</span><span class="p">,</span> <span class="n">axes_flat</span><span class="p">,</span> <span class="n">n_panel</span> <span class="o">*</span> <span class="n">n_panel</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
