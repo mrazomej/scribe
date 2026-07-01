@@ -56,6 +56,9 @@ from .parameter_mapping import (
 # the four technical targets back the legacy ``*_dataset_prior`` kwargs;
 # ``dispersion`` (NB size ``r``) has no flat kwarg and is reached only via the
 # unified ``priors`` dict, feeding the factory's condition-specific-r path.
+# ``module_weight`` (NBLN Rung 1.5) likewise has no flat kwarg -- it is reached
+# only via ``priors={"module_weight": {level: family}}`` and selects which
+# grouping factors carry a per-leaf module-weight (covariance) effect.
 TARGET_NAMES: Tuple[str, ...] = (
     "expression",
     "dispersion",
@@ -63,6 +66,7 @@ TARGET_NAMES: Tuple[str, ...] = (
     "zero_inflation",
     "overdispersion",
     "regime",
+    "module_weight",
 )
 
 # Valid prior families (mirrors ``HierarchicalPriorType`` values).

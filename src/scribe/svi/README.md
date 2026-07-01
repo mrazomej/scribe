@@ -1549,42 +1549,61 @@ map_legacy = results.get_map(map_method="transform")
 ## Hierarchical gene-gene correlation (correlation models)
 
 The correlation models (`pln` / `nbln` / `lnm`) fit a low-rank latent
-covariance `Σ = W Wᵀ + diag(d)` via the amortized VAE path. On a grouped
-(multi-donor) fit, the SVI path supports a **per-donor program-activity
-hierarchy** — first-class, not a disposable pre-check for Laplace:
+covariance `Σ = W Wᵀ + diag(d)` via the amortized VAE path. A column of
+the decoder `W` is a gene **module** (a regulatory program). On a grouped
+(multi-donor) fit, the SVI path supports a **hierarchical module-weight**
+model — first-class, not a disposable pre-check for Laplace: each leaf `d`
+gets its own module-weight vector `s_d`, and the log module-weight
+decomposes **additively** over the same crossed / nested grouping factors
+(and interactions) declared in `hierarchy` / `interactions`:
 
 ```python
 results = scribe.fit(
     adata, model="nbln", inference_method="vae",
     parameterization="count_lognormal",
-    hierarchy=[scribe.GroupLevel("perturbation"), scribe.GroupLevel("sample")],
-    correlation_hierarchy="program_scales",   # per-donor program activity s_d
+    hierarchy=[scribe.GroupLevel("perturbation", effect_type="fixed"),
+               scribe.GroupLevel("sample")],
+    interactions=[("perturbation", "sample")],
+    priors={"module_weight": {"perturbation": "gaussian", "sample": "gaussian",
+                              "perturbation:sample": "gaussian"}},
     latent_dim=16, n_steps=30_000,
 )
 ```
 
 What it does:
 
-- The shared decoder `W` defines the regulatory programs; each leaf
-  (donor / donor×condition) gets a relative activity vector `s_d` with a
-  hierarchical, sum-to-zero, non-centered prior (one scalar between-leaf
-  scale `τ_s`). The K-dim VAE latent prior becomes leaf-specific,
+- The shared decoder `W` defines the gene modules; each leaf
+  (donor / donor×condition) gets a module-weight vector `s_d`. Its log
+  decomposes as `log s_{leaf,k} = Σ_f α^(f)`, with per-factor learned
+  scales `τ_f` (random factors; `effect_type="fixed"` uses a fixed,
+  unlearned scale — interactions are always random) and the
+  three-constraint gauge (global leaf anchor + leaf-count-weighted
+  per-factor sum-to-zero + interaction zero-margin). Families are
+  **gaussian only** on the low-dimensional module axis. The K-dim VAE
+  latent prior becomes leaf-specific,
   `z_c ~ Normal(0, diag(s_{σ(c)}²))`, so the shared decoder *induces* the
-  donor-specific log-rate covariance `W diag(s_d²) Wᵀ + diag(d)`.
-- The `s_d` sampling lives in `models/components/program_scales.py`
-  (`sample_program_scales` + the matching mean-field `guide_program_scales`),
-  the **same** sum-to-zero gauge transform the Laplace path uses.
+  leaf-specific log-rate covariance `W diag(s_d²) Wᵀ + diag(d)`. The
+  single-factor form `priors={"module_weight": {"donor": "gaussian"}}`
+  reproduces the old flat per-leaf `s_d`.
+- The module-weight sampling lives in
+  [`models/components/module_weights.py`](../models/components/module_weights.py)
+  (`sample_module_weights_hierarchical` + the matching mean-field
+  `guide_module_weights_hierarchical`), building the realized per-leaf `s`
+  from the per-factor raws via `module_weights_leaf_from_factors` — the
+  **same** gauge transform the Laplace path uses.
 - **Leaf-covariate encoder.** When the hierarchy is active, the (shared)
   encoder is conditioned on the leaf index via a learned embedding so the
   amortized posterior can adapt to each leaf's prior. The **decoder stays
   leaf-free** by design — feeding the leaf to the decoder would let it
-  absorb between-leaf program activity and break the identifiability that
+  absorb between-leaf module weight and break the identifiability that
   makes `s_d` interpretable.
 
-The theory (gauge, identifiability, the `W_eff = W·diag(s_d)` collapse) is in
+The theory (the additive `log s_{leaf,k} = Σ_f α^(f)`, the three-constraint
+gauge and rank guard, and the `W_eff = W·diag(s_d)` collapse) is in
 [`paper/_nb_lognormal.qmd`](../../../paper/_nb_lognormal.qmd)
-§`sec-nbln-hierarchical-correlation`; the exact-inference counterpart is the
-Laplace path documented in [`../laplace/README.md`](../laplace/README.md).
+§`sec-nbln-hierarchical-correlation` (§`sec-nbln-hier-multifactor` for the
+additive generalization); the exact-inference counterpart is the Laplace
+path documented in [`../laplace/README.md`](../laplace/README.md).
 
 ## Dependencies
 

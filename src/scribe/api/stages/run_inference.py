@@ -352,16 +352,17 @@ def dispatch_inference(ctx: FitContext) -> None:
                 from ...laplace.priors import freeze_values_from_results
 
                 # Per-donor marginal cascade (step 4b): when the target
-                # uses the correlation hierarchy and freezes ``mu`` AND the
+                # uses the module-weight hierarchy and freezes ``mu`` AND the
                 # SVI source is itself hierarchical (multi-dataset on the
                 # mean), reconstruct a per-donor leaf-level mean ``mu^(d)``
                 # of shape (D, G) aligned to the target's leaf ordering.
                 # Every other case routes to the pooled (G,) extractor.
-                _tgt_hier = (
-                    getattr(
-                        ctx.model_config, "correlation_hierarchy", None
-                    )
-                    == "program_scales"
+                # The target uses the hierarchy iff any grouping factor
+                # declares a ``module_weight`` prior family.
+                _tgt_gs = getattr(ctx.model_config, "grouping_spec", None)
+                _tgt_hier = _tgt_gs is not None and any(
+                    f.family("module_weight") != "none"
+                    for f in _tgt_gs.factors
                 )
                 _src_gs = getattr(
                     getattr(

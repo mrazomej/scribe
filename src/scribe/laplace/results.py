@@ -257,17 +257,23 @@ class ScribeLaplaceResults(
     # NBLN fields:
     r_loc: Optional[jnp.ndarray] = None
     r_scale: Optional[jnp.ndarray] = None
-    # Per-donor correlation hierarchy (NB-LogNormal Rung 1).  Populated only
-    # when fitted with ``correlation_hierarchy="program_scales"``.
-    #   ``program_activity`` : (n_datasets, K) relative per-donor program
-    #     activity ``s_d`` (geometric mean 1 across donors per program, by the
-    #     sum-to-zero gauge); donor ``d`` scales latent program ``k`` by
+    # Per-leaf module-weight hierarchy (NB-LogNormal Rung 1.5).  Populated only
+    # when fitted with a ``priors={"module_weight": {...}}`` hierarchy.
+    #   ``module_weights`` : (n_leaves, K) realized relative per-leaf module
+    #     weight ``s`` (geometric mean 1 across leaves per module, by the global
+    #     leaf-anchor gauge); leaf ``d`` scales latent module ``k`` by
     #     ``s_{d,k}``, inducing Σ_d = W diag(s_d^2) Wᵀ + diag(d).
-    #   ``program_scale_tau`` : scalar between-donor scale ``τ_s`` (softplus of
-    #     the fitted unconstrained hyperparameter); larger ⇒ more program-usage
-    #     variation across donors.
-    program_activity: Optional[jnp.ndarray] = None
-    program_scale_tau: Optional[float] = None
+    #   ``module_weight_effects`` : {factor -> (L_f, K)} centered additive
+    #     effects ``alpha^(f)`` — the per-factor decomposition of ``log s``
+    #     (e.g. how a treatment shifts each module, separate from donor).
+    #   ``module_weight_tau_by_factor`` : {factor -> float} between-level scale
+    #     ``τ_f`` (softplus of the fitted hyperparameter) for random factors.
+    #   ``module_weight_tau`` : scalar ``τ`` — populated only in the
+    #     single-random-factor case (back-compat with the flat model).
+    module_weights: Optional[jnp.ndarray] = None
+    module_weight_tau: Optional[float] = None
+    module_weight_effects: Optional[Dict[str, jnp.ndarray]] = None
+    module_weight_tau_by_factor: Optional[Dict[str, float]] = None
     # Per-donor marginal cascade (NB-LogNormal step 4b).  Populated only
     # when the hierarchical-marginal cascade froze a per-donor mean
     # ``mu^(d)`` (a hierarchical independent-gene SVI source + ``"mu"`` in

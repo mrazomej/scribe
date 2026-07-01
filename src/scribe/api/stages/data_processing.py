@@ -198,6 +198,12 @@ def process_data_and_datasets(ctx: FitContext) -> None:
                 # grouping's dataset_priors and consumed by the factory's
                 # condition-specific-r dispatch.
                 kw["_dispersion_dataset_prior"] = _lvl_families
+            elif _tgt == "module_weight":
+                # No flat kwarg for module_weight (NBLN Rung 1.5); carried
+                # internally into the grouping's dataset_priors so it lands on
+                # ``Factor.priors["module_weight"]`` and selects which factors
+                # carry a per-leaf module-weight (covariance) effect.
+                kw["_module_weight_dataset_prior"] = _lvl_families
             else:
                 raise ValueError(
                     f"priors: a dataset/factor hierarchy on target {_tgt!r} is "
@@ -232,6 +238,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
     od_dataset_prior = kw.get("overdispersion_dataset_prior", "none")
     regime_dataset_prior = kw.get("regime_dataset_prior", "none")
     dispersion_dataset_prior = kw.get("_dispersion_dataset_prior", "none")
+    module_weight_dataset_prior = kw.get("_module_weight_dataset_prior", "none")
     dataset_mixing = kw.get("dataset_mixing")
     prob_prior = kw.get("prob_prior", "none")
     zi_prior = kw.get("zero_inflation_prior", "none")
@@ -254,6 +261,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
         or isinstance(dataset_key, (list, tuple))
         or _priors_have_dict
         or isinstance(dispersion_dataset_prior, dict)
+        or isinstance(module_weight_dataset_prior, dict)
     )
     _grouping_requested = dataset_key is not None or hierarchy is not None
 
@@ -276,6 +284,7 @@ def process_data_and_datasets(ctx: FitContext) -> None:
                 "zero_inflation": zi_dataset_prior,
                 "overdispersion": od_dataset_prior,
                 "regime": regime_dataset_prior,
+                "module_weight": module_weight_dataset_prior,
             },
         )
         if result is not None:

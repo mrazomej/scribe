@@ -44,9 +44,9 @@ from .parameter_specs import (
     sample_prior,
 )
 from ..components.guide_families import VAELatentGuide
-from ..components.program_scales import (
-    program_scales_active,
-    sample_program_scales,
+from ..components.module_weights import (
+    module_weights_active,
+    sample_module_weights_hierarchical,
 )
 from ...core.axis_layout import (
     AxisLayout,
@@ -544,26 +544,28 @@ class ModelBuilder:
                     decoder = gf.decoder
 
                     # ----------------------------------------------------------
-                    # Hierarchical gene-gene correlation (NB-LogNormal Rung 1)
+                    # Hierarchical gene-gene correlation (NB-LogNormal Rung 1.5)
                     # ----------------------------------------------------------
-                    # When ``correlation_hierarchy="program_scales"`` is enabled
-                    # on a grouped (multi-donor) fit, sample the per-donor
-                    # relative program-activity scales ``s_d`` ONCE here, in the
-                    # global scope (outside the cell plate -- s_d is a global,
-                    # shape ``(n_datasets, latent_dim)``).  ``vae_cell_fn`` below
-                    # gathers the per-cell scale and uses it to make the K-dim
-                    # latent prior donor-specific:
+                    # When a ``module_weight`` hierarchy is declared in
+                    # ``priors`` on a grouped (multi-leaf) fit, sample the
+                    # per-leaf relative module weights ``s`` ONCE here, in the
+                    # global scope (outside the cell plate -- ``s`` is a global,
+                    # shape ``(n_leaves, latent_dim)``).  The weights decompose
+                    # additively over the grouping factors (crossed/nested +
+                    # interactions), exactly like the mean ``mu`` hierarchy.
+                    # ``vae_cell_fn`` below gathers the per-cell weight and uses
+                    # it to make the K-dim latent prior leaf-specific:
                     #     z_c ~ Normal(0, diag(s_{sigma(c)}^2)).
-                    # The shared decoder ``W`` then *induces* the donor-specific
-                    # log-rate covariance ``W diag(s_d^2) W^T + diag(d)`` -- the
-                    # Rung-1 target -- without scaling the decoder itself.  See
-                    # ``scribe.models.components.program_scales`` and
+                    # The shared decoder ``W`` then *induces* the leaf-specific
+                    # log-rate covariance ``W diag(s_d^2) W^T + diag(d)`` without
+                    # scaling the decoder itself.  See
+                    # ``scribe.models.components.module_weights`` and
                     # ``paper/_nb_lognormal.qmd`` §sec-nbln-hierarchical-correlation.
-                    program_scales = None
-                    if program_scales_active(model_config, dataset_indices):
-                        program_scales = sample_program_scales(
-                            n_datasets=int(model_config.n_datasets),
-                            latent_dim=int(latent_spec.latent_dim),
+                    module_weights = None
+                    if module_weights_active(model_config, dataset_indices):
+                        module_weights = sample_module_weights_hierarchical(
+                            model_config.grouping_spec,
+                            int(latent_spec.latent_dim),
                         )
 
                     # Define the closure; called inside the likelihood cell
@@ -573,21 +575,21 @@ class ModelBuilder:
                         # If a prior flow is set on the latent spec, register
                         # it with flax_module and wrap in FlowDistribution;
                         # otherwise use the standard prior (Normal(0, I)).
-                        if program_scales is not None:
-                            # --- Donor-specific latent prior (Rung 1) --------
-                            # Gather this batch's per-cell donor index, then the
-                            # corresponding per-cell program-activity scale
+                        if module_weights is not None:
+                            # --- Leaf-specific latent prior (Rung 1.5) -------
+                            # Gather this batch's per-cell leaf index, then the
+                            # corresponding per-cell module weight
                             # ``s_{sigma(c)}`` (shape ``(batch, K)``).  The
                             # latent prior becomes
                             #     z_c ~ Normal(0, diag(s_{sigma(c)}^2)),
                             # i.e. each cell's K-dim latent is scaled by its
-                            # donor's relative program activity.  The cell plate
+                            # leaf's relative module weight.  The cell plate
                             # supplies the leading batch axis; ``to_event(1)``
-                            # marks the K program axis as an event dim (matching
+                            # marks the K module axis as an event dim (matching
                             # the standard ``make_prior_dist`` convention).
                             #
-                            # Note: a per-donor scale and a learned prior flow
-                            # are mutually exclusive; ``program_scales`` is only
+                            # Note: a per-leaf weight and a learned prior flow
+                            # are mutually exclusive; ``module_weights`` is only
                             # set for the (flow-free) low-rank correlation
                             # models, so this branch takes precedence cleanly.
                             _ds = (
@@ -595,7 +597,7 @@ class ModelBuilder:
                                 if _batch_idx is not None
                                 else dataset_indices
                             )
-                            s_cell = program_scales[_ds]  # (batch, K)
+                            s_cell = module_weights[_ds]  # (batch, K)
                             prior = dist.Normal(
                                 jnp.zeros_like(s_cell), s_cell
                             ).to_event(1)

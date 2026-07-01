@@ -267,25 +267,61 @@ def _run_laplace_inference(
                 )
             )
 
-        # Per-donor correlation hierarchy (Rung 1): when the program-scale
-        # globals were fitted, reconstruct the constrained relative per-donor
-        # program activity ``s`` (n_datasets, K) and the between-donor scale
-        # ``tau_s`` via the shared raw->s transform, and surface them on the
-        # result for ``get_program_activity()`` / DE-style comparisons.
-        program_activity_val = None
-        program_scale_tau_val = None
-        if "program_scale_raw" in g and "program_scale_tau_raw" in g:
-            from ..models.components.program_scales import (
-                program_scales_from_raw,
+        # Per-leaf module-weight hierarchy (Rung 1.5): when the per-factor
+        # module-weight globals were fitted, reconstruct the realized relative
+        # per-leaf module weights ``s`` (n_leaves, K), the per-factor centered
+        # effects ``alpha^(f)`` (L_f, K), and the per-factor between-level scale
+        # ``tau_f`` via the shared additive assembly, and surface them for
+        # ``get_module_weights()`` / ``get_module_weight_effects()``.
+        module_weights_val = None
+        module_weight_effects_val = None
+        module_weight_tau_by_factor_val = None
+        module_weight_tau_val = None
+        if any(k.startswith("module_weight_raw__") for k in g):
+            from ..models.components.module_weights import (
+                build_module_weight_operators,
+                module_weights_leaf_from_factors,
+                module_weight_effects_from_raw,
             )
             import jax.nn as _jnn
 
-            program_activity_val = program_scales_from_raw(
-                g["program_scale_raw"], g["program_scale_tau_raw"]
+            _ops = build_module_weight_operators(
+                getattr(model_config, "grouping_spec", None)
             )
-            program_scale_tau_val = float(
-                _jnn.softplus(g["program_scale_tau_raw"])
-            )
+            # Defensive: if the grouping_spec is absent (a hand-built or
+            # partially-restored run_result) the operators can't be rebuilt;
+            # skip the module-weight fields rather than raising at pack time.
+            if _ops is not None:
+                _raw_by = {
+                    f["name"]: g[f"module_weight_raw__{f['site']}"]
+                    for f in _ops["factors"]
+                }
+                _tau_by = {
+                    f["name"]: g[f"module_weight_tau_raw__{f['site']}"]
+                    for f in _ops["factors"]
+                    if f["is_random"]
+                }
+                module_weights_val = module_weights_leaf_from_factors(
+                    _ops, _raw_by, _tau_by
+                )
+                module_weight_effects_val = module_weight_effects_from_raw(
+                    _ops, _raw_by, _tau_by
+                )
+                module_weight_tau_by_factor_val = {
+                    f["name"]: float(
+                        _jnn.softplus(g[f"module_weight_tau_raw__{f['site']}"])
+                    )
+                    for f in _ops["factors"]
+                    if f["is_random"]
+                } or None
+                # Back-compat scalar: only when exactly one random factor.
+                if (
+                    module_weight_tau_by_factor_val is not None
+                    and len(module_weight_tau_by_factor_val) == 1
+                ):
+                    module_weight_tau_val = next(
+                        iter(module_weight_tau_by_factor_val.values())
+                    )
 
         # Round-5 R5-5: cascade fields live only on the bridge-level
         # result.  `cascade_source` carries the SVI guide for PPC and
@@ -303,8 +339,10 @@ def _run_laplace_inference(
             r_scale=r_scale_val,
             mu_loc=mu_loc_val,
             mu_scale=mu_scale_val,
-            program_activity=program_activity_val,
-            program_scale_tau=program_scale_tau_val,
+            module_weights=module_weights_val,
+            module_weight_tau=module_weight_tau_val,
+            module_weight_effects=module_weight_effects_val,
+            module_weight_tau_by_factor=module_weight_tau_by_factor_val,
             gene_mean_per_dataset=getattr(
                 run_result, "gene_mean_per_dataset", None
             ),

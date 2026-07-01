@@ -9,8 +9,9 @@ Two layers are exercised:
    light stub source (so the alignment / shape / error paths are exact and
    fast).
 2. **End-to-end** ``scribe.fit`` — a hierarchical NBVCP-SVI source feeds a
-   grouped NBLN-Laplace fit with ``correlation_hierarchy="program_scales"``
-   and ``informative_priors_freeze=("r", "mu")``.  The per-donor freeze flows
+   grouped NBLN-Laplace fit with a per-leaf module-weight hierarchy
+   (``priors={"module_weight": {"donor": "gaussian"}}``) and
+   ``informative_priors_freeze=("r", "mu")``.  The per-donor freeze flows
    through the per-cell-mu Newton path; the result surfaces the unpooled
    per-donor table via ``get_gene_mean_per_dataset()`` while the standard
    ``get_mu()`` stays pooled ``(G,)``.
@@ -182,12 +183,12 @@ def test_e2e_per_donor_mu_cascade():
     mu_src = np.asarray(svi.get_map()["mu"])
     assert mu_src.ndim == 2 and mu_src.shape[0] == D
 
-    # NBLN-Laplace with the per-donor marginal cascade + correlation hierarchy.
+    # NBLN-Laplace with the per-donor marginal cascade + module-weight hierarchy.
     res = scribe.fit(
         adata,
         model="nbln",
         inference_method="laplace",
-        correlation_hierarchy="program_scales",
+        priors={"module_weight": {"donor": "gaussian"}},
         correlate_other_column=True,
         dataset_key="donor",
         informative_priors_from=svi,
@@ -210,8 +211,8 @@ def test_e2e_per_donor_mu_cascade():
     )
     # The per-donor rows are genuinely distinct (the cascade is doing work).
     assert per_donor.std(axis=0).max() > 1e-3
-    # The correlation hierarchy is also active alongside the per-donor mu.
-    s = res.get_program_activity()
+    # The module-weight hierarchy is also active alongside the per-donor mu.
+    s = res.get_module_weights()
     assert s is not None and np.asarray(s).shape == (D, 2)
 
 
@@ -267,7 +268,7 @@ def test_e2e_per_donor_mu_cascade_decoupled_equal_panels():
         adata,
         model="nbln",
         inference_method="laplace",
-        correlation_hierarchy="program_scales",
+        priors={"module_weight": {"donor": "gaussian"}},
         correlate_other_column=False,   # DECOUPLED: `_other` excluded from W
         gene_coverage=GC,               # MATCH the source -> equal panels
         dataset_key="donor",
@@ -286,8 +287,8 @@ def test_e2e_per_donor_mu_cascade_decoupled_equal_panels():
     # `_other` is EXCLUDED from W: W lives on the kept-gene axis (G_kept < G_obs).
     g_kept = np.asarray(res.get_W()).shape[0]
     assert g_kept < g_obs, (g_kept, g_obs)
-    # The correlation hierarchy still fits per-leaf program activity.
-    s = res.get_program_activity()
+    # The module-weight hierarchy still fits per-leaf module weights.
+    s = res.get_module_weights()
     assert s is not None and np.asarray(s).shape == (D, 2)
 
 
@@ -320,7 +321,7 @@ def test_per_donor_mu_panel_mismatch_unsupported():
             adata,
             model="nbln",
             inference_method="laplace",
-            correlation_hierarchy="program_scales",
+            priors={"module_weight": {"donor": "gaussian"}},
             correlate_other_column=False,
             gene_coverage=0.5,              # subset panel != full-panel source
             dataset_key="donor",
@@ -333,7 +334,7 @@ def test_per_donor_mu_panel_mismatch_unsupported():
 
 
 def test_e2e_per_donor_mu_requires_hierarchy():
-    """Freezing per-donor mu without the correlation hierarchy fails fast."""
+    """Freezing per-donor mu without the module-weight hierarchy fails fast."""
     adata = _multi_donor_adata(seed=3)
     svi = scribe.fit(
         adata,
@@ -346,8 +347,8 @@ def test_e2e_per_donor_mu_requires_hierarchy():
         n_steps=150,
         seed=0,
     )
-    # No correlation_hierarchy => the per-donor (D, G) freeze has no per-cell-W
-    # path; the obs model must reject it rather than silently mis-broadcast.
+    # No module-weight hierarchy => the per-donor (D, G) freeze has no
+    # per-cell-W path; the obs model must reject it rather than mis-broadcast.
     with pytest.raises((NotImplementedError, Exception)):
         scribe.fit(
             adata,

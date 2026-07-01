@@ -133,11 +133,6 @@ class ModelConfigBuilder:
         # deviation-form math wired.  ``True`` is the explicit legacy
         # opt-in.
         self._correlate_other_column: bool = False
-        # Per-donor gene-gene correlation hierarchy mode (correlation models).
-        # ``None`` -> single shared Σ; ``"program_scales"`` -> Rung-1 per-donor
-        # relative program-activity hierarchy.  See
-        # ``ModelConfig.correlation_hierarchy``.
-        self._correlation_hierarchy: Optional[str] = None
         # Positive-parameter transform: ``"softplus"``, ``"exp"``, or
         # a ``Dict[str, str]`` for per-parameter overrides (the dict
         # form is normalized to internal names by ``ModelConfig``'s
@@ -827,9 +822,6 @@ class ModelConfigBuilder:
             # math wired, so ``False`` is safe everywhere.
             correlate_other_column=getattr(
                 self, "_correlate_other_column", False
-            ),
-            correlation_hierarchy=getattr(
-                self, "_correlation_hierarchy", None
             ),
             positive_transform=self._positive_transform,
             n_quad_nodes=getattr(self, "_n_quad_nodes", None),

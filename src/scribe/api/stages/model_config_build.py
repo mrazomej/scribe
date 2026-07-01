@@ -124,7 +124,6 @@ def _build_from_kwargs(ctx, kw, d_mode):
         # PoissonBetaCompound default (60).
         n_quad_nodes=kw.get("n_quad_nodes"),
         correlate_other_column=kw.get("correlate_other_column", False),
-        correlation_hierarchy=kw.get("correlation_hierarchy"),
         guide_rank=kw.get("guide_rank"),
         joint_params=kw.get("joint_params"),
         dense_params=kw.get("dense_params"),

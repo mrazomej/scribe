@@ -78,10 +78,10 @@ def _run_vae_inference(
         ``None`` for non-annotated fits.
     dataset_indices : Optional[jnp.ndarray], default=None
         Per-cell donor/leaf index for grouped (multi-dataset) fits. Required
-        for the per-donor correlation hierarchy
-        (``correlation_hierarchy="program_scales"``); without it the model
-        and guide cannot gather the per-cell program scales and the hierarchy
-        silently stays inert.
+        for the per-leaf module-weight hierarchy
+        (``priors={"module_weight": {...}}``); without it the model and guide
+        cannot gather the per-cell module weights and the hierarchy silently
+        stays inert.
 
     Returns
     -------

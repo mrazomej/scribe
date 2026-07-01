@@ -2824,19 +2824,30 @@ framework of @sec-hierarchical-datasets hierarchically links *marginal*
 parameters (the per-gene mean $\tilde\mu_g$, the dispersion $r_g$); here we
 develop the analogous hierarchy for the *correlation* itself.
 
-The biological premise is **common regulatory programs with dataset-specific
-activity**: the columns of $\underline{\underline{W}}$—the $K$ regulatory
-modules of @sec-nbln-low-rank—are the same set of programs in every dataset,
-but each dataset engages them to a different degree. This is the single-cell
-analogue of Flury's *common principal components* model, and it is what lets a
-panel of donors *inform one another's* correlation structure rather than each
-being estimated in isolation.
+The biological premise is **common gene modules with dataset-specific
+weights**: the columns of $\underline{\underline{W}}$—the $K$ regulatory
+**modules** of @sec-nbln-low-rank—are the same set of programs in every dataset,
+but each dataset engages them to a different degree. We call
+$s_{d,k} > 0$ the **module weight** of module $k$ in dataset $d$: how strongly
+module $k$ co-activates in $d$. This is the single-cell analogue of Flury's
+*common principal components* model, and it is what lets a panel of donors
+*inform one another's* correlation structure rather than each being estimated
+in isolation.
 
-### The model {#sec-nbln-hier-model}
+This section develops the model in two stages. We first give the **flat**
+single-grouping-axis construction—one module-weight vector $\underline{s}_d$
+per dataset with a single scale and a sum-to-zero gauge (@sec-nbln-hier-model
+through @sec-nbln-hier-collapse). We then **generalize** the log module-weight
+to an *additive* decomposition over several crossed / nested grouping factors
+(@sec-nbln-hier-multifactor), mirroring the additive mean hierarchy of
+@sec-hdata-multifactor. The flat construction is exactly the single-factor
+($F=1$, saturated) special case of the general one.
+
+### The flat model {#sec-nbln-hier-model}
 
 Let $\sigma(c) \in \{1, \ldots, D\}$ be the (observed, fixed) dataset
 assignment of cell $c$, as in @eq-hdata-assignment. Each dataset $d$ carries a
-vector of **relative program activities**
+vector of **module weights**
 $\underline{s}_d \in \mathbb{R}_{>0}^{K}$, and the per-cell latent regulatory
 state is drawn from a dataset-specific covariance:
 
@@ -2857,18 +2868,18 @@ datasets; only $\underline{s}_d$ varies. Setting $\underline{s}_d =
 $\underline{\underline{\Sigma}}$ of @eq-nbln-low-rank, so this is a strict
 generalization.
 
-Writing $s_{d,k}$ for the activity of program $k$ in dataset $d$, the
-covariance contribution of program $k$ is scaled by $s_{d,k}^2$: a dataset with
+Writing $s_{d,k}$ for the weight of module $k$ in dataset $d$, the
+covariance contribution of module $k$ is scaled by $s_{d,k}^2$: a dataset with
 $s_{d,k} > 1$ shows *more* cell-to-cell covariation along regulatory module
 $k$ than the population, and $s_{d,k} < 1$ less. The shared
 $\text{diag}(\underline{d})$ keeps the gene-intrinsic residual noise common
 across datasets, so all between-dataset differences in correlation are carried
-by the $K$ program activities.
+by the $K$ module weights.
 
 ### Hierarchical prior with a sum-to-zero gauge {#sec-nbln-hier-prior}
 
-We place a hierarchical, non-centered prior on the log-activities, mirroring
-the NCP construction of @eq-hdata-mu-ncp but on the $D \times K$ activity grid:
+We place a hierarchical, non-centered prior on the log module-weights, mirroring
+the NCP construction of @eq-hdata-mu-ncp but on the $D \times K$ weight grid:
 
 $$
 \log s_{d,k} = \tau_s\,\tilde\varepsilon_{d,k},
@@ -2880,7 +2891,7 @@ $$
 $${#eq-nbln-hier-ncp}
 
 with a single shared scale $\tau_s \sim \text{Softplus}(\mathcal{N}(\mu_\tau,
-\sigma_\tau))$ governing the magnitude of between-dataset program-activity
+\sigma_\tau))$ governing the magnitude of between-dataset module-weight
 variation (the direct analogue of $\tau_\mu$ in @eq-hdata-tau-prior). The
 centering of $\varepsilon_{\cdot,k}$ enforces the **sum-to-zero constraint**
 
@@ -2891,9 +2902,9 @@ $$
 \qquad \text{for every program } k,
 $${#eq-nbln-hier-gauge}
 
-so each program's activities have geometric mean $1$ across datasets:
-$\underline{s}_d$ is purely *relative* activity, and the absolute scale of
-program $k$ lives entirely in the column norm
+so each module's weights have geometric mean $1$ across datasets:
+$\underline{s}_d$ is purely *relative* weight, and the absolute magnitude of
+module $k$ lives entirely in the column norm
 $\lVert \underline{\underline{W}}_{:,k} \rVert$. As shown next, this constraint
 is not cosmetic—it is what makes the parameterization identifiable.
 
@@ -2909,7 +2920,7 @@ $\underline{\underline{W}} \mapsto \underline{\underline{W}}\,
 \underline{\underline{R}}$ for $\underline{\underline{R}} \in \mathcal{O}(K)$
 only if $\underline{\underline{R}}\,\text{diag}(\underline{s}_d^{\,2})\,
 \underline{\underline{R}}^\top = \text{diag}(\underline{s}_d^{\,2})$
-*simultaneously for all $d$*. When the datasets' activity profiles are
+*simultaneously for all $d$*. When the datasets' module-weight profiles are
 **sufficiently distinct** (the diagonal matrices $\text{diag}(\underline{s}_d^{\,2})$
 have, jointly, no repeated structure), the only $\underline{\underline{R}}$
 satisfying this is a signed permutation. Thus dataset heterogeneity
@@ -2933,9 +2944,13 @@ $(a_k s_{d,k}/a_k)^2 = s_{d,k}^2$. Dataset heterogeneity does **not** break
 this gauge. The sum-to-zero constraint @eq-nbln-hier-gauge does: under
 @eq-nbln-hier-scale-gauge the constraint shifts by $-\log a_k$, so enforcing
 $\frac{1}{D}\sum_d \log s_{d,k} = 0$ forces $a_k = 1$. Centering the
-log-activities therefore removes the scale gauge exactly, pinning the column
+log module-weights therefore removes the scale gauge exactly, pinning the column
 magnitude to $\underline{\underline{W}}$ and leaving $\underline{s}_d$ as
-identified relative activity.
+identified relative weight. This global sum-to-zero anchor is the constraint
+that the additive generalization of @sec-nbln-hier-multifactor preserves
+verbatim: it is the *only* constraint strictly required to remove the
+per-column scale gauge, and the extra per-factor constraints introduced there
+serve to separate the additive effects, not to fix this gauge.
 
 **Residual gauges.** Column sign ($\underline{\underline{W}}_{:,k} \mapsto
 -\underline{\underline{W}}_{:,k}$) and column permutation remain, exactly as
@@ -2951,7 +2966,7 @@ gene-centered projection.
 
 The hierarchy adds no new linear-algebra cost. Define the **effective
 loadings** of dataset $d$ by scaling each column of $\underline{\underline{W}}$
-by the corresponding activity,
+by the corresponding module weight,
 
 $$
 \underline{\underline{W}}_{\text{eff},d}
@@ -2977,10 +2992,175 @@ the Woodbury inverse @eq-nbln-woodbury and log-determinant @eq-nbln-logdet, the
 KL term @eq-nbln-kl, and the per-cell Newton/Laplace machinery of
 @sec-nbln-elbo all apply with $\underline{\underline{W}}_{\text{eff},\sigma(c)}$
 substituted for $\underline{\underline{W}}$. The cost of inference is unchanged
-up to the trivial column scaling @eq-nbln-hier-weff; the activities
+up to the trivial column scaling @eq-nbln-hier-weff; the module weights
 $\underline{s}_d$ enter the objective only through the per-cell prior quadratic
 form and the log-determinant of $\underline{\underline{\Sigma}}_{\sigma(c)}$,
 which is precisely how they receive their gradient.
+
+### Additive multi-factor module weights {#sec-nbln-hier-multifactor}
+
+The flat model of @sec-nbln-hier-model attaches an independent module-weight
+vector $\underline{s}_d$ to each dataset $d$, treating the datasets as a
+*single* unstructured grouping axis. Many designs, however, are described by
+**several** crossed or nested grouping factors—a panel of donors measured under
+a treatment condition, plates within a batch, and so on (the setting of
+@sec-hdata-multifactor). Just as the mean hierarchy there promotes the
+per-dataset mean to a sum of per-factor effects (@eq-hdata-mf-additive-mu), we
+promote the **log module-weight** to an *additive* decomposition over the same
+grouping factors. This lets a donor's two condition-specific leaves share a
+common donor module-weight effect—exactly the shared identity a single axis
+cannot express—while remaining a strict generalization of the flat model.
+
+We reuse the leaf notation of @sec-hdata-mf-setup: $F$ grouping factors, factor
+$f$ with $L_f$ levels, a cell's realized combination is its **leaf** $\ell$
+(only *present* combinations are indexed, $\ell = 1,\dots,L$), and the observed
+level map $\kappa_f(\ell) \in \{1,\dots,L_f\}$ returns the level of factor $f$
+at leaf $\ell$. Each cell $c$ belongs to leaf $\ell(c)$, and the module-weight
+vector attached to leaf $\ell$ is $\underline{s}_\ell$, entering
+@eq-nbln-hier-sigma through $\underline{\underline{\Sigma}}_{\ell(c)}$.
+
+**Additive log module-weight.** For each module $k$ we write the log weight of
+leaf $\ell$ as a sum of per-factor effects, with **no population intercept**:
+
+$$
+\log s_{\ell,k} = \sum_{f=1}^{F} \alpha^{(f)}_{\kappa_f(\ell),\,k},
+\qquad \ell = 1,\dots,L,
+$${#eq-nbln-hier-mf-additive}
+
+where $\alpha^{(f)}_{m,k}$ is the effect of level $m$ of factor $f$ on module
+$k$. This is the direct analogue of @eq-hdata-mf-additive-mu, with two
+deliberate differences. First, there is **no intercept term** $\log s_k$: the
+absolute magnitude of module $k$ already lives in the column norm
+$\lVert \underline{\underline{W}}_{:,k} \rVert$ (the scale gauge of
+@eq-nbln-hier-scale-gauge), so an overall log-weight offset would merely
+re-express that same freedom and is instead removed by the global anchor below.
+Second, a factor's effect is **shared across all leaves with the same level of
+that factor**, so the donor effect $\alpha^{(\text{donor})}_{d,k}$ enters every
+leaf of donor $d$ under both conditions, coupling them.
+
+**Per-factor scales; fixed vs. random.** Each factor's effects use the same
+non-centered form as @eq-hdata-mf-random, on the $L_f \times K$ grid of the
+factor:
+
+$$
+z^{(f)}_{m,k} \sim \mathcal{N}(0,1),
+\qquad
+\alpha^{(f)}_{m,k} = \text{scale}_f \cdot \bigl[\,\text{center}(z^{(f)})\,\bigr]_{m,k},
+$${#eq-nbln-hier-mf-random}
+
+where $\text{center}(\cdot)$ applies the sum-to-zero projection of the next
+paragraph and the effective scale is
+
+$$
+\text{scale}_f =
+\begin{cases}
+\text{softplus}(\tau^{\text{raw}}_f), & \text{effect type } f = \text{random} \;\;(\tau_f \text{ learned}),\\[2pt]
+\text{fixed}, & \text{effect type } f = \text{fixed}.
+\end{cases}
+$${#eq-nbln-hier-mf-scale}
+
+A **random** factor (a donor panel, say) learns its own between-level scale
+$\tau_f = \text{softplus}(\tau^{\text{raw}}_f)$, a per-factor generalization of
+the single $\tau_s$ of @eq-nbln-hier-ncp and the direct counterpart of the
+learned $\tau_f$ in @eq-hdata-mf-random. A **fixed** factor (a two-level
+treatment condition, per the reasoning of @sec-hdata-mf-effect-types) uses a
+fixed, weakly-informative $\text{fixed\_scale}$ that is *not* learned, so a
+two-level contrast is moved freely by the data rather than shrunk by a scale it
+cannot identify. **Interaction factors are always random** in this version:
+their levels are the present parent pairs, and their spread is estimated by a
+learned scale like any other random factor. Setting $F=1$ with a single
+saturated factor whose levels are the datasets themselves recovers
+@eq-nbln-hier-ncp with $\tau_s = \text{scale}_1$.
+
+**Gaussian families only.** All factor effects use the Gaussian
+(single-learned-scale) hierarchy of @eq-nbln-hier-mf-random; the heavy-tailed
+horseshoe / normal-exponential-gamma shrinkage priors of @sec-hdata-horseshoe
+are **not** offered on the module axis. Those priors target the *high-dimensional
+per-gene* axis, where most effects are expected to be exactly null and sparsity
+is the right inductive bias. The module index $k$ runs over the $K$ low-rank
+modules ($K \ll G$); this axis is deliberately low-dimensional and dense—every
+module is a genuine regulatory program that most leaves engage to some degree—so
+column-wise sparsity is neither expected nor identifiable, and the Gaussian
+hierarchy is the appropriate choice.
+
+**Three-constraint identifiability gauge.** The additive decomposition
+@eq-nbln-hier-mf-additive inherits the per-factor shift ambiguity of
+@eq-hdata-mf-shift (adding a constant to one factor's effects and subtracting it
+from another leaves $\log s_{\ell,k}$ unchanged) *and* the per-column scale
+gauge of @eq-nbln-hier-scale-gauge. Three constraints, imposed per module $k$,
+make it well posed and compose cleanly:
+
+1. **Global leaf anchor** (mandatory). After summing the factor effects,
+   subtract the realized leaf mean so that
+   $$
+   \sum_{\ell=1}^{L} \log s_{\ell,k} = 0
+   \quad\Longleftrightarrow\quad
+   \prod_{\ell=1}^{L} s_{\ell,k} = 1
+   \qquad \text{for every module } k.
+   $${#eq-nbln-hier-mf-anchor}
+   This is the additive generalization of the flat centering
+   @eq-nbln-hier-gauge and is the **only** constraint strictly required to
+   remove the per-column scale gauge @eq-nbln-hier-scale-gauge: it pins the
+   overall log-weight level of module $k$ so its absolute magnitude resides in
+   $\lVert \underline{\underline{W}}_{:,k} \rVert$.
+
+2. **Leaf-count-weighted per-factor sum-to-zero.** With $n^{(f)}_m$ the number
+   of *present* leaves at level $m$ of factor $f$, each factor's effects satisfy
+   $$
+   \sum_{m} n^{(f)}_m\, \alpha^{(f)}_{m,k} = 0
+   \qquad \text{for every factor } f \text{ and module } k.
+   $${#eq-nbln-hier-mf-factorstz}
+   Under an **unbalanced** design—levels realized by unequal numbers of leaves—a
+   plain unweighted sum-to-zero would leak a level's over-representation into a
+   spurious overall shift; weighting by the present-leaf counts $n^{(f)}_m$
+   makes the constraint respect the realized design and cleanly separates the
+   main effects.
+
+3. **Interaction zero-margin.** An interaction factor's effects are aliased with
+   its parents' main effects unless constrained to have zero margins. Over the
+   *present* cells of the interaction we subtract the grand mean and both parent
+   margins (and, to avoid removing genuine signal, **drop single-cell margins**
+   —a parent level realized by a lone leaf carries no interaction contrast to
+   separate). This is the module-axis instance of the interaction zero-margin
+   requirement of @sec-hdata-mf-identifiability, item 3.
+
+These compose in a specific order. Because the leaf-count-weighted centering
+(2) makes each *gathered* per-factor effect sum to zero over present leaves,
+the sum $\sum_f \alpha^{(f)}_{\kappa_f(\ell),k}$ already has zero leaf-mean; the
+global anchor (1) therefore acts as the **identity** on the factor effects and
+only pins the residual overall scale that (2) and (3) do not touch. The
+constraints do not fight: (2) and (3) shape the *within-factor* structure, and
+(1) removes the *one* remaining degree of freedom—the per-column scale gauge.
+
+**Rank guard.** For the constrained decomposition to identify the factor
+effects, the stacked gathered per-factor contrast bases, evaluated over the
+present leaves, must have **full column rank**. That rank equals
+$\sum_f \operatorname{rank}(P_f)$ where $P_f$ is factor $f$'s (leaf-count-weighted,
+zero-margin) contrast operator; for a **complete / saturated** design it equals
+$L-1$ (the number of leaves minus one for the single anchored degree of
+freedom). For a $2\times 7$ crossed design with interaction this is
+$1 + 6 + 6 = 13 = L - 1$ with $L = 14$. An **incomplete** crossing that leaves
+an interaction over-parameterized yields a column-rank-deficient stack; this is
+detected at build time and **raises**, rather than silently returning
+non-identified effects.
+
+**Preserved gauges and the flat special case.** The rotation gauge is
+unchanged from @sec-nbln-hier-identifiability: it is broken generically by the
+realized leaf-profile distinctness (Flury common principal components), now
+computed from the *assembled* per-leaf $\underline{s}_\ell$ of
+@eq-nbln-hier-mf-additive rather than free per-dataset vectors. The residual
+sign and permutation gauges on the columns of $\underline{\underline{W}}$ always
+remain and are resolved at interpretation time. The low-rank collapse of
+@sec-nbln-hier-collapse applies unchanged with $\underline{s}_{\ell(c)}$ in
+place of $\underline{s}_{\sigma(c)}$: each leaf's
+$\underline{\underline{W}}_{\text{eff},\ell} = \underline{\underline{W}}\,
+\text{diag}(\underline{s}_\ell)$ gives an exact low-rank-plus-diagonal
+$\underline{\underline{\Sigma}}_\ell$, so the per-cell inference machinery is
+untouched. Finally, the **flat per-leaf $\underline{s}_d$** of
+@sec-nbln-hier-model is precisely the **saturated single-factor** special case:
+one factor whose levels are the datasets, whose contrast operator has rank
+$L-1$, and for which the anchor @eq-nbln-hier-mf-anchor reduces to the flat
+sum-to-zero gauge @eq-nbln-hier-gauge.
 
 ### Relationship to the marginal hierarchy {#sec-nbln-hier-relationship}
 
@@ -2989,21 +3169,27 @@ correlation hierarchy here are complementary and compose. The former links the
 *marginal* per-gene parameters—the mean $\tilde\mu_g^{(d)}$ and, optionally,
 the dispersion $r_g^{(d)}$—through log-additive dataset effects, capturing how
 much each gene's *expression level* shifts between datasets. The latter links
-the *second-order* structure—how genes co-vary—through the program activities
-$\underline{s}_d$, capturing how much each regulatory *module* shifts. A joint
-model can carry both: dataset-specific marginals from the additive hierarchy of
-@eq-hdata-mu-ncp on top of dataset-specific correlation from
-@eq-nbln-hier-sigma, with the shared $\underline{\underline{W}}$ and the
-sum-to-zero gauge ensuring the program activities remain interpretable as
-relative engagement of a common regulatory architecture.
+the *second-order* structure—how genes co-vary—through the module weights
+$\underline{s}_d$, capturing how much each regulatory *module* shifts. Both
+hierarchies now share the *same* additive grouping machinery of
+@sec-hdata-multifactor: the mean $\log\mu$ and the log module-weight
+decompose over the identical crossed / nested factors and interactions, differ
+only in their gauge (a shrinkage-anchored intercept for $\mu$; the
+scale-gauge-fixing global anchor of @eq-nbln-hier-mf-anchor for
+$\underline{s}$). A joint model can carry both: dataset-specific marginals from
+the additive hierarchy of @eq-hdata-mf-additive-mu on top of dataset-specific
+correlation from @eq-nbln-hier-mf-additive, with the shared
+$\underline{\underline{W}}$ and the sum-to-zero gauges ensuring the module
+weights remain interpretable as relative engagement of a common regulatory
+architecture.
 
 A practical caveat inherited from any hierarchical model with few groups
-(@sec-hierarchical-datasets): with a small number of datasets $D$, the
-between-dataset scale $\tau_s$ is weakly identified, and the $K$ relative
-activities per dataset cannot resolve fine differences in correlation
-eigenstructure. The model is most informative in exactly the regime the
-hierarchy is designed for—pooling strength across datasets that share a
-regulatory architecture while letting their program usage differ.
+(@sec-hierarchical-datasets): with a small number of datasets $D$ (or few levels
+on a given random factor), the between-level scale $\tau_f$ is weakly
+identified, and the $K$ module weights per leaf cannot resolve fine differences
+in correlation eigenstructure. The model is most informative in exactly the
+regime the hierarchy is designed for—pooling strength across datasets that share
+a regulatory architecture while letting their module usage differ.
 
 ## Mathematical summary {#sec-nbln-summary}
 
