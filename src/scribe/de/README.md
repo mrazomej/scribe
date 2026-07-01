@@ -1449,3 +1449,29 @@ loop and keeps all permutation work on-device.
 - An epsilon guard (`1e-30` floor) is applied to `delta_sd` in both gene-level
   and contrast-level computations to prevent `NaN`/`Inf` from near-zero
   variance genes.
+
+## Context-aware posterior narrowing (memory)
+
+`compare_groups` draws the posterior **once** (via `_ensure_posterior_draw`)
+then slices per leaf. For **NB-family** fits it now requests a *narrowed* draw —
+`purpose="de_paired"` keeps only `{r, p, mu, phi}` (+ `mixing_weights` for
+mixtures); `estimand="effect"` requests `purpose="de_effect"` (the factor's
+effect/scale site). This drops the per-cell capture and per-factor effect
+tensors DE never reads, which otherwise dominate stored memory at large
+`n_samples` (e.g. a wide treatment×donor interaction under a horseshoe). DE
+results are numerically unchanged — only memory is reduced.
+
+Narrowing is gated by `_supports_de_narrowing` (an allowlist of NB roots
+`{nbdm, zinb, nbvcp, zinbvcp, bnb}`). Non-NB families — two-state
+(`alpha`/`beta`/`r_hat`) and the marginal-driven families (LNM/PLN/NBLN/TSLN,
+detected via `has_compositional_marginal`) — **bypass** narrowing and keep the
+full-cache draw, identical to previous behaviour.
+
+Side effect: after a DE call the cached `results.posterior_samples` holds only
+the narrowed sites and `results._posterior_is_full` is `False`. Full-generative
+consumers (PPC, denoising, MAP-predictive) detect this and re-draw or raise (see
+`scribe.svi` README — the `_require_full_posterior_cache` guard), so a narrowed
+DE cache can never silently feed a prior-contaminated PPC. Cache reuse across DE
+calls is site-aware: a cache is reused only when its count matches **and** its
+keep-set covers the new call's (so an `effect` draw is not reused for a
+`paired_main_effect` call that needs `r`).

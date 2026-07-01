@@ -490,6 +490,11 @@ class DenoisingSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
+        # A narrowed (DE) cache lacks the technical sites (capture / gate) that
+        # denoising reads; reject rather than denoise as if capture-free. A None
+        # cache is fine — it is drawn full below.
+        self._require_full_posterior_cache(method="denoise_counts_posterior")
+
         # Ensure posterior samples exist.
         if self.posterior_samples is None:
             key_post, rng_key = random.split(rng_key)
